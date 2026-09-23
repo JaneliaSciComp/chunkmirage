@@ -1,0 +1,57 @@
+site_name: chunkmirage
+site_description: Spoof chunked array formats over HTTP with on-the-fly processing.
+site_url: https://davidackerman.github.io/chunkmirage/
+repo_url: https://github.com/davidackerman/chunkmirage
+repo_name: chunkmirage
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - scheme: default
+      primary: teal
+      toggle: { icon: material/brightness-7, name: dark mode }
+    - scheme: slate
+      primary: teal
+      toggle: { icon: material/brightness-4, name: light mode }
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Concepts:
+      - Architecture & design: design.md
+      - Pipelines, ops and halos: concepts/pipelines.md
+      - Caching: concepts/caching.md
+      - Formats and URLs: concepts/formats.md
+  - Reference:
+      - Ops: reference/ops.md
+      - REST API: reference/api.md
+      - Python API: reference/python.md
+      - CLI: reference/cli.md
+  - FAQ: faq.md
+  - Roadmap: roadmap.md
+  - Contributing & doc policy: contributing.md
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc: { permalink: true }
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.details
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: false
+            docstring_style: google
+            members_order: source

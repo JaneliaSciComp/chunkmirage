@@ -79,7 +79,9 @@ class MyModel(Op):
         return run_my_network(block)
 ```
 
-See [docs/DESIGN.md](docs/DESIGN.md) for the architecture, language/stack rationale,
+Full documentation: **https://davidackerman.github.io/chunkmirage/** (built from `docs/` with MkDocs; run `uv run mkdocs serve` locally).
+
+See [docs/design.md](docs/design.md) for the architecture, language/stack rationale,
 caching model, extensibility plan (plugins, REST, MCP), and the client-side (browser /
 WebGPU) roadmap.
 

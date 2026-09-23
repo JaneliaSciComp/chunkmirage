@@ -1,0 +1,44 @@
+# Roadmap
+
+Ordered by impact. Items move to the docs proper when they land; this page must not
+describe shipped features as future work.
+
+1. **cellmap-flow as first consumer.** Port its inference path to an `Op` with `halo` and
+   `cache=True`, run on a GPU node, delete the duplicated serving code. This is the forcing
+   function that exposes every gap below with real data.
+2. **Multiscale semantics for ops.** Per-op declaration of valid scale levels plus a
+   downsample-from-s0 mode. Today each level is processed independently, which is wrong for
+   inference.
+3. **Materialize-on-browse with a disk cache.** Back the cache with a real zarr on local or
+   shared storage so it persists, is shared across workers, and doubles as a partially
+   computed output. Add a background filler that expands outward from requested chunks: the
+   viewer becomes the job scheduler.
+4. **Lazy-compute story for non-viewer clients.** Demonstrate dask/tensorstore reading a
+   served pipeline and running downstream analysis with no intermediate written.
+5. **DAG pipelines, multi-source ops, resampling.** Named stages with fan-out (cellmap-flow's
+   one-model-many-postprocessors), a `Combine` op taking another pipeline as input, and a
+   `Resample` op with affine or displacement field. Unlocks masking, model-vs-model
+   disagreement views, registration overlays, on-the-fly tile fusion.
+6. **Adaptive caching.** Measure stage compute time at runtime and cache automatically when
+   it exceeds a threshold, removing the manual `cache` flag.
+7. **MCP surface and hot-loaded ops.** `list_ops`, `set_pipeline`, `define_op` from source,
+   `neuroglancer_link`, `screenshot`. Off by default, local only.
+8. **Deployment hardening.** `--https` with a self-signed cert, bearer token on `/api/*`,
+   shared-cache multi-worker mode.
+9. **Own-hosted Neuroglancer with a service worker.** The zero-install browser demo with
+   WebGPU ops and ONNX Runtime Web inference, sharing the JSON pipeline spec with the
+   Python server. See [FAQ](faq.md#does-this-work-with-neuroglancer-demoappspotcom) for why
+   it cannot target the hosted appspot viewer.
+
+## Untapped potential
+
+* **Every zarr reader is a client.** dask, xarray, tensorstore, napari, Fiji and
+  cellmap-analyze can open a served pipeline as a lazy array, making the server a general
+  lazy compute node with a shared cache.
+* **Derived datasets as specs.** A pipeline spec is a few hundred bytes; publishing a
+  derived view of a public dataset costs no storage, and stateless chunks could run
+  serverless.
+* **Active learning loop.** Serve model uncertainty as a layer, take annotations back from
+  Neuroglancer, fine-tune, invalidate the inference stage.
+* **Claude in the loop.** With Neuroglancer's screenshot endpoint plus the REST API, an
+  agent can render, look, adjust and repeat.
