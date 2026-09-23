@@ -311,6 +311,8 @@ def create_app(
                 headers={"Cache-Control": "no-cache"},
             )
         assert isinstance(resolved, ChunkRequest)
+        if await request.is_disconnected():
+            return Response(status_code=499)  # client cancelled before we started
         try:
             body = await run_in_threadpool(_compute_and_encode, p, fe, resolved)
         except Exception as e:  # noqa: BLE001

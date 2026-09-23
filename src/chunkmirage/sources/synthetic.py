@@ -78,7 +78,7 @@ def _value_noise(z, y, x, cell: float, seed: int) -> np.ndarray:
     return out
 
 
-def _fbm(z, y, x, seed: int, base_cell: float = 256.0, octaves: int = 3) -> np.ndarray:
+def _fbm(z, y, x, seed: int, base_cell: float = 256.0, octaves: int = 2) -> np.ndarray:
     out = np.zeros(np.broadcast(z, y, x).shape, dtype=F32)
     amp, total, cell = 1.0, 0.0, base_cell
     for o in range(octaves):

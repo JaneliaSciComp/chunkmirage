@@ -99,9 +99,9 @@ def serve(
     format: str = typer.Option("zarr3", help="format used for the printed neuroglancer link"),
     workers: int = typer.Option(1, help="worker processes (uvicorn only; caches are per-process)"),
     server: str = typer.Option(
-        "hypercorn",
-        help="ASGI server: 'hypercorn' (HTTP/2 over https, so browsers are not limited to 6 "
-        "connections; HTTP/1.1 otherwise) or 'uvicorn'",
+        "uvicorn",
+        help="ASGI server: 'uvicorn' (HTTP/1.1) or 'hypercorn' (adds HTTP/2 over https; "
+        "experimental: verify chunk loading in your browser)",
     ),
     python_viewer: bool = typer.Option(
         False,
@@ -162,7 +162,7 @@ def serve(
         )
         typer.echo(f"python viewer: {v.url}   (layers follow live edits; camera preserved)")
     application = create_app(registry, public_url=public_url)
-    if server == "uvicorn" or workers > 1:
+    if server != "hypercorn" or workers > 1:
         import uvicorn
 
         uvicorn.run(

@@ -23,7 +23,7 @@ chunkmirage inspect SOURCE
 | `--viewer`            | `https://neuroglancer-demo.appspot.com`   | viewer for the printed link |
 | `--format`            | `zarr3`                                   | format used in the printed link |
 | `--workers`           | `1`                                       | worker processes (uvicorn only; caches are per process) |
-| `--server`            | `hypercorn`                               | `hypercorn` speaks HTTP/2 over https, so a browser is not limited to 6 connections per host; `uvicorn` is HTTP/1.1 only |
+| `--server`            | `uvicorn`                                 | `uvicorn` is HTTP/1.1; `hypercorn` adds HTTP/2 over https (lifts the browser's 6-connections-per-host limit) but is experimental: check that chunks load in your browser |
 | `--python-viewer`     | off                                       | also start a python-neuroglancer viewer whose layers follow live edits (needs the `viewer` extra) |
 | `--ng-client`         | `bundled`                                 | client build for the python viewer: `bundled`, `appspot`, or a URL |
 | `--viewer-host`       | same as `--host`                          | bind address of the python viewer; `0.0.0.0` lets other machines open it |

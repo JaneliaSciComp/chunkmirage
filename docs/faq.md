@@ -37,9 +37,14 @@ Neuroglancer build on the same origin as the service worker; see [Roadmap](roadm
 Usually one of three things:
 
 * **Connection limit.** Over HTTP/1.1 a browser opens at most 6 connections per host, shared
-  by every tab, the control page's event stream, and the viewer's chunk requests. Serve
-  `--https` (the default `hypercorn` server then negotiates HTTP/2, which multiplexes
-  hundreds of requests over one connection). Closing stale control-page tabs helps too.
+  by every tab, the control page's event stream, and the viewer's chunk requests. Close
+  stale control-page tabs (each holds one connection and its own embedded viewer requesting
+  chunks). `--server hypercorn --https` negotiates HTTP/2, which multiplexes requests over
+  one connection, but is experimental.
+* **Cancelled requests still cost CPU.** Neuroglancer cancels and re-requests chunks whenever
+  the view or state changes (every push from the control page does this). The server shares
+  one computation between identical in-flight requests and skips requests whose client has
+  already left, but a computation that has started runs to completion and is cached.
 * **Compute-bound source or op.** Check `GET /api/cache` for misses and time one chunk with
   `curl -w %{time_total}`. Heavy ops need `cache=True` and, for real speed, a GPU. Python-level
   loops in an op serialise on the GIL; large numpy/scipy operations run on all cores.

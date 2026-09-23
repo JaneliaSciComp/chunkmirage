@@ -69,6 +69,12 @@ threshold that takes a millisecond does not.
 The `cache` flag is a heuristic set by the op author and can be overridden per pipeline.
 Adaptive caching based on measured compute time is on the roadmap.
 
+## Concurrent requests for the same chunk
+
+Two requests for the same chunk that arrive while it is being computed share one
+computation (the second waits for the first, then reads the cache). Viewers retry and
+re-request aggressively, so without this a slow chunk would be computed several times.
+
 ## Inspecting and clearing
 
 ```bash

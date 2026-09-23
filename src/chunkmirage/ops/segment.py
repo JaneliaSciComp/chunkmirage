@@ -107,7 +107,7 @@ class Label(Op):
     @property
     def halo(self):  # type: ignore[override]
         # Some context so size filtering near chunk borders sees more of each object.
-        return 8 if self.min_size else 0
+        return 4 if self.min_size else 0
 
     def output_dtype(self, in_dtype):
         return np.dtype("uint32")
