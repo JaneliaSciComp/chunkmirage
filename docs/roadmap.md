@@ -16,16 +16,20 @@ describe shipped features as future work.
    viewer becomes the job scheduler.
 4. **Lazy-compute story for non-viewer clients.** Demonstrate dask/tensorstore reading a
    served pipeline and running downstream analysis with no intermediate written.
-5. **DAG pipelines, multi-source ops, resampling.** Named stages with fan-out (cellmap-flow's
-   one-model-many-postprocessors), a `Combine` op taking another pipeline as input, and a
-   `Resample` op with affine or displacement field. Unlocks masking, model-vs-model
-   disagreement views, registration overlays, on-the-fly tile fusion.
+5. **DAG pipelines, multi-source ops, resampling.** Named stages with fan-out (one model,
+   many post-processors), a `Combine` op taking another pipeline as input, and a `Resample`
+   op for displacement fields and non-rigid registration (affine stays client-side in
+   Neuroglancer). Unlocks masking, model-vs-model disagreement views, registration overlays,
+   on-the-fly tile fusion.
 6. **Adaptive caching.** Measure stage compute time at runtime and cache automatically when
    it exceeds a threshold, removing the manual `cache` flag.
 7. **MCP surface and hot-loaded ops.** `list_ops`, `set_pipeline`, `define_op` from source,
-   `neuroglancer_link`, `screenshot`. Off by default, local only.
-8. **Deployment hardening.** `--https` with a self-signed cert, bearer token on `/api/*`,
-   shared-cache multi-worker mode.
+   `neuroglancer_link`, `screenshot`. Off by default, local only. (The REST API, `/api/events`
+   stream, control page and python-neuroglancer viewer it would wrap already exist; see
+   [Interactivity](concepts/interactivity.md).)
+8. **Deployment hardening.** Bearer token on `/api/*`, shared-cache multi-worker mode.
+   (`--https` with an auto-generated self-signed certificate has shipped; see the
+   [CLI reference](reference/cli.md).)
 9. **Own-hosted Neuroglancer with a service worker.** The zero-install browser demo with
    WebGPU ops and ONNX Runtime Web inference, sharing the JSON pipeline spec with the
    Python server. See [FAQ](faq.md#does-this-work-with-neuroglancer-demoappspotcom) for why

@@ -1,18 +1,30 @@
 from __future__ import annotations
 
 import numpy as np
+from pydantic import Field
 
 from chunkmirage.ops.base import Op, register
 
 
 @register
 class Threshold(Op):
-    """Binary threshold: ``low <= x < high`` -> ``value``, else 0 (uint8)."""
+    """Binary mask: voxels with ``low <= value < high`` become ``value``, everything else 0."""
 
     name = "threshold"
-    low: float = 0.0
-    high: float | None = None
-    value: int = 1
+    low: float = Field(
+        0.0,
+        description="Lower bound (inclusive), in the source's intensity units. Voxels at or above it pass.",
+    )
+    high: float | None = Field(
+        None,
+        description="Upper bound (exclusive). Leave empty for no upper bound. Use it to select an intensity band.",
+    )
+    value: int = Field(
+        1,
+        ge=1,
+        le=255,
+        description="Label written for voxels that pass (1 shows as one segment in Neuroglancer).",
+    )
 
     def output_dtype(self, in_dtype):
         return np.dtype("uint8")
@@ -26,11 +38,17 @@ class Threshold(Op):
 
 @register
 class Cast(Op):
-    """Cast to another dtype, optionally clipping to its range first."""
+    """Convert to another data type, e.g. float32 → uint8 for viewers that need integers."""
 
     name = "cast"
-    dtype: str = "uint8"
-    clip: bool = True
+    dtype: str = Field(
+        "uint8",
+        description="Target numpy dtype name: uint8, uint16, uint32, uint64, int16, float32, ...",
+    )
+    clip: bool = Field(
+        True,
+        description="Clip values to the target integer range first (avoids wrap-around, e.g. 300 → 255 not 44).",
+    )
 
     def output_dtype(self, in_dtype):
         return np.dtype(self.dtype)
@@ -45,11 +63,11 @@ class Cast(Op):
 
 @register
 class Scale(Op):
-    """Affine intensity map ``x * factor + offset`` in float32."""
+    """Linear intensity rescale ``value * factor + offset`` (output is float32)."""
 
     name = "scale"
-    factor: float = 1.0
-    offset: float = 0.0
+    factor: float = Field(1.0, description="Multiply every voxel by this (contrast).")
+    offset: float = Field(0.0, description="Then add this (brightness).")
 
     def output_dtype(self, in_dtype):
         return np.dtype("float32")

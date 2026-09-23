@@ -16,6 +16,16 @@ def test_every_op_is_in_ops_reference():
     assert not missing, f"undocumented ops: {missing} (add rows to docs/reference/ops.md)"
 
 
+def test_every_op_parameter_has_a_description():
+    missing = [
+        f"{name}.{param}"
+        for name, meta in list_ops().items()
+        for param, schema in meta["schema"].get("properties", {}).items()
+        if not schema.get("description")
+    ]
+    assert not missing, f"op parameters without Field(description=...): {missing}"
+
+
 def test_every_frontend_is_in_formats_page():
     text = (DOCS / "concepts" / "formats.md").read_text()
     missing = [name for name in FRONTENDS if f"`{name}`" not in text]

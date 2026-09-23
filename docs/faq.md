@@ -10,11 +10,18 @@ This is exactly how example-virtual-n5 and cellmap-flow work.
 Caveats:
 
 * **Safari** blocks https-to-http fetches even for localhost. Use Chrome or Firefox.
-* **Cluster nodes**: either SSH-tunnel the port so your browser sees `localhost`, or serve
-  https (planned `--https` flag; cellmap-flow ships a self-signed cert for this). Pass
-  `--public-url` so generated links use the address your browser will use.
+* **Other machines on your network** (a cluster node, a colleague's laptop): the printed
+  URLs already use the machine's network address, and the python viewer works over plain
+  http from anywhere on the network. The appspot viewer specifically blocks
+  `http://10.x.x.x` as mixed content, so either SSH-tunnel the port so the browser sees
+  `localhost`, or run with `--https` and accept the self-signed certificate once per
+  browser. Pass `--public-url` when behind a tunnel or proxy.
 * **VSCode Remote** forwards ports automatically, so `localhost:8000` in your laptop browser
   usually just works.
+* **Refetching after an edit**: Neuroglancer caches by URL, so chunkmirage puts the pipeline
+  digest in the URL. The control page can push the new state to an appspot window (camera
+  resets), or `--python-viewer --ng-client appspot` runs the appspot client build with
+  state sync so only the edited layer refetches. See [Interactivity](concepts/interactivity.md).
 
 **Fully in-browser compute with appspot: impossible.** The client-side idea is to run ops
 on your laptop GPU with no server. But Neuroglancer only knows how to *fetch chunks from a
@@ -24,6 +31,31 @@ on **its own origin**. A worker on `chunkmirage.github.io` never sees requests m
 `neuroglancer-demo.appspot.com`. CORS is unrelated: CORS governs whether a page may *read* a
 response a real server sent, and here there is no server. The fix is to host our own
 Neuroglancer build on the same origin as the service worker; see [Roadmap](roadmap.md).
+
+## Chunks load slowly. Why?
+
+Usually one of three things:
+
+* **Connection limit.** Over HTTP/1.1 a browser opens at most 6 connections per host, shared
+  by every tab, the control page's event stream, and the viewer's chunk requests. Close
+  stale control-page tabs (each holds one connection and its own embedded viewer requesting
+  chunks). `--server hypercorn --https` negotiates HTTP/2, which multiplexes requests over
+  one connection, but is experimental.
+* **Parallelism.** Chunks are computed in a threadpool (`--threads`, default 2 × CPUs). The
+  hot paths (numpy, scipy, tensorstore, codecs) release the GIL, so this uses all cores.
+  Pure-Python loops in an op do not; write ops in array operations. `--workers` (processes)
+  parallelises too, but each process has its own registry and cache, so live edits only
+  reach one of them: it suits fixed pipelines, as in example-virtual-n5's gunicorn setup.
+* **Cancelled requests still cost CPU.** Neuroglancer cancels and re-requests chunks whenever
+  the view or state changes (every push from the control page does this). The server shares
+  one computation between identical in-flight requests and skips requests whose client has
+  already left, but a computation that has started runs to completion and is cached.
+* **Compute-bound source or op.** Check `GET /api/cache` for misses and time one chunk with
+  `curl -w %{time_total}`. Heavy ops need `cache=True` and, for real speed, a GPU. Python-level
+  loops in an op serialise on the GIL; large numpy/scipy operations run on all cores.
+* **Coarse levels.** A zoomed-out view asks for the coarsest level first. Sources whose
+  cost grows with the world volume a chunk covers (procedural generators, on-the-fly
+  downsampling) are slowest exactly there. The synthetic sources bound this cost per chunk.
 
 ## Why not just use Neuroglancer shaders?
 

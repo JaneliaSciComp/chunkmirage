@@ -24,6 +24,7 @@ user-visible thing updates the relevant page in the same commit:
 | REST endpoint                   | `docs/reference/api.md`                                 |
 | CLI command or flag             | `docs/reference/cli.md`                                 |
 | caching behaviour               | `docs/concepts/caching.md`                              |
+| control page / viewer / events  | `docs/concepts/interactivity.md`                        |
 | architectural decision          | `docs/design.md`                                        |
 | roadmap item shipped            | remove from `docs/roadmap.md`, document where it landed |
 
@@ -40,6 +41,7 @@ Two mechanisms enforce this:
 
 ```python
 from chunkmirage.ops import Op, register
+from pydantic import Field
 import numpy as np
 
 @register
@@ -49,7 +51,7 @@ class MyOp(Op):
     halo = 4            # voxels of upstream context needed per side (int or per-axis tuple)
     cache = False       # True for expensive stages (inference)
 
-    strength: float = 1.0          # pydantic fields become parameters and JSON schema
+    strength: float = Field(1.0, description="What it does, in words a user understands")  # shown in the UI
 
     def output_dtype(self, in_dtype): return np.dtype("float32")
     def apply(self, block): return block.astype(np.float32) * self.strength

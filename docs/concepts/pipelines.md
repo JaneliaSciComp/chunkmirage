@@ -16,14 +16,18 @@ or, as the JSON the REST API and CLI exchange (`PipelineSpec`):
 
 ## Every stage is a chunked array
 
-Internally, stage 0 is the raw source re-chunked to the output chunk shape, and stage *k*
-is a `ChunkedSource` whose `compute_chunk(index)`:
+Internally, stage 0 is the raw source re-chunked to the output chunk shape. Ops are grouped
+into *segments*, each ending at an op with `cache=True` (or the end of the list), and each
+segment is one `ChunkedSource` stage whose `compute_chunk(index)`:
 
 1. computes the output chunk's box;
-2. pads it by the op's **halo**;
-3. reads that padded box from stage *k-1* via `read_padded` (out-of-volume voxels are 0);
-4. calls `op.apply(block)`;
-5. crops the halo off and casts to the op's declared output dtype.
+2. pads it by the **sum of the segment's halos**;
+3. reads that padded box from the previous stage via `read_padded` (out-of-volume voxels are 0);
+4. calls each op's `apply_at(block, box)` in turn on the whole padded block;
+5. crops the padding off and casts to the last op's declared output dtype.
+
+Fusing uncached ops keeps the read footprint to a few upstream chunks per output chunk; see
+[Caching](caching.md#fusion-or-why-uncached-ops-are-cheap).
 
 Reading an arbitrary box from a stage gathers the covering chunks (cached or computed) and
 slices, so a halo read of stage *k-1* costs at most a few chunk lookups.
@@ -40,6 +44,7 @@ schema for free (`GET /api/ops`).
 | `cache`                | whether this stage's output chunks are memoized; see [Caching](caching.md) |
 | `output_dtype(dtype)`  | result dtype; default unchanged                                         |
 | `apply(block)`         | the computation; must return an array of the same spatial shape        |
+| `apply_at(block, box)` | optional; same but told the block's (halo-padded) position, for position-dependent results such as unique per-chunk labels |
 
 Ops are discovered through the `chunkmirage.ops` entry point, so plugins ship as ordinary
 packages. See [Contributing](../contributing.md#adding-an-op) for a template and the
@@ -54,6 +59,12 @@ Branching (one model output served through several post-processors as separate l
 not expressible in a single spec yet. Define one pipeline per branch: because cache keys are
 prefix hashes, the branches share the cached model output automatically. A DAG spec with
 named stages is on the [roadmap](../roadmap.md).
+
+## Transforms
+
+Affine transforms are a Neuroglancer client feature (per-layer, live, no refetch); do not put
+them in a pipeline. Non-affine resampling is a planned op. See
+[Interactivity](interactivity.md#transforms-on-the-fly).
 
 ## Re-chunking
 

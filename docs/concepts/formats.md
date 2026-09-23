@@ -44,6 +44,19 @@ others `image`; override with `PrecomputedFrontend(volume_type=...)`.
 
 ## Sources
 
+### Synthetic (procedural) sources
+
+`synthetic://<kind>?shape=z,y,x&chunk=64,64,64&levels=N&seed=0&voxel_size=8&unit=nm`
+generates data on the fly from voxel coordinates. Nothing is stored, so the volume can be
+as large as you like, and each scale level is the same function sampled at a coarser
+spacing, so the pyramid is exact (`s1[z,y,x] == s0[2z,2y,2x]`). Kinds: `blobs` (Gaussian
+blobs), `shells` (hollow spheres, membrane-like), `noise` (fractal value noise), `julia`
+(a 3-D slice of a quaternion Julia set); combine with `+`, e.g. `blobs+noise`. Useful for
+demos and for stress-testing pipelines without I/O. Generation is vectorised numpy, so
+the server's threadpool runs it on all cores.
+
+### Stored sources
+
 Sources are detected by content, not extension: `zarr.json` → zarr v3, `.zarray` → zarr v2,
 `attributes.json` → N5, `info` → precomputed. Groups are walked for `s0, s1, ...`. Voxel
 size and units come from OME-NGFF `multiscales`, N5 `transform`/`pixelResolution`, or

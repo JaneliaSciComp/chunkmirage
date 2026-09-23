@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>chunkmirage control</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --fg:#e6e6e6; --muted:#8b93a7; --accent:#2dd4bf; --line:#2a2f3a; }
+  body { margin:0; font:14px/1.45 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:12px 18px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; letter-spacing:.3px; }
+  header .status { color:var(--muted); font-size:12px; }
+  main { padding:16px 18px; display:grid; gap:16px; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
+  .card h2 { margin:0 0 6px; font-size:15px; display:flex; justify-content:space-between; align-items:baseline; }
+  .card h2 small { color:var(--muted); font-weight:normal; font-size:12px; }
+  .src { color:var(--muted); font-size:12px; word-break:break-all; margin-bottom:10px; }
+  .op { border-top:1px solid var(--line); padding:8px 0; }
+  .op .head { display:flex; justify-content:space-between; align-items:center; }
+  .op .head b { color:var(--accent); }
+  .param { display:grid; grid-template-columns: 90px 1fr 84px; gap:8px; align-items:center; margin:6px 0 2px; }
+  .param label { color:var(--fg); font-size:12px; }
+  .desc { grid-column: 1 / -1; color:var(--muted); font-size:11.5px; line-height:1.35; margin:-2px 0 6px; }
+  .opdoc { color:var(--muted); font-size:12px; margin:2px 0 4px; }
+  input[type=range] { width:100%; }
+  input[type=number], input[type=text], select { background:#0c0e12; color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:3px 6px; font:inherit; }
+  input[type=number] { width:76px; }
+  button { background:#232838; color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:4px 10px; cursor:pointer; font:inherit; }
+  button.primary { background:var(--accent); color:#04262a; border-color:transparent; font-weight:600; }
+  button:hover { filter:brightness(1.1); }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+  .hint { color:var(--muted); font-size:12px; }
+  .digest { font-family: ui-monospace, monospace; font-size:11px; color:var(--muted); }
+  .viewer { grid-column: 1 / -1; }
+  .viewer iframe { width:100%; height:70vh; border:1px solid var(--line); border-radius:6px; background:#000; margin-top:10px; }
+  .warn { color:#f5b544; font-size:12px; }
+  code { background:#0c0e12; padding:1px 4px; border-radius:3px; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>chunkmirage</h1>
+  <span class="status" id="status">connecting…</span>
+</header>
+<main id="main">
+  <section class="card viewer">
+    <h2>Viewer <small>embedded here, or opened in a new tab</small></h2>
+    <div class="row">
+      <label class="hint">show</label>
+      <select id="viewerKind">
+        <option value="appspot">neuroglancer-demo.appspot.com</option>
+        <option value="python" id="pythonOpt" disabled>python viewer (not running)</option>
+        <option value="custom">custom viewer URL…</option>
+      </select>
+      <input type="text" id="viewerUrl" size="40" value="https://neuroglancer-demo.appspot.com" style="display:none">
+      <label class="hint">format</label>
+      <select id="format"></select>
+      <button class="primary" id="openViewer">Open in new tab</button>
+      <label class="hint"><input type="checkbox" id="autoPush" checked> push updates to the viewer</label>
+      <label class="hint"><input type="checkbox" id="embed" checked> embed</label>
+    </div>
+    <p class="hint" id="viewerHint"></p>
+    <!-- allow: a public https viewer (appspot) fetching from a private 10.x address needs
+         Chrome's Local Network Access permission, which the embedding page must delegate. -->
+    <iframe id="ngFrame" allow="fullscreen; local-network-access *" style="display:none"></iframe>
+  </section>
+</main>
+<script>
+const $ = (s, el=document) => el.querySelector(s);
+let OPS = {}, DATASETS = {}, FORMATS = [], ngWin = null, timers = {};
+const status = m => { $('#status').textContent = m; };
+
+async function load() {
+  const [idx, ops] = await Promise.all([fetch('/').then(r=>r.json()), fetch('/api/ops').then(r=>r.json())]);
+  OPS = ops; DATASETS = idx.datasets; FORMATS = idx.formats;
+  const fsel = $('#format');
+  const first = !fsel.options.length;
+  if (first) for (const f of FORMATS) { const o = document.createElement('option'); o.value = o.textContent = f; if (f==='zarr3') o.selected = true; fsel.appendChild(o); }
+  VIEWER_URL = idx.viewer_url || null;
+  const po = $('#pythonOpt');
+  po.disabled = !VIEWER_URL; po.textContent = VIEWER_URL ? `python viewer (${VIEWER_URL})` : 'python viewer (not running)';
+  if (first) {
+    // Prefer the python viewer when it exists and this page can embed it.
+    if (VIEWER_URL && !(location.protocol === 'https:' && VIEWER_URL.startsWith('http:'))) $('#viewerKind').value = 'python';
+    updateHint(); showEmbedded();
+  }
+  render();
+  status(`${Object.keys(DATASETS).length} dataset(s) · version ${idx.version}`);
+}
+
+function bounds(ds, key) {
+  // heuristic slider ranges from the source dtype
+  const dt = ds.source_dtype || 'uint8';
+  if (/uint8/.test(dt)) return [0, 255, 1];
+  if (/uint16/.test(dt)) return [0, 65535, 1];
+  if (/int/.test(dt)) return [0, 4294967295, 1];
+  return [0, 1, 0.001];
+}
+
+function paramControl(ds, opIdx, key, schema, value) {
+  const wrap = document.createElement('div'); wrap.className = 'param';
+  const label = document.createElement('label'); label.textContent = key; label.title = schema.description || ''; wrap.appendChild(label);
+  const types = [].concat(schema.type || (schema.anyOf||[]).map(a=>a.type)).filter(Boolean);
+  const isNum = types.includes('number') || types.includes('integer');
+  if (isNum) {
+    const [lo, hi, step] = bounds(ds, key);
+    const range = document.createElement('input'); range.type='range'; range.min=lo; range.max=hi; range.step=step;
+    const num = document.createElement('input'); num.type='number'; num.step=step;
+    const v = (value===null||value===undefined) ? '' : value; range.value = v || lo; num.value = v;
+    const commit = (val, final) => { range.value = val; num.value = val; setParam(ds.name, opIdx, key, val===''? null : Number(val), final); };
+    range.oninput = () => commit(range.value, false);     // live: PUT (debounced); python viewer follows
+    range.onchange = () => commit(range.value, true);     // release: also navigate external viewers
+    num.onchange = () => commit(num.value, true);
+    wrap.appendChild(range); wrap.appendChild(num);
+  } else if (types.includes('boolean')) {
+    const cb = document.createElement('input'); cb.type='checkbox'; cb.checked = !!value;
+    cb.onchange = () => setParam(ds.name, opIdx, key, cb.checked);
+    wrap.appendChild(cb); wrap.appendChild(document.createElement('span'));
+  } else {
+    const t = document.createElement('input'); t.type='text'; t.value = value ?? '';
+    t.onchange = () => setParam(ds.name, opIdx, key, t.value);
+    wrap.appendChild(t); wrap.appendChild(document.createElement('span'));
+  }
+  if (schema.description) { const d = document.createElement('div'); d.className = 'desc'; d.textContent = schema.description; wrap.appendChild(d); }
+  return wrap;
+}
+
+function render() {
+  const main = $('#main');
+  for (const el of [...main.querySelectorAll('.card.ds')]) el.remove();
+  for (const [name, ds] of Object.entries(DATASETS)) {
+    ds.name = name;
+    const card = document.createElement('section'); card.className = 'card ds'; card.dataset.name = name;
+    card.innerHTML = `<h2>${name} <small>${ds.levels[0].dtype} · ${ds.levels[0].shape.join('×')} · ${ds.levels.length} level(s)</small></h2>
+      <div class="src">${ds.spec ? ds.spec.source : '(constructed in Python; not editable here)'} <span class="digest">@${ds.digest}</span></div>`;
+    if (!ds.spec) { main.appendChild(card); continue; }
+    if (!ds.spec.ops.length) { const n = document.createElement('div'); n.className = 'opdoc'; n.textContent = 'No ops: this is the source exactly as stored. Add an op below to process it.'; card.appendChild(n); }
+    ds.spec.ops.forEach((op, i) => {
+      const box = document.createElement('div'); box.className = 'op';
+      const head = document.createElement('div'); head.className = 'head';
+      const info = (ds.ops_info || [])[i];
+      const halo = info && info.halo && Math.max(...info.halo) > 0 ? ` · reads ${Math.max(...info.halo)} voxel${Math.max(...info.halo)>1?'s':''} of context on each side` : '';
+      head.innerHTML = `<span><b>${op.op}</b><span class="hint">${halo}</span></span>`;
+      const rm = document.createElement('button'); rm.textContent = 'remove'; rm.onclick = () => { ds.spec.ops.splice(i,1); pendingFinal[name] = true; push(name, true); };
+      head.appendChild(rm); box.appendChild(head);
+      const doc = document.createElement('div'); doc.className = 'opdoc'; doc.textContent = (OPS[op.op]?.doc || '').split('\n')[0]; box.appendChild(doc);
+      const props = OPS[op.op]?.schema?.properties || {};
+      for (const [key, schema] of Object.entries(props)) box.appendChild(paramControl(ds, i, key, schema, op[key] ?? schema.default));
+      card.appendChild(box);
+    });
+    const row = document.createElement('div'); row.className = 'row';
+    const sel = document.createElement('select');
+    for (const opName of Object.keys(OPS)) { const o = document.createElement('option'); o.value = o.textContent = opName; sel.appendChild(o); }
+    const add = document.createElement('button'); add.textContent = 'add op';
+    add.onclick = () => { ds.spec.ops.push({op: sel.value}); pendingFinal[name] = true; push(name, true); };
+    row.appendChild(sel); row.appendChild(add);
+    card.appendChild(row);
+    main.appendChild(card);
+  }
+}
+
+let pendingFinal = {};
+function setParam(name, opIdx, key, value, final=true) {
+  DATASETS[name].spec.ops[opIdx][key] = value;
+  pendingFinal[name] = pendingFinal[name] || final;
+  clearTimeout(timers[name]);
+  timers[name] = setTimeout(() => push(name), 150);
+}
+
+let inflight = {};
+async function push(name, rerender=false) {
+  if (inflight[name]) { inflight[name] = 'again'; return; }   // coalesce; re-run after the current PUT
+  inflight[name] = true;
+  const ds = DATASETS[name];
+  const final = pendingFinal[name] !== false; pendingFinal[name] = false;
+  status(`updating ${name}…`);
+  let body;
+  try {
+    const r = await fetch(`/api/datasets/${encodeURIComponent(name)}`, {method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify(ds.spec)});
+    body = await r.json();
+    if (!r.ok) { status(`error: ${body.error}`); return; }
+  } finally {
+    const again = inflight[name] === 'again'; inflight[name] = false;
+    if (again) { setTimeout(() => push(name, rerender), 0); }
+  }
+  DATASETS[name] = body; DATASETS[name].name = name;
+  if (rerender) render(); else { const d = document.querySelector(`.card.ds[data-name="${name}"] .digest`); if (d) d.textContent = `@${body.digest}`; }
+  status(`updated ${name} → @${body.digest}`);
+  if ($('#autoPush').checked && final) pushViewer();
+}
+
+let VIEWER_URL = null;   // python viewer, if the server reports one
+
+function viewerKind() { return $('#viewerKind').value; }
+function viewerBase() {
+  const k = viewerKind();
+  if (k === 'python') return VIEWER_URL;
+  if (k === 'custom') return $('#viewerUrl').value;
+  return 'https://neuroglancer-demo.appspot.com';
+}
+
+async function viewerLink() {
+  const k = viewerKind();
+  if (k === 'python') return VIEWER_URL;          // state lives server-side; the URL never changes
+  const fmt = $('#format').value;
+  const r = await fetch(`/api/neuroglancer?format=${fmt}&viewer=${encodeURIComponent(viewerBase())}`);
+  return (await r.json()).url;
+}
+
+function updateHint() {
+  const k = viewerKind(), pageHttps = location.protocol === 'https:';
+  let msg = '';
+  if (k === 'python') {
+    msg = 'The python viewer keeps its own state: edits swap only the changed layer and your camera is preserved.';
+    if (pageHttps && VIEWER_URL && VIEWER_URL.startsWith('http:'))
+      msg += ' This page is https but the python viewer is http, so browsers refuse to embed it; use "Open in new tab".';
+  } else {
+    msg = 'External viewers cache by URL, so each update navigates the viewer to a new state URL. Its camera cannot be read back across origins and resets on every push.';
+    if (!pageHttps && !['localhost','127.0.0.1'].includes(location.hostname))
+      msg += ' Chunks are served over http from a non-localhost address; https viewers will block them (mixed content). Restart with --https.';
+  }
+  $('#viewerHint').textContent = msg;
+}
+
+async function showEmbedded() {
+  const frame = $('#ngFrame');
+  const k = viewerKind(), pageHttps = location.protocol === 'https:';
+  const blocked = k === 'python' && pageHttps && VIEWER_URL && VIEWER_URL.startsWith('http:');
+  if (!$('#embed').checked || (k === 'python' && !VIEWER_URL) || blocked) { frame.style.display = 'none'; frame.src = 'about:blank'; return; }
+  const url = await viewerLink();
+  if (frame.src !== url) frame.src = url;
+  frame.style.display = 'block';
+}
+
+let pushTimer = null, lastPush = 0;
+function pushViewer() {
+  if (viewerKind() === 'python') return;          // syncs itself through the registry
+  const wait = Math.max(0, 500 - (Date.now() - lastPush));
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(async () => {
+    lastPush = Date.now();
+    const url = await viewerLink();
+    if ($('#embed').checked && $('#ngFrame').style.display !== 'none') $('#ngFrame').src = url;   // camera resets (cross-origin)
+    if (ngWin && !ngWin.closed) ngWin.location.href = url;
+  }, wait);
+}
+
+$('#openViewer').onclick = async () => { ngWin = window.open(await viewerLink(), 'chunkmirage-neuroglancer'); };
+$('#viewerKind').onchange = () => { $('#viewerUrl').style.display = viewerKind() === 'custom' ? '' : 'none'; updateHint(); showEmbedded(); };
+$('#viewerUrl').onchange = showEmbedded;
+$('#format').onchange = showEmbedded;
+$('#embed').onchange = showEmbedded;
+
+// Live refresh when anything (curl, Python, another tab) edits a pipeline.
+const es = new EventSource('/api/events');
+es.addEventListener('change', async (ev) => {
+  const data = JSON.parse(ev.data);
+  if (Object.values(inflight).some(Boolean)) return;   // our own edit is in progress; push() handles it
+  const changed = Object.entries(data.datasets).some(([n, d]) => !DATASETS[n] || DATASETS[n].digest !== d.digest)
+               || Object.keys(DATASETS).length !== Object.keys(data.datasets).length;
+  if (changed) { await load(); if ($('#autoPush').checked) pushViewer(); }
+});
+es.onerror = () => status('event stream disconnected; retrying…');
+load();
+</script>
+</body>
+</html>

@@ -44,6 +44,7 @@ BSD 3-Clause, Howard Hughes Medical Institute. Authors: TBD (collaborative proje
 ## Where next
 
 * [Getting started](getting-started.md): install, serve, open in Neuroglancer.
+* [Interactivity](concepts/interactivity.md): control page, python viewer, how refetching works.
 * [Caching](concepts/caching.md): what is cached, where, and why some stages are not.
 * [Formats and URLs](concepts/formats.md): the exact URLs each viewer needs.
 * [Roadmap](roadmap.md): what is planned and why.

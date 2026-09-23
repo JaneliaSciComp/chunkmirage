@@ -8,7 +8,7 @@ Each pipeline stage can memoize its output chunks. By default:
 | ------------------------------- | ------ | ------------------------------------------------------- |
 | stage 0: raw source             | yes    | refetching from disk or S3 is the expensive part        |
 | ops with `cache = True`         | yes    | expensive to recompute (inference)                      |
-| ops with `cache = False`        | no     | cheap to recompute from the cached upstream stage       |
+| ops with `cache = False`        | no     | fused with their neighbours into one stage and recomputed from the cached upstream stage |
 | encoded bytes (gzip, blosc, ...)| no     | encoding is fast; caching arrays serves all formats     |
 
 So if you threshold, look, and threshold again with a different level, the raw chunk is
@@ -18,6 +18,15 @@ asserts exactly this.
 
 Set `cache_source=False` in the spec to disable raw caching (for example when the source is
 a fast local NVMe and memory is scarce).
+
+## Fusion, or why uncached ops are cheap
+
+Consecutive uncached ops are *fused*: one output chunk reads the upstream box once, padded
+by the sum of their halos, and runs the ops back to back. A four-op chain with halos
+5 + 0 + 5 + 8 on 64³ chunks reads a 100³ box, about four raw chunks. Giving each op its own
+cached chunk grid instead would pull 343 raw chunks for the first output chunk, because
+each halo widens the footprint at every stage. So `cache=True` is a deliberate cut in the
+chain for stages worth keeping (inference), not a speed knob to sprinkle on filters.
 
 ## Where it lives
 
@@ -59,6 +68,12 @@ threshold that takes a millisecond does not.
 
 The `cache` flag is a heuristic set by the op author and can be overridden per pipeline.
 Adaptive caching based on measured compute time is on the roadmap.
+
+## Concurrent requests for the same chunk
+
+Two requests for the same chunk that arrive while it is being computed share one
+computation (the second waits for the first, then reads the cache). Viewers retry and
+re-request aggressively, so without this a slow chunk would be computed several times.
 
 ## Inspecting and clearing
 

@@ -5,21 +5,32 @@ from __future__ import annotations
 import math
 
 import numpy as np
+from pydantic import Field
 
 from chunkmirage.ops.base import Op, register
 
 
 @register
 class Gaussian(Op):
-    """Gaussian blur with ``sigma`` voxels (isotropic). Output float32."""
+    """Gaussian blur (smoothing). Reduces noise before thresholding; larger sigma = blurrier."""
 
     name = "gaussian"
-    sigma: float = 1.0
-    truncate: float = 3.0
+    sigma: float = Field(
+        1.0,
+        gt=0,
+        description="Blur width in voxels (standard deviation). 1 removes pixel noise; 3-5 merges small structures.",
+    )
+    truncate: float = Field(
+        3.0,
+        ge=1,
+        le=6,
+        description="Kernel radius in units of sigma. Rarely needs changing; 3 keeps 99.7% of the kernel. "
+        "Determines the halo: ceil(sigma × truncate) voxels of neighbouring data are read on each side.",
+    )
 
     @property
     def halo(self):  # type: ignore[override]
-        return int(math.ceil(self.sigma * self.truncate))
+        return math.ceil(self.sigma * self.truncate)
 
     def output_dtype(self, in_dtype):
         return np.dtype("float32")
@@ -34,10 +45,15 @@ class Gaussian(Op):
 
 @register
 class Uniform(Op):
-    """Mean filter over a ``size``-voxel cube. Output float32."""
+    """Box (mean) filter: each voxel becomes the average of a size³ cube around it."""
 
     name = "uniform"
-    size: int = 3
+    size: int = Field(
+        3,
+        ge=1,
+        le=31,
+        description="Edge length of the averaging cube, in voxels (odd values are centred).",
+    )
 
     @property
     def halo(self):  # type: ignore[override]

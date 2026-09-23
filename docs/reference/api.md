@@ -5,7 +5,7 @@ All endpoints are CORS-open. Editing endpoints can be disabled with
 
 | method   | path                                   | purpose |
 | -------- | -------------------------------------- | ------- |
-| `GET`    | `/`                                    | index: datasets, their specs, source URLs per format, cache stats |
+| `GET`    | `/`                                    | index: datasets, their specs, source URLs per format, `viewer_url` of an attached python viewer (or null), cache stats |
 | `GET`    | `/api/ops`                             | registered ops with halo, cache flag, docstring and JSON schema |
 | `GET`    | `/api/datasets`                        | dataset names |
 | `POST`   | `/api/datasets`                        | create: body `{"name": ..., "spec": PipelineSpec}` (or the spec with a `name` field) |
@@ -13,6 +13,9 @@ All endpoints are CORS-open. Editing endpoints can be disabled with
 | `PUT`    | `/api/datasets/{name}`                 | replace the pipeline live; body is a `PipelineSpec`; returns new digest and URLs |
 | `DELETE` | `/api/datasets/{name}`                 | remove |
 | `GET`    | `/api/datasets/{name}/neuroglancer`    | `?format=n5|zarr|zarr3|precomputed&viewer=...` → `{"source", "url"}` |
+| `GET`    | `/api/neuroglancer`                    | same query; one viewer state with a layer per dataset → `{"state", "url", "sources"}` |
+| `GET`    | `/api/events`                          | Server-Sent Events; `change` event on start and after every edit, with digests and source URLs |
+| `GET`    | `/ui`                                  | built-in control page; see [Interactivity](../concepts/interactivity.md) |
 | `GET`    | `/api/cache`                           | cache stats |
 | `DELETE` | `/api/cache`                           | clear cache |
 | `GET`    | `/{name}/{format}/{path}`              | the spoofed dataset; see [Formats](../concepts/formats.md) |
@@ -33,5 +36,6 @@ All endpoints are CORS-open. Editing endpoints can be disabled with
 }
 ```
 
-Responses to `POST`/`PUT` include `sources`, a map from format to Neuroglancer source URL
-carrying the new digest.
+Responses to `POST`, `PUT` and `GET /api/datasets/{name}` include `digest`, `source_dtype`,
+per-level `levels`, `ops_info` (per op: name, per-axis halo, docstring), and `sources`, a map
+from format to Neuroglancer source URL carrying the new digest.

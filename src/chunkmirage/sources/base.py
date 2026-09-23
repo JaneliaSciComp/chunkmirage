@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 
@@ -54,6 +55,10 @@ class ChunkedSource(Source):
         self._compute = compute_chunk
         self._cache = cache
         self._key = key
+        # In-flight computations keyed by chunk index: concurrent requests for the same chunk
+        # (a viewer retrying, or two clients) wait for one computation instead of duplicating it.
+        self._inflight: dict[tuple[int, ...], threading.Event] = {}
+        self._inflight_lock = threading.Lock()
 
     @property
     def info(self) -> ArrayInfo:
@@ -65,18 +70,38 @@ class ChunkedSource(Source):
     def chunk(self, index: Sequence[int]) -> np.ndarray:
         """Full (edge-clipped) chunk ``index`` as an array of shape ``info.chunk_box(index).shape``."""
         index = tuple(int(i) for i in index)
-        if self._cache is not None:
+        if self._cache is None:
+            return self._compute_checked(index)
+        while True:
             hit = self._cache.get((self._key, index))
             if hit is not None:
                 return hit
+            with self._inflight_lock:
+                event = self._inflight.get(index)
+                if event is None:
+                    event = self._inflight[index] = threading.Event()
+                    owner = True
+                else:
+                    owner = False
+            if not owner:
+                event.wait()
+                continue  # the owner has cached it (or failed); re-check the cache
+            try:
+                data = self._compute_checked(index)
+                self._cache.put((self._key, index), data)
+                return data
+            finally:
+                with self._inflight_lock:
+                    self._inflight.pop(index, None)
+                event.set()
+
+    def _compute_checked(self, index: tuple[int, ...]) -> np.ndarray:
         data = np.ascontiguousarray(self._compute(index))
         expected = self._info.chunk_box(index).shape
         if data.shape != expected:
             raise ValueError(
                 f"{self._key}: compute_chunk{index} returned shape {data.shape}, expected {expected}"
             )
-        if self._cache is not None:
-            self._cache.put((self._key, index), data)
         return data
 
     def read(self, box: Box) -> np.ndarray:

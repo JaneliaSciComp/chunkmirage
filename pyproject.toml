@@ -13,6 +13,7 @@ dependencies = [
     "tensorstore>=0.1.60",
     "starlette>=0.37",
     "uvicorn[standard]>=0.29",
+    "hypercorn[h2]>=0.17",
     "pydantic>=2.6",
     "typer>=0.12",
 ]
@@ -21,7 +22,9 @@ dependencies = [
 hdf5 = ["h5py>=3.10"]
 ops = ["scipy>=1.12"]
 mcp = ["mcp>=1.0"]
-all = ["chunkmirage[hdf5,ops,mcp]"]
+viewer = ["neuroglancer>=2.40"]
+https = ["cryptography>=42"]
+all = ["chunkmirage[hdf5,ops,mcp,viewer,https]"]
 
 [project.scripts]
 chunkmirage = "chunkmirage.cli:app"
@@ -42,6 +45,7 @@ dev = [
     "pytest-asyncio>=0.23",
     "httpx>=0.27",
     "ruff>=0.5",
+    "neuroglancer>=2.40",
 ]
 
 [build-system]

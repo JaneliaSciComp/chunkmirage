@@ -18,6 +18,9 @@ uvicorn, pydantic and typer. Optional extras: `hdf5` (h5py), `ops` (scipy filter
 chunkmirage serve /path/to/data.zarr/em/fibsem-uint8 --op threshold:low=120 --port 8000
 ```
 
+The unprocessed source is served alongside as `raw` and shows as a second layer, at no
+extra cost (`--no-raw` to skip it).
+
 `SOURCE` can be a zarr v2/v3 array or multiscale group (`s0`, `s1`, ...), an N5 dataset or
 group, a Neuroglancer precomputed volume, or `file.h5::/dataset`. Local paths and
 `s3://`, `gs://`, `http(s)://` URLs all work. The command prints:
@@ -28,10 +31,25 @@ neuroglancer: https://neuroglancer-demo.appspot.com/#!...
 control API:  http://localhost:8000/api/datasets/data
 ```
 
-Open the Neuroglancer link in Chrome or Firefox on the machine that can reach port 8000.
+URLs use the machine's network address so they work from other machines too. Open the
+Neuroglancer link in Chrome or Firefox.
 See [FAQ: does this work with the hosted Neuroglancer?](faq.md#does-this-work-with-neuroglancer-demoappspotcom)
 
 ## The demo
+
+No data needed: generate a virtual 4096³ volume (69 gigavoxels, nothing on disk) and run a
+small segmentation pipeline on it:
+
+```bash
+chunkmirage serve "synthetic://blobs+noise?shape=4096,4096,4096" \
+    --op gaussian:sigma=1.5 --op threshold:low=110 \
+    --op morphology:operation=open,radius=2 --op label:min_size=200 \
+    --python-viewer
+```
+
+Open the printed control page: `raw` shows the generated volume, `processed` the labelled
+objects. Drag `low` and watch objects appear and merge; change `radius` to remove specks.
+The smaller disk-based demo is:
 
 ```bash
 uv run python examples/demo.py --port 8000
@@ -41,7 +59,13 @@ Generates a synthetic multiscale volume of blobs, then serves it twice: `raw` as
 and `thresh` (gaussian then threshold) as a precomputed segmentation overlay. Both share
 one cache, so the raw chunks are read once.
 
-## Change the pipeline live
+## Change the pipeline interactively
+
+Open `http://localhost:8000/ui` for sliders generated from each op's parameters. For live
+updates that keep your camera position, start the server with `--python-viewer` and open
+the printed viewer URL. Details and trade-offs: [Interactivity](concepts/interactivity.md).
+
+## Change the pipeline live from the shell
 
 ```bash
 curl -X PUT localhost:8000/api/datasets/thresh -H 'content-type: application/json' \
