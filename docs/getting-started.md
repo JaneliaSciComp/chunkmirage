@@ -3,7 +3,7 @@
 ## Install
 
 ```bash
-git clone https://github.com/JaneliaSciComp/chunkmirage
+git clone https://github.com/yuriyzubov/chunkmirage
 cd chunkmirage
 uv sync --all-extras --group dev        # or: pip install -e ".[all]"
 ```
