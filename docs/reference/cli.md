@@ -10,7 +10,7 @@ chunkmirage inspect SOURCE
 
 | option                | default                                   | meaning |
 | --------------------- | ----------------------------------------- | ------- |
-| `--name`              | `data`                                    | dataset name in URLs |
+| `--name`              | `processed`                               | dataset name in URLs |
 | `--op`, `-o`          |                                           | op spec, repeatable; `name:k=v,k=v` or JSON |
 | `--raw` / `--no-raw`  | on                                        | also serve the unprocessed source as `raw`; shares the cache, appears as a second layer |
 | `--chunk`             | source chunks                             | output chunk shape, e.g. `64,64,64` |

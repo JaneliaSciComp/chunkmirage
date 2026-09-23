@@ -120,13 +120,13 @@ def main():
     src = open_source(DATA)
     raw = Pipeline(src, [])
     thr = Pipeline(src, [Gaussian(sigma=args.sigma), Threshold(low=args.low)], cache=raw.cache)
-    app = create_app({"raw": raw, "thresh": thr})
+    app = create_app({"raw": raw, "processed": thr})
     from chunkmirage.netutil import public_host_for
 
     base = f"http://{public_host_for(args.host)}:{args.port}"
     print("\nOpen in Neuroglancer:\n" + neuroglancer_link(base, raw, thr))
     print("\nChange the threshold live (then reload the layer with the new URL from the response):")
-    print(f"  curl -X PUT {base}/api/datasets/thresh -H 'content-type: application/json' \\")
+    print(f"  curl -X PUT {base}/api/datasets/processed -H 'content-type: application/json' \\")
     print(
         f'       -d \'{{"source": "{DATA}", "ops": [{{"op": "gaussian", "sigma": 1}}, {{"op": "threshold", "low": 160}}]}}\''
     )

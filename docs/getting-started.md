@@ -37,6 +37,20 @@ See [FAQ: does this work with the hosted Neuroglancer?](faq.md#does-this-work-wi
 
 ## The demo
 
+No data needed: generate a virtual 4096³ volume (69 gigavoxels, nothing on disk) and run a
+small segmentation pipeline on it:
+
+```bash
+chunkmirage serve "synthetic://blobs+noise?shape=4096,4096,4096" \
+    --op gaussian:sigma=1.5 --op threshold:low=110 \
+    --op morphology:operation=open,radius=2 --op label:min_size=200 \
+    --python-viewer
+```
+
+Open the printed control page: `raw` shows the generated volume, `processed` the labelled
+objects. Drag `low` and watch objects appear and merge; change `radius` to remove specks.
+The smaller disk-based demo is:
+
 ```bash
 uv run python examples/demo.py --port 8000
 ```

@@ -60,7 +60,7 @@ def serve(
         ...,
         help="zarr/n5/precomputed path or URL (file, s3://, gs://, http(s)://), or file.h5::/dataset",
     ),
-    name: str = typer.Option("data", help="dataset name in the served URL"),
+    name: str = typer.Option("processed", help="dataset name in the served URL"),
     op: list[str] = typer.Option(
         [], "--op", "-o", help="op spec, e.g. threshold:low=120 (repeatable)"
     ),

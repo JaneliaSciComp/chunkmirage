@@ -1,7 +1,8 @@
 """Pipeline: a multiscale source followed by ops, exposed level-by-level as ChunkedSources.
 
-Stage *k* is a ``ChunkedSource`` whose ``compute_chunk(idx)`` reads the halo-padded box
-from stage *k-1* (itself cached if requested), applies op *k*, and crops. Cache keys are
+Ops are grouped into segments ending at each ``cache=True`` op. A segment is one
+``ChunkedSource`` stage whose ``compute_chunk(idx)`` reads the box padded by the segment's
+total halo from the previous stage, runs its ops back to back, and crops. Cache keys are
 ``(stage_hash, chunk_index)`` where ``stage_hash`` covers the source identity and every op
 up to and including *k*, so editing op *k* invalidates exactly stages *k..n*.
 """
@@ -34,21 +35,39 @@ class PipelineSpec(BaseModel):
     translation: list[float] | None = None
 
 
-def _stage(prev: Source, op: Op, cache: LRUCache | None, key: str, chunk_shape) -> ChunkedSource:
-    info = op.output_info(prev.info).with_(chunk_shape=tuple(chunk_shape))
-    halo = op.halo_for(info.ndim)
+def _fused_stage(
+    prev: Source, ops: Sequence[Op], cache: LRUCache | None, key: str, chunk_shape
+) -> ChunkedSource:
+    """One pipeline stage running ``ops`` back to back on a block padded by their total halo.
+
+    Fusing consecutive uncached ops keeps the read footprint small: one output chunk reads
+    the upstream box once, padded by the *sum* of the halos, instead of pulling overlapping
+    chunks through a separate grid per op (which compounds to hundreds of upstream chunks).
+    Values near the padded border are wrong after each op, but the padding is exactly the
+    sum of halos so the cropped centre is correct.
+    """
+    info = prev.info
+    for op in ops:
+        info = op.output_info(info)
+    info = info.with_(chunk_shape=tuple(chunk_shape))
+    ndim = info.ndim
+    total_halo = tuple(sum(op.halo_for(ndim)[a] for op in ops) for a in range(ndim))
 
     def compute(idx: tuple[int, ...]) -> np.ndarray:
         out_box = info.chunk_box(idx)
-        in_box = out_box.pad(halo)
+        in_box = out_box.pad(total_halo)
         block = prev.read_padded(in_box)
-        result = op.apply(block)
-        if result.shape[-info.ndim :] != block.shape:
-            raise ValueError(f"op {op.name!r} changed block shape {block.shape} -> {result.shape}")
+        for op in ops:
+            result = op.apply_at(block, in_box)
+            if result.shape[-ndim:] != block.shape[-ndim:]:
+                raise ValueError(
+                    f"op {op.name!r} changed block shape {block.shape} -> {result.shape}"
+                )
+            block = result
         crop = out_box.relative_to(in_box)
-        return np.asarray(result[crop.slices()], dtype=info.dtype)
+        return np.asarray(block[crop.slices()], dtype=info.dtype)
 
-    return ChunkedSource(info, compute, cache if op.cache else None, key)
+    return ChunkedSource(info, compute, cache, key)
 
 
 class Pipeline:
@@ -77,9 +96,23 @@ class Pipeline:
                 self.cache if cache_source else None,
                 f"raw:{h}",
             )
+            # Group ops into segments; a segment ends at an op with cache=True (its output is
+            # memoized) or at the end of the pipeline. Each segment is one fused stage.
+            segments: list[list[Op]] = []
+            current: list[Op] = []
             for op in self.ops:
-                h = hashlib.sha1(f"{h}|{op.digest()}".encode()).hexdigest()[:12]
-                stage = _stage(stage, op, self.cache, f"{op.name}:{h}", cs)
+                current.append(op)
+                if op.cache:
+                    segments.append(current)
+                    current = []
+            if current:
+                segments.append(current)
+            for seg in segments:
+                for op in seg:
+                    h = hashlib.sha1(f"{h}|{op.digest()}".encode()).hexdigest()[:12]
+                stage = _fused_stage(
+                    stage, seg, self.cache if seg[-1].cache else None, f"{seg[-1].name}:{h}", cs
+                )
             self.levels.append(stage)  # type: ignore[arg-type]
 
     @classmethod

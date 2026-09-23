@@ -43,6 +43,12 @@ class Op(BaseModel):
     def apply(self, block: np.ndarray) -> np.ndarray:  # pragma: no cover - abstract
         raise NotImplementedError
 
+    def apply_at(self, block: np.ndarray, box) -> np.ndarray:
+        """Like ``apply`` but told where ``block`` sits (``box`` = its halo-padded extent in
+        voxels of this scale level). Override when the result must depend on position, e.g. to
+        make per-chunk labels globally unique. Default delegates to ``apply``."""
+        return self.apply(block)
+
     # --- identity / serialization -------------------------------------------------
     def spec(self) -> dict[str, Any]:
         return {"op": self.name, **self.model_dump(mode="json")}
