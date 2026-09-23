@@ -105,8 +105,10 @@ function paramControl(ds, opIdx, key, schema, value) {
     const range = document.createElement('input'); range.type='range'; range.min=lo; range.max=hi; range.step=step;
     const num = document.createElement('input'); num.type='number'; num.step=step;
     const v = (value===null||value===undefined) ? '' : value; range.value = v || lo; num.value = v;
-    const commit = (val) => { range.value = val; num.value = val; setParam(ds.name, opIdx, key, val===''? null : Number(val)); };
-    range.oninput = () => commit(range.value); num.onchange = () => commit(num.value);
+    const commit = (val, final) => { range.value = val; num.value = val; setParam(ds.name, opIdx, key, val===''? null : Number(val), final); };
+    range.oninput = () => commit(range.value, false);     // live: PUT (debounced); python viewer follows
+    range.onchange = () => commit(range.value, true);     // release: also navigate external viewers
+    num.onchange = () => commit(num.value, true);
     wrap.appendChild(range); wrap.appendChild(num);
   } else if (types.includes('boolean')) {
     const cb = document.createElement('input'); cb.type='checkbox'; cb.checked = !!value;
@@ -125,7 +127,7 @@ function render() {
   for (const el of [...main.querySelectorAll('.card.ds')]) el.remove();
   for (const [name, ds] of Object.entries(DATASETS)) {
     ds.name = name;
-    const card = document.createElement('section'); card.className = 'card ds';
+    const card = document.createElement('section'); card.className = 'card ds'; card.dataset.name = name;
     card.innerHTML = `<h2>${name} <small>${ds.levels[0].dtype} · ${ds.levels[0].shape.join('×')} · ${ds.levels.length} level(s)</small></h2>
       <div class="src">${ds.spec ? ds.spec.source : '(constructed in Python; not editable here)'} <span class="digest">@${ds.digest}</span></div>`;
     if (!ds.spec) { main.appendChild(card); continue; }
@@ -133,7 +135,7 @@ function render() {
       const box = document.createElement('div'); box.className = 'op';
       const head = document.createElement('div'); head.className = 'head';
       head.innerHTML = `<span><b>${op.op}</b> <span class="hint">${(OPS[op.op]?.doc||'').split('\n')[0]}</span></span>`;
-      const rm = document.createElement('button'); rm.textContent = 'remove'; rm.onclick = () => { ds.spec.ops.splice(i,1); push(name); };
+      const rm = document.createElement('button'); rm.textContent = 'remove'; rm.onclick = () => { ds.spec.ops.splice(i,1); pendingFinal[name] = true; push(name, true); };
       head.appendChild(rm); box.appendChild(head);
       const props = OPS[op.op]?.schema?.properties || {};
       for (const [key, schema] of Object.entries(props)) box.appendChild(paramControl(ds, i, key, schema, op[key] ?? schema.default));
@@ -143,28 +145,41 @@ function render() {
     const sel = document.createElement('select');
     for (const opName of Object.keys(OPS)) { const o = document.createElement('option'); o.value = o.textContent = opName; sel.appendChild(o); }
     const add = document.createElement('button'); add.textContent = 'add op';
-    add.onclick = () => { ds.spec.ops.push({op: sel.value}); push(name); };
+    add.onclick = () => { ds.spec.ops.push({op: sel.value}); pendingFinal[name] = true; push(name, true); };
     row.appendChild(sel); row.appendChild(add);
     card.appendChild(row);
     main.appendChild(card);
   }
 }
 
-function setParam(name, opIdx, key, value) {
+let pendingFinal = {};
+function setParam(name, opIdx, key, value, final=true) {
   DATASETS[name].spec.ops[opIdx][key] = value;
+  pendingFinal[name] = pendingFinal[name] || final;
   clearTimeout(timers[name]);
   timers[name] = setTimeout(() => push(name), 150);
 }
 
-async function push(name) {
+let inflight = {};
+async function push(name, rerender=false) {
+  if (inflight[name]) { inflight[name] = 'again'; return; }   // coalesce; re-run after the current PUT
+  inflight[name] = true;
   const ds = DATASETS[name];
+  const final = pendingFinal[name] !== false; pendingFinal[name] = false;
   status(`updating ${name}…`);
-  const r = await fetch(`/api/datasets/${encodeURIComponent(name)}`, {method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify(ds.spec)});
-  const body = await r.json();
-  if (!r.ok) { status(`error: ${body.error}`); return; }
-  DATASETS[name] = body; render();
+  let body;
+  try {
+    const r = await fetch(`/api/datasets/${encodeURIComponent(name)}`, {method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify(ds.spec)});
+    body = await r.json();
+    if (!r.ok) { status(`error: ${body.error}`); return; }
+  } finally {
+    const again = inflight[name] === 'again'; inflight[name] = false;
+    if (again) { setTimeout(() => push(name, rerender), 0); }
+  }
+  DATASETS[name] = body; DATASETS[name].name = name;
+  if (rerender) render(); else { const d = document.querySelector(`.card.ds[data-name="${name}"] .digest`); if (d) d.textContent = `@${body.digest}`; }
   status(`updated ${name} → @${body.digest}`);
-  if ($('#autoPush').checked) await pushViewer();
+  if ($('#autoPush').checked && final) pushViewer();
 }
 
 let VIEWER_URL = null;   // python viewer, if the server reports one
@@ -210,11 +225,17 @@ async function showEmbedded() {
   frame.style.display = 'block';
 }
 
-async function pushViewer() {
-  if (viewerKind() === 'python') return;          // syncs itself
-  const url = await viewerLink();
-  if ($('#embed').checked && $('#ngFrame').style.display !== 'none') $('#ngFrame').src = url;   // camera resets (cross-origin)
-  if (ngWin && !ngWin.closed) ngWin.location.href = url;
+let pushTimer = null, lastPush = 0;
+function pushViewer() {
+  if (viewerKind() === 'python') return;          // syncs itself through the registry
+  const wait = Math.max(0, 500 - (Date.now() - lastPush));
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(async () => {
+    lastPush = Date.now();
+    const url = await viewerLink();
+    if ($('#embed').checked && $('#ngFrame').style.display !== 'none') $('#ngFrame').src = url;   // camera resets (cross-origin)
+    if (ngWin && !ngWin.closed) ngWin.location.href = url;
+  }, wait);
 }
 
 $('#openViewer').onclick = async () => { ngWin = window.open(await viewerLink(), 'chunkmirage-neuroglancer'); };
@@ -227,9 +248,10 @@ $('#embed').onchange = showEmbedded;
 const es = new EventSource('/api/events');
 es.addEventListener('change', async (ev) => {
   const data = JSON.parse(ev.data);
+  if (Object.values(inflight).some(Boolean)) return;   // our own edit is in progress; push() handles it
   const changed = Object.entries(data.datasets).some(([n, d]) => !DATASETS[n] || DATASETS[n].digest !== d.digest)
                || Object.keys(DATASETS).length !== Object.keys(data.datasets).length;
-  if (changed) { await load(); if ($('#autoPush').checked) await pushViewer(); }
+  if (changed) { await load(); if ($('#autoPush').checked) pushViewer(); }
 });
 es.onerror = () => status('event stream disconnected; retrying…');
 load();
