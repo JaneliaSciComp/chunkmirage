@@ -55,6 +55,12 @@ not expressible in a single spec yet. Define one pipeline per branch: because ca
 prefix hashes, the branches share the cached model output automatically. A DAG spec with
 named stages is on the [roadmap](../roadmap.md).
 
+## Transforms
+
+Affine transforms are a Neuroglancer client feature (per-layer, live, no refetch); do not put
+them in a pipeline. Non-affine resampling is a planned op. See
+[Interactivity](interactivity.md#transforms-on-the-fly).
+
 ## Re-chunking
 
 `chunk_shape` sets the *output* chunk shape independently of the source. Viewers prefer

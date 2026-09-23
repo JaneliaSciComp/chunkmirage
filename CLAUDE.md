@@ -19,7 +19,8 @@ update the matching page in the same commit:
 
 - op → `docs/reference/ops.md`; frontend/URL → `docs/concepts/formats.md`;
   REST route → `docs/reference/api.md`; CLI flag → `docs/reference/cli.md`;
-  caching behaviour → `docs/concepts/caching.md`; design decision → `docs/design.md`;
+  caching behaviour → `docs/concepts/caching.md`; control page / viewer / events →
+  `docs/concepts/interactivity.md`; design decision → `docs/design.md`;
   shipped roadmap item → remove from `docs/roadmap.md` and document where it landed.
 - `tests/test_docs.py` enforces ops/frontends/routes coverage; `mkdocs build --strict`
   catches broken links. Keep both green.

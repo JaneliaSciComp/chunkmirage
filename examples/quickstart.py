@@ -39,7 +39,7 @@ pipe = Pipeline(
 name, port = "demo", 8000
 app = create_app({name: pipe})
 src = source_url(f"http://localhost:{port}", name, "zarr3", "zarr3", pipe.digest())
-print("neuroglancer:", viewer_link(pipe, name, src))
+print("neuroglancer:", viewer_link({name: pipe}, {name: src}))
 print(
     f'edit live:    curl -X PUT localhost:8000/api/datasets/demo -d \'{{"source": "{path}", "ops": [{{"op": "threshold", "low": 160}}]}}\''
 )

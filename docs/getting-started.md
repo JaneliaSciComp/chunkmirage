@@ -41,7 +41,13 @@ Generates a synthetic multiscale volume of blobs, then serves it twice: `raw` as
 and `thresh` (gaussian then threshold) as a precomputed segmentation overlay. Both share
 one cache, so the raw chunks are read once.
 
-## Change the pipeline live
+## Change the pipeline interactively
+
+Open `http://localhost:8000/ui` for sliders generated from each op's parameters. For live
+updates that keep your camera position, start the server with `--python-viewer` and open
+the printed viewer URL. Details and trade-offs: [Interactivity](concepts/interactivity.md).
+
+## Change the pipeline live from the shell
 
 ```bash
 curl -X PUT localhost:8000/api/datasets/thresh -H 'content-type: application/json' \

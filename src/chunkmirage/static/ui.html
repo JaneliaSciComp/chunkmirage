@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>chunkmirage control</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --fg:#e6e6e6; --muted:#8b93a7; --accent:#2dd4bf; --line:#2a2f3a; }
+  body { margin:0; font:14px/1.45 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:12px 18px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; letter-spacing:.3px; }
+  header .status { color:var(--muted); font-size:12px; }
+  main { padding:16px 18px; display:grid; gap:16px; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
+  .card h2 { margin:0 0 6px; font-size:15px; display:flex; justify-content:space-between; align-items:baseline; }
+  .card h2 small { color:var(--muted); font-weight:normal; font-size:12px; }
+  .src { color:var(--muted); font-size:12px; word-break:break-all; margin-bottom:10px; }
+  .op { border-top:1px solid var(--line); padding:8px 0; }
+  .op .head { display:flex; justify-content:space-between; align-items:center; }
+  .op .head b { color:var(--accent); }
+  .param { display:grid; grid-template-columns: 90px 1fr 84px; gap:8px; align-items:center; margin:4px 0; }
+  .param label { color:var(--muted); font-size:12px; }
+  input[type=range] { width:100%; }
+  input[type=number], input[type=text], select { background:#0c0e12; color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:3px 6px; font:inherit; }
+  input[type=number] { width:76px; }
+  button { background:#232838; color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:4px 10px; cursor:pointer; font:inherit; }
+  button.primary { background:var(--accent); color:#04262a; border-color:transparent; font-weight:600; }
+  button:hover { filter:brightness(1.1); }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+  .hint { color:var(--muted); font-size:12px; }
+  .digest { font-family: ui-monospace, monospace; font-size:11px; color:var(--muted); }
+  .viewer { grid-column: 1 / -1; }
+  code { background:#0c0e12; padding:1px 4px; border-radius:3px; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>chunkmirage</h1>
+  <span class="status" id="status">connecting…</span>
+</header>
+<main id="main">
+  <section class="card viewer">
+    <h2>Viewer <small>drive an external Neuroglancer window</small></h2>
+    <div class="row">
+      <label class="hint">viewer URL</label>
+      <input type="text" id="viewerUrl" size="42" value="https://neuroglancer-demo.appspot.com">
+      <label class="hint">format</label>
+      <select id="format"></select>
+      <button class="primary" id="openViewer">Open Neuroglancer</button>
+      <label class="hint"><input type="checkbox" id="autoPush" checked> push updates to the open window</label>
+    </div>
+    <p class="hint">Each pushed update navigates the Neuroglancer window to a new state URL so it refetches the
+      changed layers. Because the window is on another origin, its camera position cannot be read back and is
+      reset on every push. For camera-preserving live updates use the Python viewer
+      (<code>chunkmirage serve --python-viewer</code>).</p>
+  </section>
+</main>
+<script>
+const $ = (s, el=document) => el.querySelector(s);
+let OPS = {}, DATASETS = {}, FORMATS = [], ngWin = null, timers = {};
+const status = m => { $('#status').textContent = m; };
+
+async function load() {
+  const [idx, ops] = await Promise.all([fetch('/').then(r=>r.json()), fetch('/api/ops').then(r=>r.json())]);
+  OPS = ops; DATASETS = idx.datasets; FORMATS = idx.formats;
+  const fsel = $('#format');
+  if (!fsel.options.length) for (const f of FORMATS) { const o = document.createElement('option'); o.value = o.textContent = f; if (f==='zarr3') o.selected = true; fsel.appendChild(o); }
+  render();
+  status(`${Object.keys(DATASETS).length} dataset(s) · version ${idx.version}`);
+}
+
+function bounds(ds, key) {
+  // heuristic slider ranges from the source dtype
+  const dt = ds.source_dtype || 'uint8';
+  if (/uint8/.test(dt)) return [0, 255, 1];
+  if (/uint16/.test(dt)) return [0, 65535, 1];
+  if (/int/.test(dt)) return [0, 4294967295, 1];
+  return [0, 1, 0.001];
+}
+
+function paramControl(ds, opIdx, key, schema, value) {
+  const wrap = document.createElement('div'); wrap.className = 'param';
+  const label = document.createElement('label'); label.textContent = key; wrap.appendChild(label);
+  const types = [].concat(schema.type || (schema.anyOf||[]).map(a=>a.type)).filter(Boolean);
+  const isNum = types.includes('number') || types.includes('integer');
+  if (isNum) {
+    const [lo, hi, step] = bounds(ds, key);
+    const range = document.createElement('input'); range.type='range'; range.min=lo; range.max=hi; range.step=step;
+    const num = document.createElement('input'); num.type='number'; num.step=step;
+    const v = (value===null||value===undefined) ? '' : value; range.value = v || lo; num.value = v;
+    const commit = (val) => { range.value = val; num.value = val; setParam(ds.name, opIdx, key, val===''? null : Number(val)); };
+    range.oninput = () => commit(range.value); num.onchange = () => commit(num.value);
+    wrap.appendChild(range); wrap.appendChild(num);
+  } else if (types.includes('boolean')) {
+    const cb = document.createElement('input'); cb.type='checkbox'; cb.checked = !!value;
+    cb.onchange = () => setParam(ds.name, opIdx, key, cb.checked);
+    wrap.appendChild(cb); wrap.appendChild(document.createElement('span'));
+  } else {
+    const t = document.createElement('input'); t.type='text'; t.value = value ?? '';
+    t.onchange = () => setParam(ds.name, opIdx, key, t.value);
+    wrap.appendChild(t); wrap.appendChild(document.createElement('span'));
+  }
+  return wrap;
+}
+
+function render() {
+  const main = $('#main');
+  for (const el of [...main.querySelectorAll('.card.ds')]) el.remove();
+  for (const [name, ds] of Object.entries(DATASETS)) {
+    ds.name = name;
+    const card = document.createElement('section'); card.className = 'card ds';
+    card.innerHTML = `<h2>${name} <small>${ds.levels[0].dtype} · ${ds.levels[0].shape.join('×')} · ${ds.levels.length} level(s)</small></h2>
+      <div class="src">${ds.spec ? ds.spec.source : '(constructed in Python; not editable here)'} <span class="digest">@${ds.digest}</span></div>`;
+    if (!ds.spec) { main.appendChild(card); continue; }
+    ds.spec.ops.forEach((op, i) => {
+      const box = document.createElement('div'); box.className = 'op';
+      const head = document.createElement('div'); head.className = 'head';
+      head.innerHTML = `<span><b>${op.op}</b> <span class="hint">${(OPS[op.op]?.doc||'').split('\n')[0]}</span></span>`;
+      const rm = document.createElement('button'); rm.textContent = 'remove'; rm.onclick = () => { ds.spec.ops.splice(i,1); push(name); };
+      head.appendChild(rm); box.appendChild(head);
+      const props = OPS[op.op]?.schema?.properties || {};
+      for (const [key, schema] of Object.entries(props)) box.appendChild(paramControl(ds, i, key, schema, op[key] ?? schema.default));
+      card.appendChild(box);
+    });
+    const row = document.createElement('div'); row.className = 'row';
+    const sel = document.createElement('select');
+    for (const opName of Object.keys(OPS)) { const o = document.createElement('option'); o.value = o.textContent = opName; sel.appendChild(o); }
+    const add = document.createElement('button'); add.textContent = 'add op';
+    add.onclick = () => { ds.spec.ops.push({op: sel.value}); push(name); };
+    row.appendChild(sel); row.appendChild(add);
+    card.appendChild(row);
+    main.appendChild(card);
+  }
+}
+
+function setParam(name, opIdx, key, value) {
+  DATASETS[name].spec.ops[opIdx][key] = value;
+  clearTimeout(timers[name]);
+  timers[name] = setTimeout(() => push(name), 150);
+}
+
+async function push(name) {
+  const ds = DATASETS[name];
+  status(`updating ${name}…`);
+  const r = await fetch(`/api/datasets/${encodeURIComponent(name)}`, {method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify(ds.spec)});
+  const body = await r.json();
+  if (!r.ok) { status(`error: ${body.error}`); return; }
+  DATASETS[name] = body; render();
+  status(`updated ${name} → @${body.digest}`);
+  if ($('#autoPush').checked) await pushViewer();
+}
+
+async function viewerLink() {
+  const fmt = $('#format').value, viewer = $('#viewerUrl').value;
+  const r = await fetch(`/api/neuroglancer?format=${fmt}&viewer=${encodeURIComponent(viewer)}`);
+  return (await r.json()).url;
+}
+
+async function pushViewer() {
+  if (!ngWin || ngWin.closed) return;
+  ngWin.location.href = await viewerLink();   // cross-origin navigation is permitted; reading is not
+}
+
+$('#openViewer').onclick = async () => { ngWin = window.open(await viewerLink(), 'chunkmirage-neuroglancer'); };
+
+// Live refresh when anything (curl, Python, another tab) edits a pipeline.
+const es = new EventSource('/api/events');
+es.addEventListener('change', async (ev) => {
+  const data = JSON.parse(ev.data);
+  const changed = Object.entries(data.datasets).some(([n, d]) => !DATASETS[n] || DATASETS[n].digest !== d.digest)
+               || Object.keys(DATASETS).length !== Object.keys(data.datasets).length;
+  if (changed) { await load(); if ($('#autoPush').checked) await pushViewer(); }
+});
+es.onerror = () => status('event stream disconnected; retrying…');
+load();
+</script>
+</body>
+</html>

@@ -15,6 +15,10 @@ Caveats:
   `--public-url` so generated links use the address your browser will use.
 * **VSCode Remote** forwards ports automatically, so `localhost:8000` in your laptop browser
   usually just works.
+* **Refetching after an edit**: Neuroglancer caches by URL, so chunkmirage puts the pipeline
+  digest in the URL. The control page can push the new state to an appspot window (camera
+  resets), or `--python-viewer --ng-client appspot` runs the appspot client build with
+  state sync so only the edited layer refetches. See [Interactivity](concepts/interactivity.md).
 
 **Fully in-browser compute with appspot: impossible.** The client-side idea is to run ops
 on your laptop GPU with no server. But Neuroglancer only knows how to *fetch chunks from a

@@ -27,6 +27,7 @@ nav:
       - Architecture & design: design.md
       - Pipelines, ops and halos: concepts/pipelines.md
       - Caching: concepts/caching.md
+      - Interactivity: concepts/interactivity.md
       - Formats and URLs: concepts/formats.md
   - Reference:
       - Ops: reference/ops.md

@@ -20,6 +20,11 @@ chunkmirage inspect SOURCE
 | `--viewer`            | `https://neuroglancer-demo.appspot.com`   | viewer for the printed link |
 | `--format`            | `zarr3`                                   | format used in the printed link |
 | `--workers`           | `1`                                       | uvicorn worker processes (caches are per process) |
+| `--python-viewer`     | off                                       | also start a python-neuroglancer viewer whose layers follow live edits (needs the `viewer` extra) |
+| `--ng-client`         | `bundled`                                 | client build for the python viewer: `bundled`, `appspot`, or a URL |
+
+`serve` prints the source URL, an appspot link, the control page (`/ui`), the control API
+URL and, with `--python-viewer`, the viewer URL.
 
 ## `ops`
 

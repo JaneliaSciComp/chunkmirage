@@ -51,6 +51,14 @@ def serve(
     viewer: str = typer.Option("https://neuroglancer-demo.appspot.com"),
     format: str = typer.Option("zarr3", help="format used for the printed neuroglancer link"),
     workers: int = typer.Option(1, help="uvicorn worker processes (caches are per-process)"),
+    python_viewer: bool = typer.Option(
+        False,
+        "--python-viewer",
+        help="also start a python-neuroglancer viewer whose layers follow live edits",
+    ),
+    ng_client: str = typer.Option(
+        "bundled", help="client build for --python-viewer: 'bundled', 'appspot', or a URL"
+    ),
 ):
     """Serve SOURCE through a pipeline of ops as n5 / zarr / zarr3 / precomputed."""
     import uvicorn
@@ -72,9 +80,15 @@ def serve(
     base = (public_url or f"http://localhost:{port}").rstrip("/")
     scheme = {"n5": "n5", "zarr": "zarr2", "zarr3": "zarr3", "precomputed": "precomputed"}[format]
     src = source_url(base, name, format, scheme, pipeline.digest())
-    typer.echo(f"source:      {src}")
-    typer.echo(f"neuroglancer: {viewer_link(pipeline, name, src, viewer)}")
+    typer.echo(f"source:       {src}")
+    typer.echo(f"neuroglancer: {viewer_link({name: pipeline}, {name: src}, viewer)}")
+    typer.echo(f"control UI:   {base}/ui")
     typer.echo(f"control API:  {base}/api/datasets/{name}")
+    if python_viewer:
+        from chunkmirage.viewer import Viewer
+
+        v = Viewer(registry, base, format=format, client=ng_client)
+        typer.echo(f"python viewer: {v.url}   (layers follow live edits; camera preserved)")
     application = create_app(registry, public_url=public_url)
     uvicorn.run(
         application,

@@ -24,6 +24,7 @@ user-visible thing updates the relevant page in the same commit:
 | REST endpoint                   | `docs/reference/api.md`                                 |
 | CLI command or flag             | `docs/reference/cli.md`                                 |
 | caching behaviour               | `docs/concepts/caching.md`                              |
+| control page / viewer / events  | `docs/concepts/interactivity.md`                        |
 | architectural decision          | `docs/design.md`                                        |
 | roadmap item shipped            | remove from `docs/roadmap.md`, document where it landed |
 
