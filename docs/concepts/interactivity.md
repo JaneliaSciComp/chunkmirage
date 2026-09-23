@@ -44,6 +44,27 @@ the new URL into the viewer, from least to most convenient:
    hosted demo site (the Python server proxies it), so you are running the same build as
    appspot, just with state sync. This is the recommended interactive mode.
 
+## Sharing on your network
+
+`chunkmirage serve` binds to all interfaces by default and prints URLs using the machine's
+network address, so anyone on the same network can open the control page and the python
+viewer:
+
+```
+control UI:    http://10.123.4.56:8000/ui
+python viewer: http://10.123.4.56:41595/v/<token>/
+```
+
+The python viewer is the right way to share, because it serves its own Neuroglancer page
+over plain `http` from the same machine as the chunks. The hosted `https` appspot viewer
+cannot fetch from `http://10.x.x.x` (browsers block mixed content; only `localhost` is
+exempt), so remote users would need an SSH tunnel or an `https` server for that path.
+
+Edits are global: everyone viewing dataset `thresh` sees the same pipeline, and a slider
+drag by one person changes it for all. For independent exploration, create a copy under
+another name (`POST /api/datasets` with the same spec); upstream stages are shared through
+the cache, so copies are nearly free.
+
 ## Transforms on the fly
 
 Two cases, and they belong in different places:

@@ -33,7 +33,9 @@ class Viewer:
         public_url: base URL clients use for chunk requests, e.g. ``http://localhost:8000``.
         format: which frontend the layers read from.
         client: ``"bundled"`` (default), ``"appspot"``, or a URL of a Neuroglancer build.
-        bind_address / port: where the python-neuroglancer server listens.
+        bind_address / port: where the python-neuroglancer server listens. Use
+            ``"0.0.0.0"`` to let other machines on the network open the viewer.
+        public_host: host to put in the viewer URL (e.g. the machine's LAN IP).
     """
 
     def __init__(
@@ -45,6 +47,7 @@ class Viewer:
         client: str = "bundled",
         bind_address: str = "127.0.0.1",
         port: int = 0,
+        public_host: str | None = None,
     ):
         import neuroglancer
 
@@ -58,6 +61,7 @@ class Viewer:
         self.public_url = public_url.rstrip("/")
         self.format = format
         self.viewer = neuroglancer.Viewer()
+        self.public_host = public_host
         self._lock = threading.Lock()
         self._unsubscribe = registry.subscribe(self._on_change)
         self.sync()
@@ -65,7 +69,17 @@ class Viewer:
     # --- public -----------------------------------------------------------------------
     @property
     def url(self) -> str:
-        return str(self.viewer)
+        """Viewer URL; the host is replaced by ``public_host`` when one was given, so the
+        link works from other machines even though python-neuroglancer reports the bind
+        address or FQDN."""
+        url = str(self.viewer)
+        if self.public_host:
+            from urllib.parse import urlsplit, urlunsplit
+
+            parts = urlsplit(url)
+            netloc = f"{self.public_host}:{parts.port}" if parts.port else self.public_host
+            url = urlunsplit(parts._replace(netloc=netloc))
+        return url
 
     def set_ops(self, name: str, ops: list[dict]) -> Pipeline:
         """Convenience: replace the ops of dataset ``name`` keeping its source and settings."""

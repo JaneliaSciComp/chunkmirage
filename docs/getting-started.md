@@ -28,7 +28,8 @@ neuroglancer: https://neuroglancer-demo.appspot.com/#!...
 control API:  http://localhost:8000/api/datasets/data
 ```
 
-Open the Neuroglancer link in Chrome or Firefox on the machine that can reach port 8000.
+URLs use the machine's network address so they work from other machines too. Open the
+Neuroglancer link in Chrome or Firefox.
 See [FAQ: does this work with the hosted Neuroglancer?](faq.md#does-this-work-with-neuroglancer-demoappspotcom)
 
 ## The demo

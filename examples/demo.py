@@ -109,6 +109,9 @@ def neuroglancer_link(base, raw, thr):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument(
+        "--host", default="0.0.0.0", help="bind address; 0.0.0.0 makes it reachable on the network"
+    )
     ap.add_argument("--low", type=float, default=120)
     ap.add_argument("--sigma", type=float, default=1.0)
     args = ap.parse_args()
@@ -118,7 +121,9 @@ def main():
     raw = Pipeline(src, [])
     thr = Pipeline(src, [Gaussian(sigma=args.sigma), Threshold(low=args.low)], cache=raw.cache)
     app = create_app({"raw": raw, "thresh": thr})
-    base = f"http://localhost:{args.port}"
+    from chunkmirage.netutil import public_host_for
+
+    base = f"http://{public_host_for(args.host)}:{args.port}"
     print("\nOpen in Neuroglancer:\n" + neuroglancer_link(base, raw, thr))
     print("\nChange the threshold live (then reload the layer with the new URL from the response):")
     print(f"  curl -X PUT {base}/api/datasets/thresh -H 'content-type: application/json' \\")
@@ -126,7 +131,7 @@ def main():
         f'       -d \'{{"source": "{DATA}", "ops": [{{"op": "gaussian", "sigma": 1}}, {{"op": "threshold", "low": 160}}]}}\''
     )
     print(f"\nIndex / cache stats: {base}/  and  {base}/api/cache\n", flush=True)
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 
 if __name__ == "__main__":

@@ -42,7 +42,9 @@ def serve(
     host: str = typer.Option("0.0.0.0"),
     port: int = typer.Option(8000),
     public_url: str | None = typer.Option(
-        None, help="URL clients use to reach this server (behind a proxy/tunnel)"
+        None,
+        help="URL clients use to reach this server. Default: this machine's network address "
+        "(http://<lan-ip>:<port>) when binding 0.0.0.0, else http://localhost:<port>",
     ),
     cache_gb: float = typer.Option(2.0, help="in-process chunk cache size"),
     source_cache_gb: float = typer.Option(
@@ -59,11 +61,16 @@ def serve(
     ng_client: str = typer.Option(
         "bundled", help="client build for --python-viewer: 'bundled', 'appspot', or a URL"
     ),
+    viewer_host: str | None = typer.Option(
+        None, help="bind address for --python-viewer (default: same as --host)"
+    ),
+    viewer_port: int = typer.Option(0, help="port for --python-viewer (default: random free port)"),
 ):
     """Serve SOURCE through a pipeline of ops as n5 / zarr / zarr3 / precomputed."""
     import uvicorn
 
     from chunkmirage.cache import LRUCache
+    from chunkmirage.netutil import public_host_for
     from chunkmirage.neuroglancer import source_url, viewer_link
     from chunkmirage.pipeline import PipelineSpec
     from chunkmirage.server import DatasetRegistry, create_app
@@ -77,7 +84,9 @@ def serve(
         LRUCache(int(cache_gb * 1024**3)), source_cache_bytes=int(source_cache_gb * 1024**3)
     )
     pipeline = registry.add(name, spec)
-    base = (public_url or f"http://localhost:{port}").rstrip("/")
+    public_host = public_host_for(host)
+    base = (public_url or f"http://{public_host}:{port}").rstrip("/")
+    public_url = base
     scheme = {"n5": "n5", "zarr": "zarr2", "zarr3": "zarr3", "precomputed": "precomputed"}[format]
     src = source_url(base, name, format, scheme, pipeline.digest())
     typer.echo(f"source:       {src}")
@@ -87,7 +96,15 @@ def serve(
     if python_viewer:
         from chunkmirage.viewer import Viewer
 
-        v = Viewer(registry, base, format=format, client=ng_client)
+        v = Viewer(
+            registry,
+            base,
+            format=format,
+            client=ng_client,
+            bind_address=viewer_host or host,
+            port=viewer_port,
+            public_host=public_host,
+        )
         typer.echo(f"python viewer: {v.url}   (layers follow live edits; camera preserved)")
     application = create_app(registry, public_url=public_url)
     uvicorn.run(
