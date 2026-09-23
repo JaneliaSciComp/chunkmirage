@@ -3,9 +3,10 @@
 Ordered by impact. Items move to the docs proper when they land; this page must not
 describe shipped features as future work.
 
-1. **cellmap-flow as first consumer.** Port its inference path to an `Op` with `halo` and
-   `cache=True`, run on a GPU node, delete the duplicated serving code. This is the forcing
-   function that exposes every gap below with real data.
+1. **A real inference consumer.** Port an existing live-inference server (cellmap-flow is
+   the obvious candidate) onto an `Op` with `halo` and `cache=True` on a GPU node. Not
+   because the tool is for that project, but because real models, real data and a real user
+   are the fastest way to expose the gaps below.
 2. **Multiscale semantics for ops.** Per-op declaration of valid scale levels plus a
    downsample-from-s0 mode. Today each level is processed independently, which is wrong for
    inference.

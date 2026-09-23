@@ -18,9 +18,11 @@ viewer / dask  --HTTP-->  chunkmirage  --tensorstore/h5py-->  real data (zarr/n5
                              +-- REST API for live pipeline edits
 ```
 
-It generalizes [example-virtual-n5](https://github.com/stuarteberg/example-virtual-n5) and
-the serving layer of [cellmap-flow](https://github.com/janelia-cellmap/cellmap-flow), and is
-intended to become the serving, caching and format backbone that cellmap-flow imports.
+It is a general-purpose tool: any viewer or library that reads chunked arrays over HTTP,
+any source format, any per-chunk computation. Prior art that uses the same trick for one
+format or one purpose includes [example-virtual-n5](https://github.com/stuarteberg/example-virtual-n5)
+and the serving layer of [cellmap-flow](https://github.com/janelia-cellmap/cellmap-flow);
+projects like those are expected consumers, not the reason it exists.
 
 ## When to use it
 

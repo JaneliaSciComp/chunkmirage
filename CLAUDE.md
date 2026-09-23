@@ -1,8 +1,9 @@
 # chunkmirage: notes for AI-assisted sessions
 
 Library + CLI that spoofs zarr v2/v3, N5 and Neuroglancer precomputed over HTTP with a
-pipeline of block ops, per-stage caching, and a REST API. Intended to be imported by
-cellmap-flow. Architecture and rationale: `docs/design.md`.
+pipeline of block ops, per-stage caching, and a REST API. General-purpose: not built for
+any one downstream project. example-virtual-n5 and cellmap-flow are prior art / example
+consumers, not the purpose. Architecture and rationale: `docs/design.md`.
 
 ## Workflow
 

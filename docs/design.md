@@ -2,16 +2,19 @@
 
 ## What it is for
 
-Viewers such as Neuroglancer, BigDataViewer, vizarr and napari can read chunked array
-formats over plain HTTP. chunkmirage answers those HTTP requests itself, so the "dataset"
-can be anything computable per chunk. Two existing projects show the pattern:
+Viewers such as Neuroglancer, BigDataViewer, vizarr and napari, and libraries such as
+dask and tensorstore, can read chunked array formats over plain HTTP. chunkmirage answers
+those HTTP requests itself, so the "dataset" can be anything computable per chunk. It is
+meant to be the reusable, general form of a trick that has so far been re-implemented per
+project. Two existing examples of that pattern:
 
 * [example-virtual-n5](https://github.com/stuarteberg/example-virtual-n5): a Flask app that
   synthesises N5 metadata and chunks. Proves the idea, single format, single dataset.
 * [cellmap-flow](https://github.com/janelia-cellmap/cellmap-flow): the same trick wrapped
   around live model inference, with a UI for swapping models and post-processing.
 
-chunkmirage factors out the part both share and generalises it:
+chunkmirage factors out the part both share and generalises it to any format, source and
+computation:
 
 | concern            | example-virtual-n5 | cellmap-flow            | chunkmirage                                   |
 | ------------------ | ------------------ | ----------------------- | --------------------------------------------- |
@@ -22,8 +25,9 @@ chunkmirage factors out the part both share and generalises it:
 | reconfiguration    | restart            | custom UI/API           | REST (and MCP) with cache-busting URLs        |
 | deployment         | Flask              | Flask + gunicorn        | ASGI (Starlette) library + CLI                |
 
-cellmap-flow is the first intended consumer: it should shrink to "a set of inference ops
-plus a UI" that imports chunkmirage for sources, caching, formats and serving.
+Projects like cellmap-flow are natural consumers (it could shrink to "a set of inference
+ops plus a UI" on top of chunkmirage), and serve as a realistic test of the design, but
+chunkmirage is not built around any one of them.
 
 ### Where it does *not* add value
 
