@@ -11,12 +11,6 @@ model inference, resampling under a registration transform, ...), encoded in wha
 format the viewer asked for, and cached so that tweaking a parameter downstream never
 re-reads or re-computes upstream stages.
 
-It is a general-purpose tool: any viewer or library that reads chunked arrays over HTTP,
-any source format, any per-chunk computation. Prior art that uses the same trick for one
-format or one purpose includes [example-virtual-n5](https://github.com/stuarteberg/example-virtual-n5)
-and the serving layer of [cellmap-flow](https://github.com/janelia-cellmap/cellmap-flow);
-projects like those are expected consumers, not the reason it exists.
-
 ```
 viewer  --HTTP-->  chunkmirage  --tensorstore/h5py-->  real data (zarr/n5/precomputed/hdf5, file/s3/gcs/http)
                       |
