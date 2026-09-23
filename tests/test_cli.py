@@ -15,8 +15,8 @@ def test_parse_op():
 
 def test_build_registry_with_raw_shares_cache(zarr2_path):
     reg = build_registry(zarr2_path, "thr", ["threshold:low=100"], None, raw=True)
-    assert reg.names() == ["thr", "thr-raw"]
-    thr, raw = reg.get("thr"), reg.get("thr-raw")
+    assert reg.names() == ["raw", "thr"]
+    thr, raw = reg.get("thr"), reg.get("raw")
     assert thr.cache is raw.cache
     # stage 0 keys are identical -> the raw chunk is computed once for both
     assert thr.levels[0].info.chunk_shape == raw.levels[0].info.chunk_shape

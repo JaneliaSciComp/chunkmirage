@@ -46,7 +46,8 @@ def build_registry(
         LRUCache(int(cache_gb * 1024**3)), source_cache_bytes=int(source_cache_gb * 1024**3)
     )
     if raw:
-        registry.add(f"{name}-raw", PipelineSpec(source=source, ops=[], chunk_shape=chunk_shape))
+        raw_name = "raw" if name != "raw" else "source"
+        registry.add(raw_name, PipelineSpec(source=source, ops=[], chunk_shape=chunk_shape))
     registry.add(
         name, PipelineSpec(source=source, ops=[_parse_op(o) for o in ops], chunk_shape=chunk_shape)
     )
@@ -66,7 +67,7 @@ def serve(
     raw: bool = typer.Option(
         True,
         "--raw/--no-raw",
-        help="also serve the unprocessed source as '<name>-raw' so it shows as a layer (shares the cache)",
+        help="also serve the unprocessed source as 'raw' so it shows as a layer (shares the cache)",
     ),
     chunk: str | None = typer.Option(
         None, help="output chunk shape, e.g. 64,64,64 (default: source chunks)"
