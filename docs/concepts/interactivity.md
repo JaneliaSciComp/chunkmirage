@@ -55,10 +55,15 @@ control UI:    http://10.123.4.56:8000/ui
 python viewer: http://10.123.4.56:41595/v/<token>/
 ```
 
-The python viewer is the right way to share, because it serves its own Neuroglancer page
-over plain `http` from the same machine as the chunks. The hosted `https` appspot viewer
-cannot fetch from `http://10.x.x.x` (browsers block mixed content; only `localhost` is
-exempt), so remote users would need an SSH tunnel or an `https` server for that path.
+The python viewer works over plain `http` from anywhere on the network because it serves
+its own Neuroglancer page from the same machine as the chunks.
+
+The hosted appspot viewer is `https` and browsers block it from fetching
+`http://10.x.x.x` ("mixed content"; only `localhost` is exempt). To use appspot from other
+machines, start the server with `--https`. chunkmirage generates a self-signed certificate
+whose subject alternative names cover the machine's IP, hostname and `localhost`. Each
+browser has to trust it once: open the printed `https://…/` URL, accept the warning, then
+open the viewer link. Neuroglancer's chunk fetches will otherwise fail silently.
 
 Edits are global: everyone viewing dataset `thresh` sees the same pipeline, and a slider
 drag by one person changes it for all. For independent exploration, create a copy under

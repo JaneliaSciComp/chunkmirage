@@ -22,7 +22,8 @@ hdf5 = ["h5py>=3.10"]
 ops = ["scipy>=1.12"]
 mcp = ["mcp>=1.0"]
 viewer = ["neuroglancer>=2.40"]
-all = ["chunkmirage[hdf5,ops,mcp,viewer]"]
+https = ["cryptography>=42"]
+all = ["chunkmirage[hdf5,ops,mcp,viewer,https]"]
 
 [project.scripts]
 chunkmirage = "chunkmirage.cli:app"

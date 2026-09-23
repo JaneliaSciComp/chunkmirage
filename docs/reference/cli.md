@@ -12,9 +12,12 @@ chunkmirage inspect SOURCE
 | --------------------- | ----------------------------------------- | ------- |
 | `--name`              | `data`                                    | dataset name in URLs |
 | `--op`, `-o`          |                                           | op spec, repeatable; `name:k=v,k=v` or JSON |
+| `--raw`               | off                                       | also serve the unprocessed source as `<name>-raw`; shares the cache, appears as a second layer |
 | `--chunk`             | source chunks                             | output chunk shape, e.g. `64,64,64` |
 | `--host` / `--port`   | `0.0.0.0` / `8000`                        | bind address |
-| `--public-url`        | `http://<lan-ip>:PORT`                    | address clients use in every printed link and layer URL; defaults to this machine's network address when binding `0.0.0.0`, `localhost` when binding `127.0.0.1`; set explicitly behind a tunnel or proxy |
+| `--https`             | off                                       | serve https; a self-signed certificate is generated in `~/.cache/chunkmirage/` on first use (needs the `https` extra or the `openssl` CLI) |
+| `--cert` / `--key`    | auto-generated                            | use your own certificate and key with `--https` |
+| `--public-url`        | `http(s)://<lan-ip>:PORT`                 | address clients use in every printed link and layer URL; defaults to this machine's network address when binding `0.0.0.0`, `localhost` when binding `127.0.0.1`; set explicitly behind a tunnel or proxy |
 | `--cache-gb`          | `2.0`                                     | in-process chunk cache |
 | `--source-cache-gb`   | `0.5`                                     | tensorstore raw-byte cache |
 | `--viewer`            | `https://neuroglancer-demo.appspot.com`   | viewer for the printed link |

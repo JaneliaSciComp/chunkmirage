@@ -27,8 +27,9 @@ describe shipped features as future work.
    `neuroglancer_link`, `screenshot`. Off by default, local only. (The REST API, `/api/events`
    stream, control page and python-neuroglancer viewer it would wrap already exist; see
    [Interactivity](concepts/interactivity.md).)
-8. **Deployment hardening.** `--https` with a self-signed cert, bearer token on `/api/*`,
-   shared-cache multi-worker mode.
+8. **Deployment hardening.** Bearer token on `/api/*`, shared-cache multi-worker mode.
+   (`--https` with an auto-generated self-signed certificate has shipped; see the
+   [CLI reference](reference/cli.md).)
 9. **Own-hosted Neuroglancer with a service worker.** The zero-install browser demo with
    WebGPU ops and ONNX Runtime Web inference, sharing the JSON pipeline spec with the
    Python server. See [FAQ](faq.md#does-this-work-with-neuroglancer-demoappspotcom) for why

@@ -12,9 +12,10 @@ Caveats:
 * **Safari** blocks https-to-http fetches even for localhost. Use Chrome or Firefox.
 * **Other machines on your network** (a cluster node, a colleague's laptop): the printed
   URLs already use the machine's network address, and the python viewer works over plain
-  http from anywhere on the network. The appspot viewer specifically needs either an SSH
-  tunnel so the browser sees `localhost`, or https (planned `--https` flag; cellmap-flow
-  ships a self-signed cert for this). Pass `--public-url` when behind a tunnel or proxy.
+  http from anywhere on the network. The appspot viewer specifically blocks
+  `http://10.x.x.x` as mixed content, so either SSH-tunnel the port so the browser sees
+  `localhost`, or run with `--https` and accept the self-signed certificate once per
+  browser. Pass `--public-url` when behind a tunnel or proxy.
 * **VSCode Remote** forwards ports automatically, so `localhost:8000` in your laptop browser
   usually just works.
 * **Refetching after an edit**: Neuroglancer caches by URL, so chunkmirage puts the pipeline

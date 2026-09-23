@@ -348,6 +348,7 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
+    { name = "cryptography" },
     { name = "h5py" },
     { name = "mcp" },
     { name = "neuroglancer" },
@@ -356,6 +357,9 @@ all = [
 ]
 hdf5 = [
     { name = "h5py" },
+]
+https = [
+    { name = "cryptography" },
 ]
 mcp = [
     { name = "mcp" },
@@ -384,7 +388,8 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "chunkmirage", extras = ["hdf5", "ops", "mcp", "viewer"], marker = "extra == 'all'" },
+    { name = "chunkmirage", extras = ["hdf5", "ops", "mcp", "viewer", "https"], marker = "extra == 'all'" },
+    { name = "cryptography", marker = "extra == 'https'", specifier = ">=42" },
     { name = "h5py", marker = "extra == 'hdf5'", specifier = ">=3.10" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0" },
     { name = "neuroglancer", marker = "extra == 'viewer'", specifier = ">=2.40" },
@@ -397,7 +402,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.12" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
 ]
-provides-extras = ["hdf5", "ops", "mcp", "viewer", "all"]
+provides-extras = ["hdf5", "ops", "mcp", "viewer", "https", "all"]
 
 [package.metadata.requires-dev]
 dev = [
