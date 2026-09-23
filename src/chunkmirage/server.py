@@ -338,7 +338,15 @@ def create_app(
         Route("/{name}/{format}/{path:path}", serve),
     ]
     middleware = [
-        Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]),
+        # allow_private_network: Chrome's Private Network Access preflight, sent when a public
+        # https page (e.g. the hosted Neuroglancer) fetches from a 10.x/192.168.x address.
+        Middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_methods=["*"],
+            allow_headers=["*"],
+            allow_private_network=True,
+        ),
     ]
     app = Starlette(routes=routes, middleware=middleware)
     app.state.registry = registry

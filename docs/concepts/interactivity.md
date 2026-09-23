@@ -47,6 +47,19 @@ the new URL into the viewer, from least to most convenient:
    and embeds it by default, so sliders and viewer sit on one page with the camera
    preserved.
 
+Two browser rules bite when the server is on a private network address (`10.x`,
+`192.168.x`) and the viewer is a public https site such as appspot:
+
+* **Local / Private Network Access** (Chrome): a public site needs permission to reach a
+  private address. Loopback is exempt, which is why `localhost` always works. The server
+  answers the preflight with `Access-Control-Allow-Private-Network: true`, and the control
+  page delegates the permission to the embedded viewer with
+  `allow="local-network-access"`. Chrome may still show a one-time permission prompt; accept
+  it. Firefox does not enforce this yet.
+* **Certificate trust is per origin.** Accepting the self-signed certificate at
+  `https://localhost:8000` does not cover `https://10.101.10.98:8000`. Open the exact host
+  the chunk URLs use, once, in each browser.
+
 Mixed-content rules decide what can be embedded where: an `https` control page (with
 `--https`) cannot embed the `http` python viewer, and an `http` control page on a
 non-localhost address cannot have the embedded `https` appspot viewer fetch its chunks. The

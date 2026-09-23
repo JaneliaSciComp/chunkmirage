@@ -58,7 +58,9 @@
       <label class="hint"><input type="checkbox" id="embed" checked> embed</label>
     </div>
     <p class="hint" id="viewerHint"></p>
-    <iframe id="ngFrame" allow="fullscreen" style="display:none"></iframe>
+    <!-- allow: a public https viewer (appspot) fetching from a private 10.x address needs
+         Chrome's Local Network Access permission, which the embedding page must delegate. -->
+    <iframe id="ngFrame" allow="fullscreen; local-network-access *" style="display:none"></iframe>
   </section>
 </main>
 <script>

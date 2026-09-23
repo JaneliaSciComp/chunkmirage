@@ -83,6 +83,22 @@ def test_events_endpoint_headers(registry):
     assert route.methods == {"GET", "HEAD"}
 
 
+def test_private_network_access_headers(registry):
+    c = TestClient(create_app(registry))
+    r = c.get("/thr/zarr3/zarr.json", headers={"Origin": "https://neuroglancer-demo.appspot.com"})
+    assert r.headers["access-control-allow-origin"] == "*"
+    pre = c.options(
+        "/thr/zarr3/zarr.json",
+        headers={
+            "Origin": "https://neuroglancer-demo.appspot.com",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Private-Network": "true",
+        },
+    )
+    assert pre.status_code == 200
+    assert pre.headers["access-control-allow-private-network"] == "true"
+
+
 def test_get_dataset_reports_source_dtype(registry):
     c = TestClient(create_app(registry))
     assert c.get("/api/datasets/thr").json()["source_dtype"] == "uint8"
