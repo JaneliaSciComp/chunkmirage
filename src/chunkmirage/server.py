@@ -84,9 +84,15 @@ def create_app(
     cache: LRUCache | None = None,
     allow_edit: bool = True,
 ) -> Starlette:
-    registry = datasets if isinstance(datasets, DatasetRegistry) else DatasetRegistry(cache)
-    if datasets and not isinstance(datasets, DatasetRegistry):
-        for name, p in datasets.items():
+    if isinstance(datasets, DatasetRegistry):
+        registry = datasets
+    else:
+        if cache is None and datasets:
+            # Report/clear the cache the pipelines actually use, if they were built with one.
+            pipes = [p for p in datasets.values() if isinstance(p, Pipeline)]
+            cache = pipes[0].cache if pipes else None
+        registry = DatasetRegistry(cache)
+        for name, p in (datasets or {}).items():
             registry.add(name, p)
     fronts: dict[str, Frontend] = (
         dict(frontends) if frontends else {n: get_frontend(n) for n in FRONTENDS}
