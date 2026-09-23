@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Spoof chunked array formats (zarr, n5, neuroglancer precomputed) over HTTP with on-the-fly processing, caching, and pluggable ops."
 readme = "README.md"
 license = { file = "LICENSE" }
-authors = [{ name = "David Ackerman", email = "ackermand@janelia.hhmi.org" }]
+# authors: TBD (collaborative project; to be filled in before first release)
 requires-python = ">=3.11"
 keywords = ["zarr", "n5", "neuroglancer", "tensorstore", "virtual", "chunked", "imaging"]
 dependencies = [

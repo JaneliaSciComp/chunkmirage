@@ -79,7 +79,7 @@ class MyModel(Op):
         return run_my_network(block)
 ```
 
-Full documentation: **https://davidackerman.github.io/chunkmirage/** (built from `docs/` with MkDocs; run `uv run mkdocs serve` locally).
+Full documentation: **https://janeliascicomp.github.io/chunkmirage/** (built from `docs/` with MkDocs; run `uv run mkdocs serve` locally).
 
 See [docs/design.md](docs/design.md) for the architecture, language/stack rationale,
 caching model, extensibility plan (plugins, REST, MCP), and the client-side (browser /
@@ -94,4 +94,4 @@ registration/resampling op, MCP server, browser build.
 
 ## License
 
-BSD 3-Clause, CellMap Project Team.
+BSD 3-Clause, Howard Hughes Medical Institute. Authors: TBD (collaborative project).

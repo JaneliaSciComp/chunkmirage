@@ -35,6 +35,10 @@ speculatively, and the operation is one a viewer's shader cannot do:
 
 See [FAQ](faq.md) for when *not* to use it.
 
+## License and authors
+
+BSD 3-Clause, Howard Hughes Medical Institute. Authors: TBD (collaborative project).
+
 ## Where next
 
 * [Getting started](getting-started.md): install, serve, open in Neuroglancer.
