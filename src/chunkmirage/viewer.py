@@ -64,6 +64,7 @@ class Viewer:
         self.public_host = public_host
         self._lock = threading.Lock()
         self._unsubscribe = registry.subscribe(self._on_change)
+        registry.viewer_url = self.url
         self.sync()
 
     # --- public -----------------------------------------------------------------------
@@ -121,6 +122,8 @@ class Viewer:
 
     def close(self) -> None:
         self._unsubscribe()
+        if self.registry.viewer_url == self.url:
+            self.registry.viewer_url = None
 
     # --- internals ----------------------------------------------------------------------
     def _on_change(self, name: str, pipeline: Pipeline | None) -> None:

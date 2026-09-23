@@ -63,6 +63,8 @@ class DatasetRegistry:
         self._lock = threading.RLock()
         self._callbacks: list[ChangeCallback] = []
         self.version = 0
+        #: URL of an attached python-neuroglancer viewer, if any (set by chunkmirage.viewer.Viewer)
+        self.viewer_url: str | None = None
 
     def add(self, name: str, pipeline: Pipeline | PipelineSpec | dict) -> Pipeline:
         if not isinstance(pipeline, Pipeline):
@@ -192,6 +194,7 @@ def create_app(
                 "datasets": out,
                 "formats": sorted(fronts),
                 "version": registry.version,
+                "viewer_url": registry.viewer_url,
                 "cache": registry.cache.stats(),
             }
         )

@@ -5,7 +5,7 @@ All endpoints are CORS-open. Editing endpoints can be disabled with
 
 | method   | path                                   | purpose |
 | -------- | -------------------------------------- | ------- |
-| `GET`    | `/`                                    | index: datasets, their specs, source URLs per format, cache stats |
+| `GET`    | `/`                                    | index: datasets, their specs, source URLs per format, `viewer_url` of an attached python viewer (or null), cache stats |
 | `GET`    | `/api/ops`                             | registered ops with halo, cache flag, docstring and JSON schema |
 | `GET`    | `/api/datasets`                        | dataset names |
 | `POST`   | `/api/datasets`                        | create: body `{"name": ..., "spec": PipelineSpec}` (or the spec with a `name` field) |

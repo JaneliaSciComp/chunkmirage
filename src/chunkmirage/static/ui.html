@@ -30,6 +30,8 @@
   .hint { color:var(--muted); font-size:12px; }
   .digest { font-family: ui-monospace, monospace; font-size:11px; color:var(--muted); }
   .viewer { grid-column: 1 / -1; }
+  .viewer iframe { width:100%; height:70vh; border:1px solid var(--line); border-radius:6px; background:#000; margin-top:10px; }
+  .warn { color:#f5b544; font-size:12px; }
   code { background:#0c0e12; padding:1px 4px; border-radius:3px; font-size:12px; }
 </style>
 </head>
@@ -40,19 +42,23 @@
 </header>
 <main id="main">
   <section class="card viewer">
-    <h2>Viewer <small>drive an external Neuroglancer window</small></h2>
+    <h2>Viewer <small>embedded here, or opened in a new tab</small></h2>
     <div class="row">
-      <label class="hint">viewer URL</label>
-      <input type="text" id="viewerUrl" size="42" value="https://neuroglancer-demo.appspot.com">
+      <label class="hint">show</label>
+      <select id="viewerKind">
+        <option value="appspot">neuroglancer-demo.appspot.com</option>
+        <option value="python" id="pythonOpt" disabled>python viewer (not running)</option>
+        <option value="custom">custom viewer URL…</option>
+      </select>
+      <input type="text" id="viewerUrl" size="40" value="https://neuroglancer-demo.appspot.com" style="display:none">
       <label class="hint">format</label>
       <select id="format"></select>
-      <button class="primary" id="openViewer">Open Neuroglancer</button>
-      <label class="hint"><input type="checkbox" id="autoPush" checked> push updates to the open window</label>
+      <button class="primary" id="openViewer">Open in new tab</button>
+      <label class="hint"><input type="checkbox" id="autoPush" checked> push updates to the viewer</label>
+      <label class="hint"><input type="checkbox" id="embed" checked> embed</label>
     </div>
-    <p class="hint">Each pushed update navigates the Neuroglancer window to a new state URL so it refetches the
-      changed layers. Because the window is on another origin, its camera position cannot be read back and is
-      reset on every push. For camera-preserving live updates use the Python viewer
-      (<code>chunkmirage serve --python-viewer</code>).</p>
+    <p class="hint" id="viewerHint"></p>
+    <iframe id="ngFrame" allow="fullscreen" style="display:none"></iframe>
   </section>
 </main>
 <script>
@@ -64,7 +70,16 @@ async function load() {
   const [idx, ops] = await Promise.all([fetch('/').then(r=>r.json()), fetch('/api/ops').then(r=>r.json())]);
   OPS = ops; DATASETS = idx.datasets; FORMATS = idx.formats;
   const fsel = $('#format');
-  if (!fsel.options.length) for (const f of FORMATS) { const o = document.createElement('option'); o.value = o.textContent = f; if (f==='zarr3') o.selected = true; fsel.appendChild(o); }
+  const first = !fsel.options.length;
+  if (first) for (const f of FORMATS) { const o = document.createElement('option'); o.value = o.textContent = f; if (f==='zarr3') o.selected = true; fsel.appendChild(o); }
+  VIEWER_URL = idx.viewer_url || null;
+  const po = $('#pythonOpt');
+  po.disabled = !VIEWER_URL; po.textContent = VIEWER_URL ? `python viewer (${VIEWER_URL})` : 'python viewer (not running)';
+  if (first) {
+    // Prefer the python viewer when it exists and this page can embed it.
+    if (VIEWER_URL && !(location.protocol === 'https:' && VIEWER_URL.startsWith('http:'))) $('#viewerKind').value = 'python';
+    updateHint(); showEmbedded();
+  }
   render();
   status(`${Object.keys(DATASETS).length} dataset(s) · version ${idx.version}`);
 }
@@ -150,18 +165,61 @@ async function push(name) {
   if ($('#autoPush').checked) await pushViewer();
 }
 
+let VIEWER_URL = null;   // python viewer, if the server reports one
+
+function viewerKind() { return $('#viewerKind').value; }
+function viewerBase() {
+  const k = viewerKind();
+  if (k === 'python') return VIEWER_URL;
+  if (k === 'custom') return $('#viewerUrl').value;
+  return 'https://neuroglancer-demo.appspot.com';
+}
+
 async function viewerLink() {
-  const fmt = $('#format').value, viewer = $('#viewerUrl').value;
-  const r = await fetch(`/api/neuroglancer?format=${fmt}&viewer=${encodeURIComponent(viewer)}`);
+  const k = viewerKind();
+  if (k === 'python') return VIEWER_URL;          // state lives server-side; the URL never changes
+  const fmt = $('#format').value;
+  const r = await fetch(`/api/neuroglancer?format=${fmt}&viewer=${encodeURIComponent(viewerBase())}`);
   return (await r.json()).url;
 }
 
+function updateHint() {
+  const k = viewerKind(), pageHttps = location.protocol === 'https:';
+  let msg = '';
+  if (k === 'python') {
+    msg = 'The python viewer keeps its own state: edits swap only the changed layer and your camera is preserved.';
+    if (pageHttps && VIEWER_URL && VIEWER_URL.startsWith('http:'))
+      msg += ' This page is https but the python viewer is http, so browsers refuse to embed it; use "Open in new tab".';
+  } else {
+    msg = 'External viewers cache by URL, so each update navigates the viewer to a new state URL. Its camera cannot be read back across origins and resets on every push.';
+    if (!pageHttps && !['localhost','127.0.0.1'].includes(location.hostname))
+      msg += ' Chunks are served over http from a non-localhost address; https viewers will block them (mixed content). Restart with --https.';
+  }
+  $('#viewerHint').textContent = msg;
+}
+
+async function showEmbedded() {
+  const frame = $('#ngFrame');
+  const k = viewerKind(), pageHttps = location.protocol === 'https:';
+  const blocked = k === 'python' && pageHttps && VIEWER_URL && VIEWER_URL.startsWith('http:');
+  if (!$('#embed').checked || (k === 'python' && !VIEWER_URL) || blocked) { frame.style.display = 'none'; frame.src = 'about:blank'; return; }
+  const url = await viewerLink();
+  if (frame.src !== url) frame.src = url;
+  frame.style.display = 'block';
+}
+
 async function pushViewer() {
-  if (!ngWin || ngWin.closed) return;
-  ngWin.location.href = await viewerLink();   // cross-origin navigation is permitted; reading is not
+  if (viewerKind() === 'python') return;          // syncs itself
+  const url = await viewerLink();
+  if ($('#embed').checked && $('#ngFrame').style.display !== 'none') $('#ngFrame').src = url;   // camera resets (cross-origin)
+  if (ngWin && !ngWin.closed) ngWin.location.href = url;
 }
 
 $('#openViewer').onclick = async () => { ngWin = window.open(await viewerLink(), 'chunkmirage-neuroglancer'); };
+$('#viewerKind').onchange = () => { $('#viewerUrl').style.display = viewerKind() === 'custom' ? '' : 'none'; updateHint(); showEmbedded(); };
+$('#viewerUrl').onchange = showEmbedded;
+$('#format').onchange = showEmbedded;
+$('#embed').onchange = showEmbedded;
 
 // Live refresh when anything (curl, Python, another tab) edits a pipeline.
 const es = new EventSource('/api/events');

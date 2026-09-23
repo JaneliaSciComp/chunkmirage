@@ -104,6 +104,8 @@ def test_python_viewer_tracks_edits(registry, zarr2_path):
         src_after = v.viewer.state.layers["thr"].source[0].url
         assert src_after != src_before
         assert v.url.startswith("http://127.0.0.1:")
+        assert registry.viewer_url == v.url
+        assert TestClient(create_app(registry)).get("/").json()["viewer_url"] == v.url
         registry.remove("raw")
         assert "raw" not in [layer.name for layer in v.viewer.state.layers]
     finally:
