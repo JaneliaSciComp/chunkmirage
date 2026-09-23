@@ -97,7 +97,16 @@ def serve(
     ),
     viewer: str = typer.Option("https://neuroglancer-demo.appspot.com"),
     format: str = typer.Option("zarr3", help="format used for the printed neuroglancer link"),
-    workers: int = typer.Option(1, help="worker processes (uvicorn only; caches are per-process)"),
+    threads: int = typer.Option(
+        0,
+        help="threads computing chunks (0 = 2 x CPU count, min 40). numpy/scipy/tensorstore "
+        "release the GIL, so this is the effective parallelism",
+    ),
+    workers: int = typer.Option(
+        1,
+        help="uvicorn worker processes. Each has its own registry and cache, so live edits "
+        "only reach one worker: use for fixed pipelines only",
+    ),
     server: str = typer.Option(
         "uvicorn",
         help="ASGI server: 'uvicorn' (HTTP/1.1) or 'hypercorn' (adds HTTP/2 over https; "
@@ -161,7 +170,11 @@ def serve(
             public_host=public_host,
         )
         typer.echo(f"python viewer: {v.url}   (layers follow live edits; camera preserved)")
-    application = create_app(registry, public_url=public_url)
+    import os
+
+    n_threads = threads or max(40, 2 * (os.cpu_count() or 4))
+    typer.echo(f"threads:      {n_threads} for chunk computation")
+    application = create_app(registry, public_url=public_url, threads=n_threads)
     if server != "hypercorn" or workers > 1:
         import uvicorn
 

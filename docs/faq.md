@@ -41,6 +41,11 @@ Usually one of three things:
   stale control-page tabs (each holds one connection and its own embedded viewer requesting
   chunks). `--server hypercorn --https` negotiates HTTP/2, which multiplexes requests over
   one connection, but is experimental.
+* **Parallelism.** Chunks are computed in a threadpool (`--threads`, default 2 × CPUs). The
+  hot paths (numpy, scipy, tensorstore, codecs) release the GIL, so this uses all cores.
+  Pure-Python loops in an op do not; write ops in array operations. `--workers` (processes)
+  parallelises too, but each process has its own registry and cache, so live edits only
+  reach one of them: it suits fixed pipelines, as in example-virtual-n5's gunicorn setup.
 * **Cancelled requests still cost CPU.** Neuroglancer cancels and re-requests chunks whenever
   the view or state changes (every push from the control page does this). The server shares
   one computation between identical in-flight requests and skips requests whose client has

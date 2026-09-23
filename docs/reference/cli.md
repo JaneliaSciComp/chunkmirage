@@ -22,7 +22,8 @@ chunkmirage inspect SOURCE
 | `--source-cache-gb`   | `0.5`                                     | tensorstore raw-byte cache |
 | `--viewer`            | `https://neuroglancer-demo.appspot.com`   | viewer for the printed link |
 | `--format`            | `zarr3`                                   | format used in the printed link |
-| `--workers`           | `1`                                       | worker processes (uvicorn only; caches are per process) |
+| `--threads`           | `2 × CPUs` (min 40)                       | threadpool computing chunks; numpy/scipy/tensorstore release the GIL so this is the effective parallelism |
+| `--workers`           | `1`                                       | uvicorn worker processes; each has its own registry and cache, so live edits reach only one: fixed pipelines only |
 | `--server`            | `uvicorn`                                 | `uvicorn` is HTTP/1.1; `hypercorn` adds HTTP/2 over https (lifts the browser's 6-connections-per-host limit) but is experimental: check that chunks load in your browser |
 | `--python-viewer`     | off                                       | also start a python-neuroglancer viewer whose layers follow live edits (needs the `viewer` extra) |
 | `--ng-client`         | `bundled`                                 | client build for the python viewer: `bundled`, `appspot`, or a URL |

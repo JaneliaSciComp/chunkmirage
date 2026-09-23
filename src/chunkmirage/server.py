@@ -21,6 +21,7 @@ release the GIL for the heavy parts, so a single process serves many chunks conc
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import gzip
 import json
 import logging
@@ -140,6 +141,14 @@ def _level_info(p: Pipeline) -> list[dict]:
     ]
 
 
+def set_compute_threads(n: int) -> None:
+    """Size the threadpool that computes chunks (default 40). numpy/scipy/tensorstore release
+    the GIL, so this is the server's parallelism for chunk work; pure-Python ops serialise."""
+    import anyio
+
+    anyio.to_thread.current_default_thread_limiter().total_tokens = int(n)
+
+
 def create_app(
     datasets: Mapping[str, Pipeline | PipelineSpec | dict] | DatasetRegistry | None = None,
     *,
@@ -147,6 +156,7 @@ def create_app(
     public_url: str | None = None,
     cache: LRUCache | None = None,
     allow_edit: bool = True,
+    threads: int | None = None,
 ) -> Starlette:
     if isinstance(datasets, DatasetRegistry):
         registry = datasets
@@ -358,7 +368,14 @@ def create_app(
             allow_private_network=True,
         ),
     ]
-    app = Starlette(routes=routes, middleware=middleware)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        if threads:
+            set_compute_threads(threads)
+        yield
+
+    app = Starlette(routes=routes, middleware=middleware, lifespan=lifespan)
     app.state.registry = registry
     app.state.frontends = fronts
     return app
