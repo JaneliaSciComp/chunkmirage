@@ -29,19 +29,29 @@ chunkmirage serve /path/to/data.zarr/em/fibsem-uint8 --op threshold:low=120 --po
 
 ### Try it with no data at all
 
-```bash
-chunkmirage serve "synthetic://blobs+noise?shape=4096,4096,4096" \
-    --op gaussian:sigma=1.5 --op threshold:low=110 \
-    --op morphology:operation=open,radius=2 --op label:min_size=200 --python-viewer
-```
+1. Install and start the demo:
 
-`synthetic://` sources are generated on the fly from voxel coordinates: a 4096³ volume
-(69 gigavoxels) that exists nowhere, with an exact multiscale pyramid for free. Kinds:
-`blobs`, `shells` (hollow spheres), `noise` (fractal), `julia` (3-D fractal slice), combinable
-with `+`. The command serves two layers, `raw` and `processed` (smooth → threshold → open →
-connected components), plus a control page at `/ui` with a slider per parameter and the
-viewer embedded. Drag `low` and watch objects appear and merge; only the changed stage
-recomputes, the generated data stays cached.
+   ```bash
+   git clone https://github.com/yuriyzubov/chunkmirage && cd chunkmirage
+   uv sync --all-extras
+   uv run chunkmirage serve "synthetic://blobs+noise?shape=4096,4096,4096" \
+       --op gaussian:sigma=1.5 --op threshold:low=110 \
+       --op morphology:operation=open,radius=2 --op label:min_size=200 --python-viewer
+   ```
+
+2. Open the printed **control UI** URL (`http://<your-ip>:8000/ui`). Neuroglancer is embedded
+   in the page with two layers: `raw` (the generated volume) and `processed` (smooth →
+   threshold → open → connected components, coloured by object).
+
+3. Drag the `low` slider under `threshold`: objects appear and merge as the view updates in
+   place. Change `radius` under `morphology` to remove specks, or `min_size` under `label` to
+   drop small objects. Only the changed stage recomputes; the generated data stays cached.
+
+`synthetic://` sources are computed from voxel coordinates on demand, so this 4096³ volume
+(69 gigavoxels) exists nowhere and its multiscale pyramid is exact. Kinds: `blobs`, `shells`
+(hollow spheres), `noise` (fractal), `julia` (3-D fractal slice), combinable with `+`. To view
+from another machine with the hosted Neuroglancer, add `--https` and accept the certificate
+once. Details: [getting started](docs/getting-started.md).
 
 Then open the printed Neuroglancer link, or point any viewer at one of:
 
