@@ -52,7 +52,8 @@ as large as you like, and each scale level is the same function sampled at a coa
 spacing, so the pyramid is exact (`s1[z,y,x] == s0[2z,2y,2x]`). Kinds: `blobs` (Gaussian
 blobs), `shells` (hollow spheres, membrane-like), `noise` (fractal value noise), `julia`
 (a 3-D slice of a quaternion Julia set); combine with `+`, e.g. `blobs+noise`. Useful for
-demos and for stress-testing pipelines without I/O.
+demos and for stress-testing pipelines without I/O. Generation is vectorised numpy, so
+the server's threadpool runs it on all cores.
 
 ### Stored sources
 

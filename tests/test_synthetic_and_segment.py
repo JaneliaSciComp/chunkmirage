@@ -77,15 +77,21 @@ def test_label_unique_per_chunk_and_size_filter(synth):
         [{"op": "threshold", "low": 120}, {"op": "label", "min_size": 50}],
         chunk_shape=(32, 32, 32),
     )
-    a = p.chunk(0, (0, 0, 0))
-    b = p.chunk(0, (1, 0, 0))
+    # find two chunks that actually contain objects (blob placement is random per seed)
+    found = []
+    for idx in np.ndindex(4, 4, 4):
+        arr = p.chunk(0, idx)
+        if arr.any():
+            found.append((idx, arr))
+        if len(found) == 2:
+            break
+    assert len(found) == 2, "expected at least two chunks with objects"
+    (ia_idx, a), (ib_idx, b) = found
     assert a.dtype == np.uint32
     ia, ib = set(np.unique(a)) - {0}, set(np.unique(b)) - {0}
-    assert ia and ib  # both chunks have objects
     assert not (ia & ib)  # different chunks never share a label
-    # size filter: no surviving component smaller than min_size within the chunk core is guaranteed
-    # only approximately (halo), so just check some filtering happened vs. min_size=0
+    # without the size filter there are at least as many components
     p0 = Pipeline(
         synth, [{"op": "threshold", "low": 120}, {"op": "label"}], chunk_shape=(32, 32, 32)
     )
-    assert len(np.unique(p0.chunk(0, (0, 0, 0)))) >= len(np.unique(a))
+    assert len(np.unique(p0.chunk(0, ia_idx))) >= len(np.unique(a))

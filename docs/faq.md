@@ -32,6 +32,21 @@ on **its own origin**. A worker on `chunkmirage.github.io` never sees requests m
 response a real server sent, and here there is no server. The fix is to host our own
 Neuroglancer build on the same origin as the service worker; see [Roadmap](roadmap.md).
 
+## Chunks load slowly. Why?
+
+Usually one of three things:
+
+* **Connection limit.** Over HTTP/1.1 a browser opens at most 6 connections per host, shared
+  by every tab, the control page's event stream, and the viewer's chunk requests. Serve
+  `--https` (the default `hypercorn` server then negotiates HTTP/2, which multiplexes
+  hundreds of requests over one connection). Closing stale control-page tabs helps too.
+* **Compute-bound source or op.** Check `GET /api/cache` for misses and time one chunk with
+  `curl -w %{time_total}`. Heavy ops need `cache=True` and, for real speed, a GPU. Python-level
+  loops in an op serialise on the GIL; large numpy/scipy operations run on all cores.
+* **Coarse levels.** A zoomed-out view asks for the coarsest level first. Sources whose
+  cost grows with the world volume a chunk covers (procedural generators, on-the-fly
+  downsampling) are slowest exactly there. The synthetic sources bound this cost per chunk.
+
 ## Why not just use Neuroglancer shaders?
 
 For pointwise ops on one source (threshold, windowing, colormaps, channel mixing) you

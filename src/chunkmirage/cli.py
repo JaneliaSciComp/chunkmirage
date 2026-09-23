@@ -97,7 +97,12 @@ def serve(
     ),
     viewer: str = typer.Option("https://neuroglancer-demo.appspot.com"),
     format: str = typer.Option("zarr3", help="format used for the printed neuroglancer link"),
-    workers: int = typer.Option(1, help="uvicorn worker processes (caches are per-process)"),
+    workers: int = typer.Option(1, help="worker processes (uvicorn only; caches are per-process)"),
+    server: str = typer.Option(
+        "hypercorn",
+        help="ASGI server: 'hypercorn' (HTTP/2 over https, so browsers are not limited to 6 "
+        "connections; HTTP/1.1 otherwise) or 'uvicorn'",
+    ),
     python_viewer: bool = typer.Option(
         False,
         "--python-viewer",
@@ -112,8 +117,6 @@ def serve(
     viewer_port: int = typer.Option(0, help="port for --python-viewer (default: random free port)"),
 ):
     """Serve SOURCE through a pipeline of ops as n5 / zarr / zarr3 / precomputed."""
-    import uvicorn
-
     from chunkmirage.netutil import ensure_self_signed_cert, public_host_for
     from chunkmirage.neuroglancer import source_url, viewer_link
     from chunkmirage.server import create_app
@@ -159,14 +162,34 @@ def serve(
         )
         typer.echo(f"python viewer: {v.url}   (layers follow live edits; camera preserved)")
     application = create_app(registry, public_url=public_url)
-    uvicorn.run(
-        application,
-        host=host,
-        port=port,
-        workers=workers if workers > 1 else None,
-        log_level="info",
-        **ssl,
-    )
+    if server == "uvicorn" or workers > 1:
+        import uvicorn
+
+        uvicorn.run(
+            application,
+            host=host,
+            port=port,
+            workers=workers if workers > 1 else None,
+            log_level="info",
+            **ssl,
+        )
+        return
+    import asyncio
+
+    from hypercorn.asyncio import serve as hypercorn_serve
+    from hypercorn.config import Config
+
+    config = Config()
+    config.bind = [f"{host}:{port}"]
+    config.accesslog = "-"
+    config.errorlog = "-"
+    config.access_log_format = '%(h)s - "%(r)s" %(s)s %(b)s'
+    if ssl:
+        config.certfile = ssl["ssl_certfile"]
+        config.keyfile = ssl["ssl_keyfile"]
+        config.alpn_protocols = ["h2", "http/1.1"]
+    typer.echo(f"server:       hypercorn ({'HTTP/2 + HTTP/1.1' if ssl else 'HTTP/1.1'})")
+    asyncio.run(hypercorn_serve(application, config))
 
 
 @app.command()
