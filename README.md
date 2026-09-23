@@ -27,6 +27,22 @@ uv sync --all-extras --group dev            # or: pip install -e ".[all]"
 chunkmirage serve /path/to/data.zarr/em/fibsem-uint8 --op threshold:low=120 --port 8000
 ```
 
+### Try it with no data at all
+
+```bash
+chunkmirage serve "synthetic://blobs+noise?shape=4096,4096,4096" \
+    --op gaussian:sigma=1.5 --op threshold:low=110 \
+    --op morphology:operation=open,radius=2 --op label:min_size=200 --python-viewer
+```
+
+`synthetic://` sources are generated on the fly from voxel coordinates: a 4096³ volume
+(69 gigavoxels) that exists nowhere, with an exact multiscale pyramid for free. Kinds:
+`blobs`, `shells` (hollow spheres), `noise` (fractal), `julia` (3-D fractal slice), combinable
+with `+`. The command serves two layers, `raw` and `processed` (smooth → threshold → open →
+connected components), plus a control page at `/ui` with a slider per parameter and the
+viewer embedded. Drag `low` and watch objects appear and merge; only the changed stage
+recomputes, the generated data stays cached.
+
 Then open the printed Neuroglancer link, or point any viewer at one of:
 
 | viewer source URL                                  | format                    |
