@@ -12,7 +12,7 @@ chunkmirage inspect SOURCE
 | --------------------- | ----------------------------------------- | ------- |
 | `--name`              | `data`                                    | dataset name in URLs |
 | `--op`, `-o`          |                                           | op spec, repeatable; `name:k=v,k=v` or JSON |
-| `--raw`               | off                                       | also serve the unprocessed source as `<name>-raw`; shares the cache, appears as a second layer |
+| `--raw` / `--no-raw`  | on                                        | also serve the unprocessed source as `<name>-raw`; shares the cache, appears as a second layer |
 | `--chunk`             | source chunks                             | output chunk shape, e.g. `64,64,64` |
 | `--host` / `--port`   | `0.0.0.0` / `8000`                        | bind address |
 | `--https`             | off                                       | serve https; a self-signed certificate is generated in `~/.cache/chunkmirage/` on first use (needs the `https` extra or the `openssl` CLI) |

@@ -41,6 +41,7 @@ Two mechanisms enforce this:
 
 ```python
 from chunkmirage.ops import Op, register
+from pydantic import Field
 import numpy as np
 
 @register
@@ -50,7 +51,7 @@ class MyOp(Op):
     halo = 4            # voxels of upstream context needed per side (int or per-axis tuple)
     cache = False       # True for expensive stages (inference)
 
-    strength: float = 1.0          # pydantic fields become parameters and JSON schema
+    strength: float = Field(1.0, description="What it does, in words a user understands")  # shown in the UI
 
     def output_dtype(self, in_dtype): return np.dtype("float32")
     def apply(self, block): return block.astype(np.float32) * self.strength

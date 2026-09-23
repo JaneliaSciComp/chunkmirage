@@ -15,10 +15,11 @@ uvicorn, pydantic and typer. Optional extras: `hdf5` (h5py), `ops` (scipy filter
 ## Serve something
 
 ```bash
-chunkmirage serve /path/to/data.zarr/em/fibsem-uint8 --op threshold:low=120 --raw --port 8000
+chunkmirage serve /path/to/data.zarr/em/fibsem-uint8 --op threshold:low=120 --port 8000
 ```
 
-`--raw` serves the unprocessed source alongside, as a second layer, at no extra cost.
+The unprocessed source is served alongside as `<name>-raw` and shows as a second layer, at
+no extra cost (`--no-raw` to skip it).
 
 `SOURCE` can be a zarr v2/v3 array or multiscale group (`s0`, `s1`, ...), an N5 dataset or
 group, a Neuroglancer precomputed volume, or `file.h5::/dataset`. Local paths and

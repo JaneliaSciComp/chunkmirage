@@ -177,6 +177,14 @@ def create_app(
             "spec": p.spec.model_dump() if p.spec else None,
             "digest": p.digest(),
             "source_dtype": p.source.levels[0].info.dtype.name,
+            "ops_info": [
+                {
+                    "op": op.name,
+                    "halo": list(op.halo_for(p.info(0).ndim)),
+                    "doc": (op.__doc__ or "").strip(),
+                }
+                for op in p.ops
+            ],
             "levels": _level_info(p),
             "sources": links(request, name, p),
         }

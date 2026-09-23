@@ -64,7 +64,9 @@ def serve(
         [], "--op", "-o", help="op spec, e.g. threshold:low=120 (repeatable)"
     ),
     raw: bool = typer.Option(
-        False, "--raw", help="also serve the unprocessed source as '<name>-raw' (shares the cache)"
+        True,
+        "--raw/--no-raw",
+        help="also serve the unprocessed source as '<name>-raw' so it shows as a layer (shares the cache)",
     ),
     chunk: str | None = typer.Option(
         None, help="output chunk shape, e.g. 64,64,64 (default: source chunks)"

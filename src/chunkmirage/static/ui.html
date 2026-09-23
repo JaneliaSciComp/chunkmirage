@@ -18,8 +18,10 @@
   .op { border-top:1px solid var(--line); padding:8px 0; }
   .op .head { display:flex; justify-content:space-between; align-items:center; }
   .op .head b { color:var(--accent); }
-  .param { display:grid; grid-template-columns: 90px 1fr 84px; gap:8px; align-items:center; margin:4px 0; }
-  .param label { color:var(--muted); font-size:12px; }
+  .param { display:grid; grid-template-columns: 90px 1fr 84px; gap:8px; align-items:center; margin:6px 0 2px; }
+  .param label { color:var(--fg); font-size:12px; }
+  .desc { grid-column: 1 / -1; color:var(--muted); font-size:11.5px; line-height:1.35; margin:-2px 0 6px; }
+  .opdoc { color:var(--muted); font-size:12px; margin:2px 0 4px; }
   input[type=range] { width:100%; }
   input[type=number], input[type=text], select { background:#0c0e12; color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:3px 6px; font:inherit; }
   input[type=number] { width:76px; }
@@ -97,7 +99,7 @@ function bounds(ds, key) {
 
 function paramControl(ds, opIdx, key, schema, value) {
   const wrap = document.createElement('div'); wrap.className = 'param';
-  const label = document.createElement('label'); label.textContent = key; wrap.appendChild(label);
+  const label = document.createElement('label'); label.textContent = key; label.title = schema.description || ''; wrap.appendChild(label);
   const types = [].concat(schema.type || (schema.anyOf||[]).map(a=>a.type)).filter(Boolean);
   const isNum = types.includes('number') || types.includes('integer');
   if (isNum) {
@@ -119,6 +121,7 @@ function paramControl(ds, opIdx, key, schema, value) {
     t.onchange = () => setParam(ds.name, opIdx, key, t.value);
     wrap.appendChild(t); wrap.appendChild(document.createElement('span'));
   }
+  if (schema.description) { const d = document.createElement('div'); d.className = 'desc'; d.textContent = schema.description; wrap.appendChild(d); }
   return wrap;
 }
 
@@ -131,12 +134,16 @@ function render() {
     card.innerHTML = `<h2>${name} <small>${ds.levels[0].dtype} · ${ds.levels[0].shape.join('×')} · ${ds.levels.length} level(s)</small></h2>
       <div class="src">${ds.spec ? ds.spec.source : '(constructed in Python; not editable here)'} <span class="digest">@${ds.digest}</span></div>`;
     if (!ds.spec) { main.appendChild(card); continue; }
+    if (!ds.spec.ops.length) { const n = document.createElement('div'); n.className = 'opdoc'; n.textContent = 'No ops: this is the source exactly as stored. Add an op below to process it.'; card.appendChild(n); }
     ds.spec.ops.forEach((op, i) => {
       const box = document.createElement('div'); box.className = 'op';
       const head = document.createElement('div'); head.className = 'head';
-      head.innerHTML = `<span><b>${op.op}</b> <span class="hint">${(OPS[op.op]?.doc||'').split('\n')[0]}</span></span>`;
+      const info = (ds.ops_info || [])[i];
+      const halo = info && info.halo && Math.max(...info.halo) > 0 ? ` · reads ${Math.max(...info.halo)} voxel${Math.max(...info.halo)>1?'s':''} of context on each side` : '';
+      head.innerHTML = `<span><b>${op.op}</b><span class="hint">${halo}</span></span>`;
       const rm = document.createElement('button'); rm.textContent = 'remove'; rm.onclick = () => { ds.spec.ops.splice(i,1); pendingFinal[name] = true; push(name, true); };
       head.appendChild(rm); box.appendChild(head);
+      const doc = document.createElement('div'); doc.className = 'opdoc'; doc.textContent = (OPS[op.op]?.doc || '').split('\n')[0]; box.appendChild(doc);
       const props = OPS[op.op]?.schema?.properties || {};
       for (const [key, schema] of Object.entries(props)) box.appendChild(paramControl(ds, i, key, schema, op[key] ?? schema.default));
       card.appendChild(box);
