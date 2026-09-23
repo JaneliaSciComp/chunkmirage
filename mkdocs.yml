@@ -1,7 +1,7 @@
 site_name: chunkmirage
 site_description: Spoof chunked array formats over HTTP with on-the-fly processing.
-site_url: https://janeliascicomp.github.io/chunkmirage/
-repo_url: https://github.com/JaneliaSciComp/chunkmirage
+site_url: https://yuriyzubov.github.io/chunkmirage/
+repo_url: https://github.com/yuriyzubov/chunkmirage
 repo_name: chunkmirage
 edit_uri: edit/main/docs/
 
