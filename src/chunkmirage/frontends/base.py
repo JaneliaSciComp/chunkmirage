@@ -1,0 +1,80 @@
+from __future__ import annotations
+
+import json
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import ClassVar
+
+import numpy as np
+
+from chunkmirage.core import ArrayInfo
+from chunkmirage.pipeline import Pipeline
+
+JSON_CT = "application/json"
+BIN_CT = "application/octet-stream"
+
+
+@dataclass
+class Metadata:
+    body: bytes
+    content_type: str = JSON_CT
+
+    @staticmethod
+    def json(obj) -> Metadata:
+        return Metadata(json.dumps(obj, indent=1).encode(), JSON_CT)
+
+
+@dataclass
+class ChunkRequest:
+    level: int
+    index: tuple[int, ...]
+
+
+class Frontend(ABC):
+    name: ClassVar[str]
+    neuroglancer_scheme: ClassVar[str]  # e.g. "n5" -> n5://http://...
+
+    @abstractmethod
+    def resolve(self, pipeline: Pipeline, path: str) -> Metadata | ChunkRequest | None:
+        """Map a request path (relative to the dataset+format prefix) to metadata or a chunk."""
+
+    @abstractmethod
+    def encode(self, info: ArrayInfo, index: tuple[int, ...], block: np.ndarray) -> bytes:
+        """Encode the (edge-clipped) block for chunk ``index`` in this format."""
+
+    # Helpers shared by frontends -----------------------------------------------------
+    @staticmethod
+    def relative_scales(pipeline: Pipeline) -> list[list[float]]:
+        """Downsampling factor of every level relative to s0, per C-order axis."""
+        base = pipeline.info(0).voxel_size
+        out = []
+        for lvl in range(pipeline.num_levels):
+            vs = pipeline.info(lvl).voxel_size
+            out.append([v / b if b else 1.0 for v, b in zip(vs, base)])
+        return out
+
+    @staticmethod
+    def pad_to_full(
+        info: ArrayInfo, index: tuple[int, ...], block: np.ndarray, fill=0
+    ) -> np.ndarray:
+        """Zarr requires full-size chunks even at the edge; pad with ``fill``."""
+        if block.shape == info.chunk_shape:
+            return block
+        out = np.full(info.chunk_shape, fill, dtype=block.dtype)
+        out[tuple(slice(0, s) for s in block.shape)] = block
+        return out
+
+
+FRONTENDS: dict[str, type[Frontend]] = {}
+
+
+def register_frontend(cls: type[Frontend]) -> type[Frontend]:
+    FRONTENDS[cls.name] = cls
+    return cls
+
+
+def get_frontend(name: str, **kw) -> Frontend:
+    try:
+        return FRONTENDS[name](**kw)
+    except KeyError:
+        raise KeyError(f"unknown frontend {name!r}; known: {sorted(FRONTENDS)}") from None
