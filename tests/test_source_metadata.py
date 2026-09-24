@@ -154,6 +154,23 @@ def test_ome_levels_are_matched_by_path(tmp_path):
     assert direct.info.voxel_size == (16.0, 16.0, 16.0)
 
 
+def test_ome_top_level_transforms_apply_after_each_dataset(tmp_path):
+    root = tmp_path / "ome.zarr"
+    attrs = _ome(["s0", "s1"], [[1, 1, 1], [2, 2, 2]], [[0, 0, 0], [0.5, 0.5, 0.5]])
+    attrs["multiscales"][0]["coordinateTransformations"] = [
+        {"type": "scale", "scale": [8, 4, 4]},
+        {"type": "translation", "translation": [100, 200, 300]},
+    ]
+    _zgroup(root, attrs)
+    _zarr2(root / "s0", DATA)
+    _zarr2(root / "s1", np.ascontiguousarray(DATA[::2, ::2, ::2]))
+    ms = open_source(str(root))
+    assert ms[0].info.voxel_size == (8.0, 4.0, 4.0)
+    assert ms[0].info.translation == (100.0, 200.0, 300.0)
+    assert ms[1].info.voxel_size == (16.0, 8.0, 8.0)
+    assert ms[1].info.translation == (104.0, 202.0, 302.0)
+
+
 def test_ome_unlisted_array_does_not_borrow_another_levels_scale(tmp_path):
     root = tmp_path / "ome.zarr"
     _zgroup(root, _ome(["s0"], [[8, 8, 8]]))

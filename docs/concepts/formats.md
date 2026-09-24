@@ -66,7 +66,7 @@ Voxel size, translation, units and axes are read per level, first match wins:
 
 | Format      | Metadata, in order of precedence                                                   |
 |-------------|------------------------------------------------------------------------------------|
-| zarr v2/v3  | parent OME-NGFF `multiscales` entry whose `path` is this array; else the array's own `resolution`/`voxel_size`, `offset`, `units`, `axis_names` (funlib) or `transform` (COSEM), C order |
+| zarr v2/v3  | parent OME-NGFF `multiscales` entry whose `path` is this array, composed with the multiscale-level `coordinateTransformations` if present; else the array's own `resolution`/`voxel_size`, `offset`, `units`, `axis_names` (funlib) or `transform` (COSEM), C order |
 | N5          | the array's `transform` (COSEM, C order); the parent's `multiscales[].datasets[].transform` for this path; `pixelResolution`/`resolution` (array, else group) × `downsamplingFactors`, plus `offset`, x-first |
 | precomputed | `resolution` (nm) and `voxel_offset` × `resolution` as the translation             |
 | HDF5        | `resolution`/`voxel_size` and `offset` attributes, C order                         |

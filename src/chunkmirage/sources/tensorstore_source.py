@@ -165,22 +165,37 @@ def _n5_scale_metadata(attrs: dict, ndim: int, group_attrs: dict, name: str) -> 
     return {k: v for k, v in meta.items() if v is not None}
 
 
+def _ome_transforms(cts, ndim: int) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """(scale, translation) of an OME ``coordinateTransformations`` list; identity if absent."""
+    scale, trans = (1.0,) * ndim, (0.0,) * ndim
+    for ct in cts if isinstance(cts, list) else []:
+        if ct.get("type") == "scale" and len(ct.get("scale", [])) == ndim:
+            scale = _floats(ct["scale"])
+        elif ct.get("type") == "translation" and len(ct.get("translation", [])) == ndim:
+            trans = _floats(ct["translation"])
+    return scale, trans
+
+
 def _ome_scale_metadata(group_attrs: dict, name: str, ndim: int) -> dict | None:
     """Voxel size / units / translation / axes from OME-NGFF ``multiscales`` (C order),
-    for the dataset whose ``path`` is ``name``; None if the group doesn't list it."""
+    for the dataset whose ``path`` is ``name``; None if the group doesn't list it.
+
+    The optional multiscale-level ``coordinateTransformations`` apply to every dataset,
+    after its own: world = s_top * (s_ds * index + t_ds) + t_top.
+    """
     ds = _find_dataset(group_attrs, name)
     if ds is None:
         return None
-    axes = group_attrs["multiscales"][0].get("axes", [])
+    ms = group_attrs["multiscales"][0]
+    axes = ms.get("axes", [])
     meta: dict = {}
     if len(axes) == ndim:
         meta["units"] = tuple(a.get("unit", "") if isinstance(a, dict) else "" for a in axes)
         meta["axes"] = tuple(a.get("name") if isinstance(a, dict) else str(a) for a in axes)
-    for ct in ds.get("coordinateTransformations", []):
-        if ct.get("type") == "scale" and len(ct.get("scale", [])) == ndim:
-            meta["voxel_size"] = _floats(ct["scale"])
-        elif ct.get("type") == "translation" and len(ct.get("translation", [])) == ndim:
-            meta["translation"] = _floats(ct["translation"])
+    s_ds, t_ds = _ome_transforms(ds.get("coordinateTransformations"), ndim)
+    s_top, t_top = _ome_transforms(ms.get("coordinateTransformations"), ndim)
+    meta["voxel_size"] = tuple(a * b for a, b in zip(s_ds, s_top))
+    meta["translation"] = tuple(t * s + o for t, s, o in zip(t_ds, s_top, t_top))
     return meta
 
 
