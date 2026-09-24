@@ -76,12 +76,13 @@ class N5Frontend(Frontend):
                 "dimensions": list(info.voxel_size[::-1]),
                 "unit": info.units[-1] or "nm",
             },
+            # COSEM convention: ``transform`` lists are C order, unlike the rest of N5.
             "transform": {
                 "ordering": "C",
-                "axes": list(info.axes[::-1]),
-                "scale": list(info.voxel_size[::-1]),
-                "units": list(info.units[::-1]),
-                "translate": list(info.translation[::-1]),
+                "axes": list(info.axes),
+                "scale": list(info.voxel_size),
+                "units": list(info.units),
+                "translate": list(info.translation),
             },
         }
 

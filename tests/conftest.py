@@ -81,6 +81,7 @@ def zarr2_path(tmp_path_factory, volume):
 
 @pytest.fixture(scope="session")
 def n5_path(tmp_path_factory, volume):
+    """N5 array written like a Java/n5-zarr writer: dimensions and blockSize x-first."""
     root = tmp_path_factory.mktemp("data") / "vol.n5" / "raw"
     _write(
         {
@@ -92,7 +93,7 @@ def n5_path(tmp_path_factory, volume):
                 "pixelResolution": {"dimensions": [4.0, 4.0, 4.0], "unit": "nm"},
             },
         },
-        volume,
+        np.ascontiguousarray(volume.T),
     )
     return str(root)
 

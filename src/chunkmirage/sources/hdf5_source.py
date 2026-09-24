@@ -12,7 +12,14 @@ from chunkmirage.sources.base import MultiscaleSource, Source
 
 class HDF5Source(Source):
     def __init__(
-        self, filename: str, dataset: str, chunk_shape=None, voxel_size=None, units=None, axes=None
+        self,
+        filename: str,
+        dataset: str,
+        chunk_shape=None,
+        voxel_size=None,
+        units=None,
+        axes=None,
+        translation=None,
     ):
         import h5py
 
@@ -24,6 +31,7 @@ class HDF5Source(Source):
         vs = voxel_size or self._d.attrs.get(
             "resolution", self._d.attrs.get("voxel_size", [1.0] * ndim)
         )
+        offset = translation if translation is not None else self._d.attrs.get("offset")
         self._info = ArrayInfo(
             shape=self._d.shape,
             dtype=self._d.dtype,
@@ -31,6 +39,7 @@ class HDF5Source(Source):
             voxel_size=tuple(float(v) for v in vs),
             units=tuple(units) if units else ("nm",) * ndim,
             axes=tuple(axes) if axes else ArrayInfo.default_axes(ndim),
+            translation=tuple(float(v) for v in offset) if offset is not None else None,
         )
         self._key = f"h5:{filename}::{dataset}"
 
