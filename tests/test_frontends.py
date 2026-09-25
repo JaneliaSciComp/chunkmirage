@@ -41,6 +41,7 @@ def test_n5(client, volume):
     attrs = client.get("/thr/n5/s0/attributes.json").json()
     assert attrs["dimensions"] == list(volume.shape[::-1])
     assert attrs["dataType"] == "uint8"
+    assert attrs["transform"]["axes"] == ["z", "y", "x"]  # COSEM transform lists are C order
     bs = attrs["blockSize"]  # x, y, z
     # chunk index (x=1, y=2, z=0)
     r = client.get("/thr/n5/s0/1/2/0")

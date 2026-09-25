@@ -58,7 +58,19 @@ the server's threadpool runs it on all cores.
 ### Stored sources
 
 Sources are detected by content, not extension: `zarr.json` → zarr v3, `.zarray` → zarr v2,
-`attributes.json` → N5, `info` → precomputed. Groups are walked for `s0, s1, ...`. Voxel
-size and units come from OME-NGFF `multiscales`, N5 `transform`/`pixelResolution`, or
-precomputed `resolution`, and can be overridden in the spec (`voxel_size`, `units`, `axes`,
-`translation`). HDF5 uses `file.h5::/dataset` and needs the `hdf5` extra.
+`attributes.json` → N5, `info` → precomputed. A group's levels are the paths in its
+`multiscales[0].datasets` (OME-NGFF, COSEM N5), in that order; without that, `s0, s1, ...`
+are probed. N5 and precomputed data are transposed to C order `(z, y, x)` on read.
+
+Voxel size, translation, units and axes are read per level, first match wins:
+
+| Format      | Metadata, in order of precedence                                                   |
+|-------------|------------------------------------------------------------------------------------|
+| zarr v2/v3  | parent OME-NGFF `multiscales` entry whose `path` is this array, composed with the multiscale-level `coordinateTransformations` if present; else the array's own `resolution`/`voxel_size`, `offset`, `units`, `axis_names` (funlib) or `transform` (COSEM), C order |
+| N5          | the array's `transform` (COSEM, C order); the parent's `multiscales[].datasets[].transform` for this path; `pixelResolution`/`resolution` (array, else group) × `downsamplingFactors`, plus `offset`, x-first |
+| precomputed | `resolution` (nm) and `voxel_offset` × `resolution` as the translation             |
+| HDF5        | `resolution`/`voxel_size` and `offset` attributes, C order                         |
+
+`offset`/`translate` are in world units. Anything in the spec (`voxel_size`, `units`,
+`axes`, `translation`) overrides what was read. HDF5 uses `file.h5::/dataset` and needs
+the `hdf5` extra.

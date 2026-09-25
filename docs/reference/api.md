@@ -25,7 +25,7 @@ All endpoints are CORS-open. Editing endpoints can be disabled with
 
 ```json
 {
-  "source": "/path/or/url",          // zarr/n5/precomputed array or s0..sN group, or file.h5::/dataset
+  "source": "/path/or/url",          // zarr/n5/precomputed array or multiscale group, or file.h5::/dataset
   "ops": [{"op": "threshold", "low": 120}],
   "chunk_shape": [64, 64, 64],       // optional; default: source chunk shape
   "cache_source": true,              // cache raw chunks (stage 0)

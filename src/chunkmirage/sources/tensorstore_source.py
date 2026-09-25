@@ -17,20 +17,6 @@ import tensorstore as ts
 from chunkmirage.core import ArrayInfo, Box
 from chunkmirage.sources.base import MultiscaleSource, Source
 
-_SCALE_RE = re.compile(r"^s(\d+)$")
-
-
-def _split_container(path: str) -> tuple[str, str]:
-    """Split ``.../foo.zarr/a/b`` into (``.../foo.zarr``, ``a/b``); if no marker, (path, '')."""
-    for marker in (".zarr", ".n5", ".precomputed"):
-        idx = path.rfind(marker + "/")
-        if idx >= 0:
-            cut = idx + len(marker)
-            return path[:cut], path[cut + 1 :].strip("/")
-        if path.endswith(marker):
-            return path, ""
-    return path.rstrip("/"), ""
-
 
 def _open_kvstore(url_or_path: str) -> ts.KvStore:
     """Open a kvstore rooted at a *directory*; tensorstore concatenates keys literally, so
@@ -49,8 +35,9 @@ def _read_json(kv: ts.KvStore, key: str) -> dict | None:
 
 
 def _detect_driver(kv: ts.KvStore) -> str | None:
-    if _read_json(kv, "zarr.json") is not None:
-        return "zarr3"
+    zj = _read_json(kv, "zarr.json")
+    if zj is not None:
+        return "zarr3-group" if zj.get("node_type") == "group" else "zarr3"
     if _read_json(kv, ".zarray") is not None:
         return "zarr"
     if _read_json(kv, ".zgroup") is not None:
@@ -61,6 +48,22 @@ def _detect_driver(kv: ts.KvStore) -> str | None:
     if attrs is not None:
         return "n5" if "dataType" in attrs or "dimensions" in attrs else "n5-group"
     return None
+
+
+def _node_attrs(kv: ts.KvStore) -> dict:
+    """User attributes of a zarr v2/v3 or N5 node (array or group); OME 0.5 is unwrapped."""
+    for key in (".zattrs", "attributes.json"):
+        attrs = _read_json(kv, key)
+        if attrs is not None:
+            return attrs
+    attrs = (_read_json(kv, "zarr.json") or {}).get("attributes", {})
+    return attrs.get("ome", attrs)
+
+
+def _split_parent(path: str) -> tuple[str | None, str]:
+    """``.../group/s0`` -> (``.../group``, ``s0``); (None, name) if there is no parent."""
+    head, _, name = path.rstrip("/").rpartition("/")
+    return (head if head and not head.endswith(":/") else None), name
 
 
 def open_tensorstore(
@@ -84,50 +87,150 @@ def open_tensorstore(
     return ts.open(spec, read=True, write=False, context=context).result()
 
 
-def _n5_scale_metadata(
-    attrs: dict, ndim: int
-) -> tuple[tuple[float, ...], tuple[str, ...], tuple[float, ...]] | None:
-    """Best-effort voxel size / units / translation from N5 attributes (C order)."""
-    if "transform" in attrs and isinstance(attrs["transform"], dict):
-        t = attrs["transform"]
-        scale = list(t.get("scale", [1.0] * ndim))
-        units = list(t.get("units", ["nm"] * ndim))
-        trans = list(t.get("translate", [0.0] * ndim))
-        # N5 lists axes in F order (x fastest first) -> reverse to C order.
-        return tuple(scale[::-1]), tuple(units[::-1]), tuple(trans[::-1])
-    if "pixelResolution" in attrs:
-        pr = attrs["pixelResolution"]
-        dims = list(pr.get("dimensions", [1.0] * ndim))
-        unit = pr.get("unit", "nm")
-        return tuple(dims[::-1]), (unit,) * ndim, (0.0,) * ndim
-    if "resolution" in attrs:
-        res = list(attrs["resolution"])
-        return tuple(res[::-1]), ("nm",) * ndim, (0.0,) * ndim
+# Per-level metadata is a dict with any of ``voxel_size``, ``units``, ``translation``, ``axes``
+# (C order, length ndim); missing keys fall back to defaults in ``from_path``.
+
+
+def _per_axis(vals, ndim: int, fill, reverse: bool = False) -> tuple | None:
+    """Normalise a per-axis list to ``ndim`` C-order entries. Lists that only cover the
+    spatial axes are left-padded with ``fill`` (leading channel/time axes); ``fill=None``
+    means the list must already have ``ndim`` entries."""
+    if not isinstance(vals, (list, tuple)):
+        return None
+    vals = list(vals)[::-1] if reverse else list(vals)
+    if len(vals) > ndim or (fill is None and len(vals) != ndim):
+        return None
+    return tuple([fill] * (ndim - len(vals)) + vals)
+
+
+def _floats(vals) -> tuple[float, ...] | None:
+    return None if vals is None else tuple(float(v) for v in vals)
+
+
+def _multiscale_datasets(group_attrs: dict) -> list[dict]:
+    ms = group_attrs.get("multiscales")
+    if not isinstance(ms, list) or not ms or not isinstance(ms[0], dict):
+        return []
+    return [d for d in ms[0].get("datasets", []) if isinstance(d, dict) and "path" in d]
+
+
+def _find_dataset(group_attrs: dict, name: str) -> dict | None:
+    """The ``multiscales[0].datasets`` entry whose ``path`` is ``name`` (never by position)."""
+    for ds in _multiscale_datasets(group_attrs):
+        if str(ds["path"]).strip("/") == name:
+            return ds
     return None
 
 
-def _ome_scale_metadata(group_attrs: dict, level: int, ndim: int):
-    """Voxel size / units / translation from OME-NGFF multiscales metadata (C order already)."""
-    ms = (group_attrs.get("multiscales") or [None])[0]
-    if not ms:
+def _transform_metadata(t: dict, ndim: int) -> dict:
+    """COSEM-style ``transform`` {axes, scale, translate, units}. Lists are C order (the
+    OpenOrganelle N5s write ``axes: [z, y, x]``) unless ``ordering`` is ``"F"``."""
+    rev = t.get("ordering") == "F"
+    meta = {
+        "voxel_size": _floats(_per_axis(t.get("scale"), ndim, 1.0, rev)),
+        "translation": _floats(_per_axis(t.get("translate"), ndim, 0.0, rev)),
+        "units": _per_axis(t.get("units"), ndim, "", rev),
+        "axes": _per_axis(t.get("axes"), ndim, None, rev),
+    }
+    return {k: v for k, v in meta.items() if v is not None}
+
+
+def _n5_scale_metadata(attrs: dict, ndim: int, group_attrs: dict, name: str) -> dict:
+    """Voxel size / units / translation / axes for an N5 level, in priority order:
+    the level's ``transform``; the parent group's ``multiscales[].datasets[].transform``
+    matched by path; ``pixelResolution``/``resolution`` (level, else group) times the
+    level's ``downsamplingFactors``, plus ``offset``. Plain N5 lists are x-first."""
+    if isinstance(attrs.get("transform"), dict):
+        return _transform_metadata(attrs["transform"], ndim)
+    ds = _find_dataset(group_attrs, name)
+    if ds is not None and isinstance(ds.get("transform"), dict):
+        return _transform_metadata(ds["transform"], ndim)
+    base = attrs if ("pixelResolution" in attrs or "resolution" in attrs) else group_attrs
+    res, units = None, base.get("units")
+    if isinstance(base.get("pixelResolution"), dict):
+        res = base["pixelResolution"].get("dimensions")
+        if base["pixelResolution"].get("unit") and isinstance(res, list):
+            units = [base["pixelResolution"]["unit"]] * len(res)
+    elif isinstance(base.get("resolution"), list):
+        res = base["resolution"]
+    meta: dict = {}
+    if isinstance(res, list):
+        factors = attrs.get("downsamplingFactors")
+        if isinstance(factors, list) and len(factors) == len(res):
+            res = [float(r) * float(f) for r, f in zip(res, factors)]
+        meta["voxel_size"] = _floats(_per_axis(res, ndim, 1.0, reverse=True))
+    meta["units"] = _per_axis(units, ndim, "", reverse=True)
+    meta["translation"] = _floats(_per_axis(attrs.get("offset"), ndim, 0.0, reverse=True))
+    meta["axes"] = _per_axis(attrs.get("axes") or group_attrs.get("axes"), ndim, None, True)
+    return {k: v for k, v in meta.items() if v is not None}
+
+
+def _ome_transforms(cts, ndim: int) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """(scale, translation) of an OME ``coordinateTransformations`` list; identity if absent."""
+    scale, trans = (1.0,) * ndim, (0.0,) * ndim
+    for ct in cts if isinstance(cts, list) else []:
+        if ct.get("type") == "scale" and len(ct.get("scale", [])) == ndim:
+            scale = _floats(ct["scale"])
+        elif ct.get("type") == "translation" and len(ct.get("translation", [])) == ndim:
+            trans = _floats(ct["translation"])
+    return scale, trans
+
+
+def _ome_scale_metadata(group_attrs: dict, name: str, ndim: int) -> dict | None:
+    """Voxel size / units / translation / axes from OME-NGFF ``multiscales`` (C order),
+    for the dataset whose ``path`` is ``name``; None if the group doesn't list it.
+
+    The optional multiscale-level ``coordinateTransformations`` apply to every dataset,
+    after its own: world = s_top * (s_ds * index + t_ds) + t_top.
+    """
+    ds = _find_dataset(group_attrs, name)
+    if ds is None:
         return None
+    ms = group_attrs["multiscales"][0]
     axes = ms.get("axes", [])
-    units = tuple(a.get("unit", "") if isinstance(a, dict) else "" for a in axes) or ("",) * ndim
-    names = tuple(a.get("name") if isinstance(a, dict) else str(a) for a in axes)
+    meta: dict = {}
+    if len(axes) == ndim:
+        meta["units"] = tuple(a.get("unit", "") if isinstance(a, dict) else "" for a in axes)
+        meta["axes"] = tuple(a.get("name") if isinstance(a, dict) else str(a) for a in axes)
+    s_ds, t_ds = _ome_transforms(ds.get("coordinateTransformations"), ndim)
+    s_top, t_top = _ome_transforms(ms.get("coordinateTransformations"), ndim)
+    meta["voxel_size"] = tuple(a * b for a, b in zip(s_ds, s_top))
+    meta["translation"] = tuple(t * s + o for t, s, o in zip(t_ds, s_top, t_top))
+    return meta
+
+
+def _zarr_array_metadata(attrs: dict, ndim: int) -> dict:
+    """Legacy per-array attributes (C order): funlib-style ``resolution``/``voxel_size``,
+    ``offset``, ``units``, ``axis_names``, or a COSEM-style ``transform``."""
+    if isinstance(attrs.get("transform"), dict):
+        return _transform_metadata(attrs["transform"], ndim)
+    res = attrs.get("voxel_size", attrs.get("resolution"))
+    units = attrs.get("units")
+    if isinstance(units, str) and isinstance(res, list):
+        units = [units] * len(res)
+    meta = {
+        "voxel_size": _floats(_per_axis(res, ndim, 1.0)),
+        "translation": _floats(_per_axis(attrs.get("offset"), ndim, 0.0)),
+        "units": _per_axis(units, ndim, ""),
+        "axes": _per_axis(attrs.get("axis_names"), ndim, None),
+    }
+    return {k: v for k, v in meta.items() if v is not None}
+
+
+def _precomputed_scale_metadata(info: dict, scale_index: int | None, ndim: int) -> dict:
+    """``resolution`` (nm) and ``voxel_offset`` (voxels) of one scale, x-first -> C order."""
     try:
-        ds = ms["datasets"][level]
-    except (KeyError, IndexError):
-        return None
-    scale = [1.0] * ndim
-    trans = [0.0] * ndim
-    for ct in ds.get("coordinateTransformations", []):
-        if ct.get("type") == "scale":
-            scale = list(ct["scale"])
-        elif ct.get("type") == "translation":
-            trans = list(ct["translation"])
-    if len(units) != ndim:
-        units = ("",) * ndim
-    return tuple(scale), units, tuple(trans), (names if len(names) == ndim else None)
+        sc = info["scales"][scale_index or 0]
+        res = [float(v) for v in sc["resolution"]]
+    except (KeyError, IndexError, TypeError):
+        return {}
+    off = [float(o) * r for o, r in zip(sc.get("voxel_offset", [0] * len(res)), res)]
+    lead = ndim - len(res)  # the trailing channel axis is leading once transposed
+    return {
+        "voxel_size": (1.0,) * lead + tuple(res[::-1]),
+        "units": ("",) * lead + ("nm",) * len(res),
+        "translation": (0.0,) * lead + tuple(off[::-1]),
+    }
 
 
 class TensorStoreSource(Source):
@@ -161,76 +264,60 @@ class TensorStoreSource(Source):
         translation=None,
         axes=None,
     ) -> TensorStoreSource:
-        store = open_tensorstore(path, cache_bytes=cache_bytes, scale_index=scale_index)
-        domain = store.domain
-        ndim = store.rank
-        shape = tuple(int(s) for s in domain.exclusive_max)  # assume origin 0 for now
-        if any(int(o) != 0 for o in domain.inclusive_min):
-            store = store[domain.translate_to[[0] * ndim]]
-        chunk_shape = tuple(int(c) for c in store.chunk_layout.read_chunk.shape)
         kv = _open_kvstore(path)
         driver = _detect_driver(kv)
-        meta = None
+        store = open_tensorstore(
+            path, cache_bytes=cache_bytes, driver=driver, scale_index=scale_index
+        )
+        if driver in ("n5", "neuroglancer_precomputed"):
+            # Both drivers expose dimensions x-first, (x, y, z[, c]); we are C order.
+            store = store[ts.d[:].transpose[::-1]]
+        ndim = store.rank
+        # Arrays are 0-based here; a non-zero origin (precomputed voxel_offset) is carried
+        # as ``translation`` by the metadata below.
+        if any(int(o) != 0 for o in store.domain.inclusive_min):
+            store = store[ts.d[:].translate_to[0]]
+        shape = tuple(int(s) for s in store.domain.exclusive_max)
+        chunk_shape = tuple(int(c) for c in store.chunk_layout.read_chunk.shape)
+
+        parent, name = _split_parent(path)
+        group_attrs: dict = {}
+        if parent is not None and driver != "neuroglancer_precomputed":
+            try:
+                group_attrs = _node_attrs(_open_kvstore(parent))
+            except Exception:
+                group_attrs = {}
         if driver == "n5":
             attrs = _read_json(kv, "attributes.json") or {}
-            meta = _n5_scale_metadata(attrs, ndim)
+            meta = _n5_scale_metadata(attrs, ndim, group_attrs, name)
         elif driver == "neuroglancer_precomputed":
-            sp = store.spec().to_json()
-            res = None
-            try:
-                info = _read_json(kv, "info") or {}
-                scales = info.get("scales", [])
-                res = scales[sp.get("scale_index", 0)]["resolution"]
-            except Exception:
-                pass
-            if res:
-                # precomputed arrays are (x, y, z[, c]) in tensorstore; we transpose to C order.
-                store = store[ts.d[:].transpose[::-1]]
-                shape = tuple(int(s) for s in store.domain.exclusive_max)
-                chunk_shape = tuple(int(c) for c in store.chunk_layout.read_chunk.shape)
-                r = [float(v) for v in res][::-1]
-                if ndim == 4:
-                    meta = ((1.0, *r), ("", "nm", "nm", "nm"), (0.0,) * 4)
-                else:
-                    meta = (tuple(r), ("nm",) * ndim, (0.0,) * ndim)
-        found_axes = None
-        if meta is None or driver in ("zarr", "zarr3"):
-            # Look one level up for OME-NGFF multiscales and figure out our level index.
-            container, inner = _split_container(path)
-            parts = inner.split("/") if inner else []
-            m = _SCALE_RE.match(parts[-1]) if parts else None
-            level = int(m.group(1)) if m else 0
-            parent = "/".join(parts[:-1])
-            try:
-                pkv = _open_kvstore(container if not parent else f"{container}/{parent}")
-                gattrs = _read_json(pkv, ".zattrs")
-                if gattrs is None:
-                    zj = _read_json(pkv, "zarr.json") or {}
-                    gattrs = zj.get("attributes", {}).get("ome", zj.get("attributes", {}))
-                if gattrs:
-                    ome = _ome_scale_metadata(gattrs, level, ndim)
-                    if ome:
-                        meta = ome[:3]
-                        found_axes = ome[3]
-            except Exception:
-                pass
-        if meta is None:
-            meta = ((1.0,) * ndim, ("",) * ndim, (0.0,) * ndim)
-        vs, un, tr = meta
+            meta = _precomputed_scale_metadata(_read_json(kv, "info") or {}, scale_index, ndim)
+        else:  # zarr v2 / v3: OME-NGFF on the parent group, else legacy per-array attributes
+            meta = _ome_scale_metadata(group_attrs, name, ndim)
+            if meta is None:
+                meta = _zarr_array_metadata(_node_attrs(kv), ndim)
+
+        def pick(override, key, default):
+            return tuple(override) if override is not None else meta.get(key, default)
+
         info = ArrayInfo(
             shape=shape,
             dtype=store.dtype.numpy_dtype,
             chunk_shape=chunk_shape,
-            voxel_size=tuple(voxel_size) if voxel_size is not None else vs,
-            units=tuple(units) if units is not None else un,
-            axes=tuple(axes) if axes is not None else (found_axes or ArrayInfo.default_axes(ndim)),
-            translation=tuple(translation) if translation is not None else tr,
+            voxel_size=pick(voxel_size, "voxel_size", (1.0,) * ndim),
+            units=pick(units, "units", ("",) * ndim),
+            axes=pick(axes, "axes", ArrayInfo.default_axes(ndim)),
+            translation=pick(translation, "translation", (0.0,) * ndim),
         )
         return cls(store, info, key=f"ts:{path}")
 
 
 def open_multiscale_tensorstore(path: str, *, cache_bytes: int = 0, **kw) -> MultiscaleSource:
-    """Open ``path`` as a multiscale group (``s0``, ``s1``, ...), or a single array."""
+    """Open ``path`` as a multiscale group, or a single array.
+
+    Group levels come from ``multiscales[0].datasets[].path`` (OME-NGFF, COSEM N5) when
+    present, else ``s0``, ``s1``, ... are probed.
+    """
     kv = _open_kvstore(path)
     driver = _detect_driver(kv)
     if driver == "neuroglancer_precomputed":
@@ -245,15 +332,19 @@ def open_multiscale_tensorstore(path: str, *, cache_bytes: int = 0, **kw) -> Mul
         return MultiscaleSource(
             [TensorStoreSource.from_path(path, cache_bytes=cache_bytes, **kw)], name=path
         )
-    levels = []
-    i = 0
-    while True:
-        sub = f"{path.rstrip('/')}/s{i}"
-        subdriver = _detect_driver(_open_kvstore(sub))
-        if subdriver is None or subdriver.endswith("-group"):
-            break
-        levels.append(TensorStoreSource.from_path(sub, cache_bytes=cache_bytes, **kw))
-        i += 1
-    if not levels:
-        raise ValueError(f"{path}: no array or s0..sN levels found (driver={driver})")
+    root = path.rstrip("/")
+    names = [str(d["path"]).strip("/") for d in _multiscale_datasets(_node_attrs(kv))]
+    if not names:
+        i = 0
+        while True:
+            subdriver = _detect_driver(_open_kvstore(f"{root}/s{i}"))
+            if subdriver is None or subdriver.endswith("-group"):
+                break
+            names.append(f"s{i}")
+            i += 1
+    if not names:
+        raise ValueError(f"{path}: no multiscales datasets or s0..sN levels (driver={driver})")
+    levels = [
+        TensorStoreSource.from_path(f"{root}/{n}", cache_bytes=cache_bytes, **kw) for n in names
+    ]
     return MultiscaleSource(levels, name=path)
