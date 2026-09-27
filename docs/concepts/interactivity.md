@@ -45,7 +45,13 @@ the new URL into the viewer, from least to most convenient:
    appspot, just with state sync. This is the recommended interactive mode. The control
    page detects a running python viewer (the server reports it as `viewer_url` in `GET /`)
    and embeds it by default, so sliders and viewer sit on one page with the camera
-   preserved.
+   preserved. The viewer's dimensions come from the first dataset by name, or from
+   `Viewer.set_dimensions(name)`: spatial axes first, then the rest (time last), with x, y
+   and z displayed. `Viewer.rename_dimensions(name, {"c'": "c^"})` renames a dataset's
+   dimensions in its layer (here, the channel axis becomes a shader channel); the rename
+   is rebuilt from the dataset's axes on every edit. `Viewer.hosted_link()` gives the
+   current state as an appspot link: a snapshot that does not follow later edits but
+   needs no python server.
 
 Two browser rules bite when the server is on a private network address (`10.x`,
 `192.168.x`) and the viewer is a public https site such as appspot:

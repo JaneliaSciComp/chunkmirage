@@ -127,3 +127,10 @@ def test_live_edit_changes_output(client, volume, zarr2_path):
     np.testing.assert_array_equal(data, (volume[:16, :16, :32] >= 200).astype(np.uint8))
     stats = client.get("/api/cache").json()
     assert stats["entries"] > 0
+
+
+def test_precomputed_resolution_is_in_nanometres():
+    """OME spells units out ("micrometer"); precomputed always wants nm."""
+    url = "synthetic://blobs?shape=32,32,32&levels=1&voxel_size=0.5&unit=micrometer"
+    client = TestClient(create_app({"um": Pipeline.from_spec({"source": url})}))
+    assert client.get("/um/precomputed/info").json()["scales"][0]["resolution"] == [500.0] * 3

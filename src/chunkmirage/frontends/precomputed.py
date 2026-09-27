@@ -12,10 +12,10 @@ import numpy as np
 
 from chunkmirage.core import ArrayInfo
 from chunkmirage.frontends.base import ChunkRequest, Frontend, Metadata, register_frontend
+from chunkmirage.neuroglancer import _UNIT_TO_M
 from chunkmirage.pipeline import Pipeline
 
 _CHUNK_RE = re.compile(r"^s(\d+)/(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$")
-_UNIT_TO_NM = {"nm": 1.0, "um": 1e3, "µm": 1e3, "mm": 1e6, "m": 1e9, "": 1.0}
 _SUPPORTED = {"uint8", "uint16", "uint32", "uint64", "float32"}
 
 
@@ -74,7 +74,9 @@ class PrecomputedFrontend(Frontend):
         scales = []
         for lvl in range(pipeline.num_levels):
             info = pipeline.info(lvl)
-            res = [info.voxel_size[a] * _UNIT_TO_NM.get(info.units[a], 1.0) for a in sp][::-1]
+            # precomputed resolutions are always nanometres
+            res = [info.voxel_size[a] * _UNIT_TO_M.get(info.units[a], 1e-9) * 1e9 for a in sp]
+            res = res[::-1]
             off = [
                 int(round(info.translation[a] / info.voxel_size[a])) if info.voxel_size[a] else 0
                 for a in sp

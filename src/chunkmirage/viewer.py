@@ -18,7 +18,13 @@ from __future__ import annotations
 import threading
 from collections.abc import Mapping
 
-from chunkmirage.neuroglancer import _UNIT_TO_M, DEFAULT_VIEWER, is_segmentation, source_url
+from chunkmirage.neuroglancer import (
+    DEFAULT_VIEWER,
+    dimensions,
+    global_dimensions,
+    is_segmentation,
+    source_url,
+)
 from chunkmirage.pipeline import Pipeline, PipelineSpec
 from chunkmirage.server import DatasetRegistry
 
@@ -60,6 +66,7 @@ class Viewer:
         self.registry = registry
         self.public_url = public_url.rstrip("/")
         self.format = format
+        self._renames: dict[str, dict[str, str]] = {}
         self.viewer = neuroglancer.Viewer()
         self.public_host = public_host
         self._lock = threading.Lock()
@@ -82,6 +89,22 @@ class Viewer:
             url = urlunsplit(parts._replace(netloc=netloc))
         return url
 
+    def hosted_link(self, viewer: str = DEFAULT_VIEWER) -> str:
+        """The current state as a link to a hosted Neuroglancer (appspot by default). It
+        does not follow later edits, but opens in any browser that can reach the chunk
+        URLs, with no python server needed."""
+        return self._ng.to_url(self.viewer.state, prefix=viewer.rstrip("/") + "/")
+
+    def rename_dimensions(self, name: str, rename: Mapping[str, str]) -> None:
+        """Show dataset ``name`` with some of its Neuroglancer dimensions renamed, e.g.
+        ``{"c'": "c^"}`` to make the channel axis a shader channel (``getDataValue(i)``)
+        or ``{"t": "t'"}`` to make time local to the layer. Kept across edits, and
+        rebuilt from the dataset's current axes each time. zarr formats only."""
+        if self.format not in ("zarr", "zarr3"):
+            raise ValueError(f"renaming dimensions needs a zarr format, not {self.format!r}")
+        self._renames[name] = dict(rename)
+        self.sync({name: self.registry.get(name)})
+
     def set_ops(self, name: str, ops: list[dict]) -> Pipeline:
         """Convenience: replace the ops of dataset ``name`` keeping its source and settings."""
         p = self.registry.get(name)
@@ -92,6 +115,13 @@ class Viewer:
 
     def set_spec(self, name: str, spec: PipelineSpec | dict) -> Pipeline:
         return self.registry.add(name, spec)
+
+    def set_dimensions(self, name: str) -> None:
+        """Take the viewer's dimensions, position and display axes from dataset ``name``
+        (by default they come from the first dataset by name), e.g. the one with a ``t``
+        axis of frames."""
+        with self._lock, self.viewer.txn() as s:
+            self._set_dimensions(s, self.registry.get(name))
 
     def sync(self, names: Mapping[str, Pipeline | None] | None = None) -> None:
         """Make layers match the registry (all datasets, or just ``names``)."""
@@ -105,9 +135,7 @@ class Viewer:
                     if name in s.layers:
                         del s.layers[name]
                     continue
-                url = source_url(
-                    self.public_url, name, self.format, _SCHEMES[self.format], p.digest()
-                )
+                url = self._source(name, p)
                 if name in s.layers:
                     s.layers[name].source = url
                 elif is_segmentation(p):
@@ -129,15 +157,26 @@ class Viewer:
     def _on_change(self, name: str, pipeline: Pipeline | None) -> None:
         self.sync({name: pipeline})
 
-    def _set_dimensions(self, s, p: Pipeline) -> None:
-        info = p.info(0)
-        names = [a for a in info.axes if a != "c"]
-        scales = [
-            vs * _UNIT_TO_M.get(u, 1e-9)
-            for a, vs, u in zip(info.axes, info.voxel_size, info.units)
-            if a != "c"
-        ]
-        s.dimensions = self._ng.CoordinateSpace(
-            names=names, units=["m"] * len(names), scales=scales
+    def _source(self, name: str, p: Pipeline):
+        url = source_url(self.public_url, name, self.format, _SCHEMES[self.format], p.digest())
+        rename = self._renames.get(name)
+        if not rename:
+            return url
+        dims = {rename.get(n, n): v for n, v in dimensions(p.info(0)).items()}
+        space = self._ng.CoordinateSpace(
+            names=list(dims),
+            units=[u for _, u in dims.values()],
+            scales=[v for v, _ in dims.values()],
         )
-        s.position = [sh / 2 for a, sh in zip(info.axes, info.shape) if a != "c"]
+        transform = self._ng.CoordinateSpaceTransform(output_dimensions=space)
+        return self._ng.LayerDataSource(url=url, transform=transform)
+
+    def _set_dimensions(self, s, p: Pipeline) -> None:
+        dims, position, display = global_dimensions(p.info(0))
+        s.dimensions = self._ng.CoordinateSpace(
+            names=list(dims),
+            units=[u for _, u in dims.values()],
+            scales=[v for v, _ in dims.values()],
+        )
+        s.position = position
+        s.display_dimensions = display
