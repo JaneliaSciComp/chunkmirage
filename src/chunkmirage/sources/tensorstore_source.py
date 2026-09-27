@@ -109,6 +109,8 @@ def _floats(vals) -> tuple[float, ...] | None:
 
 def _multiscale_datasets(group_attrs: dict) -> list[dict]:
     ms = group_attrs.get("multiscales")
+    if isinstance(ms, dict):  # OME-Zarr 0.6 drafts
+        ms = [ms]
     if not isinstance(ms, list) or not ms or not isinstance(ms[0], dict):
         return []
     return [d for d in ms[0].get("datasets", []) if isinstance(d, dict) and "path" in d]
@@ -166,34 +168,56 @@ def _n5_scale_metadata(attrs: dict, ndim: int, group_attrs: dict, name: str) -> 
 
 
 def _ome_transforms(cts, ndim: int) -> tuple[tuple[float, ...], tuple[float, ...]]:
-    """(scale, translation) of an OME ``coordinateTransformations`` list; identity if absent."""
-    scale, trans = (1.0,) * ndim, (0.0,) * ndim
+    """(scale, translation) of an OME ``coordinateTransformations`` list; identity if absent.
+    Scales and translations compose in order, so ``index * scale + translation`` holds
+    whatever their order; a 0.6 ``sequence`` is unpacked. Other types are ignored here
+    (``scene://`` sources apply them)."""
+    flat: list = []
     for ct in cts if isinstance(cts, list) else []:
+        if isinstance(ct, dict) and ct.get("type") == "sequence":
+            flat.extend(ct.get("transformations") or [])
+        else:
+            flat.append(ct)
+    scale, trans = np.ones(ndim), np.zeros(ndim)
+    for ct in flat:
+        if not isinstance(ct, dict):
+            continue
         if ct.get("type") == "scale" and len(ct.get("scale", [])) == ndim:
-            scale = _floats(ct["scale"])
+            s = np.asarray(_floats(ct["scale"]))
+            scale, trans = scale * s, trans * s
         elif ct.get("type") == "translation" and len(ct.get("translation", [])) == ndim:
-            trans = _floats(ct["translation"])
-    return scale, trans
+            trans = trans + np.asarray(_floats(ct["translation"]))
+    return tuple(float(v) for v in scale), tuple(float(v) for v in trans)
 
 
 def _ome_scale_metadata(group_attrs: dict, name: str, ndim: int) -> dict | None:
     """Voxel size / units / translation / axes from OME-NGFF ``multiscales`` (C order),
     for the dataset whose ``path`` is ``name``; None if the group doesn't list it.
 
-    The optional multiscale-level ``coordinateTransformations`` apply to every dataset,
-    after its own: world = s_top * (s_ds * index + t_ds) + t_top.
+    Up to 0.5, the optional multiscale-level ``coordinateTransformations`` apply to every
+    dataset, after its own: world = s_top * (s_ds * index + t_ds) + t_top. In 0.6 they map
+    to *other* named coordinate systems instead, so they are not applied here (a
+    ``scene://`` source resamples into those); axes come from the intrinsic system.
     """
     ds = _find_dataset(group_attrs, name)
     if ds is None:
         return None
-    ms = group_attrs["multiscales"][0]
+    ms = group_attrs["multiscales"]
+    ms = ms if isinstance(ms, dict) else ms[0]
+    systems = ms.get("coordinateSystems")
     axes = ms.get("axes", [])
+    if isinstance(systems, list) and systems:
+        out = next(iter(ds.get("coordinateTransformations") or [{}]), {}).get("output")
+        out = out.get("name") if isinstance(out, dict) else out
+        cs = next((c for c in systems if c.get("name") == out), systems[0])
+        axes = cs.get("axes", [])
     meta: dict = {}
     if len(axes) == ndim:
         meta["units"] = tuple(a.get("unit", "") if isinstance(a, dict) else "" for a in axes)
         meta["axes"] = tuple(a.get("name") if isinstance(a, dict) else str(a) for a in axes)
     s_ds, t_ds = _ome_transforms(ds.get("coordinateTransformations"), ndim)
-    s_top, t_top = _ome_transforms(ms.get("coordinateTransformations"), ndim)
+    top = None if systems else ms.get("coordinateTransformations")
+    s_top, t_top = _ome_transforms(top, ndim)
     meta["voxel_size"] = tuple(a * b for a, b in zip(s_ds, s_top))
     meta["translation"] = tuple(t * s + o for t, s, o in zip(t_ds, s_top, t_top))
     return meta

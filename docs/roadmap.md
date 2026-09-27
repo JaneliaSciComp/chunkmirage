@@ -16,21 +16,25 @@ describe shipped features as future work.
    viewer becomes the job scheduler.
 4. **Lazy-compute story for non-viewer clients.** Demonstrate dask/tensorstore reading a
    served pipeline and running downstream analysis with no intermediate written.
-5. **DAG pipelines, multi-source ops, resampling.** Named stages with fan-out (one model,
-   many post-processors), a `Combine` op taking another pipeline as input, and a `Resample`
-   op for displacement fields and non-rigid registration (affine stays client-side in
-   Neuroglancer). Unlocks masking, model-vs-model disagreement views, registration overlays,
-   on-the-fly tile fusion.
-6. **Adaptive caching.** Measure stage compute time at runtime and cache automatically when
+5. **DAG pipelines, multi-source ops.** Named stages with fan-out (one model, many
+   post-processors) and a `Combine` op taking another pipeline as input. Unlocks masking,
+   model-vs-model disagreement views, registration overlays.
+6. **More registration inputs, live landmarks, fusion.** Readers for bigstream/EASI-FISH
+   (`affine.mat` plus a deform zarr), BigWarp landmarks and ANTs/ITK fields into the same
+   transform model; landmark pairs drawn in Neuroglancer, fitted to a thin-plate spline and
+   served live; several scene images fused into one volume (for example through
+   multiview-stitcher). Resampling through OME-Zarr 0.6 transformations has shipped as
+   [`scene://` sources](concepts/formats.md#scene-sources-ome-zarr-06-transformations).
+7. **Adaptive caching.** Measure stage compute time at runtime and cache automatically when
    it exceeds a threshold, removing the manual `cache` flag.
-7. **MCP surface and hot-loaded ops.** `list_ops`, `set_pipeline`, `define_op` from source,
+8. **MCP surface and hot-loaded ops.** `list_ops`, `set_pipeline`, `define_op` from source,
    `neuroglancer_link`, `screenshot`. Off by default, local only. (The REST API, `/api/events`
    stream, control page and python-neuroglancer viewer it would wrap already exist; see
    [Interactivity](concepts/interactivity.md).)
-8. **Deployment hardening.** Bearer token on `/api/*`, shared-cache multi-worker mode.
+9. **Deployment hardening.** Bearer token on `/api/*`, shared-cache multi-worker mode.
    (`--https` with an auto-generated self-signed certificate has shipped; see the
    [CLI reference](reference/cli.md).)
-9. **Own-hosted Neuroglancer with a service worker.** The zero-install browser demo with
+10. **Own-hosted Neuroglancer with a service worker.** The zero-install browser demo with
    WebGPU ops and ONNX Runtime Web inference, sharing the JSON pipeline spec with the
    Python server. See [FAQ](faq.md#does-this-work-with-neuroglancer-demoappspotcom) for why
    it cannot target the hosted appspot viewer.

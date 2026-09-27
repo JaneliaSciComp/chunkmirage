@@ -22,6 +22,21 @@
 ::: chunkmirage.core.Box
 ::: chunkmirage.cache.LRUCache
 
+## Coordinate transformations
+
+The model every registration format is read into, the OME-Zarr 0.6 reader, and the
+`scene://` source built on them.
+
+::: chunkmirage.transforms.Transform
+::: chunkmirage.transforms.Affine
+::: chunkmirage.transforms.VectorField
+::: chunkmirage.transforms.Displacements
+::: chunkmirage.transforms.InverseDisplacements
+::: chunkmirage.transforms.simplify
+::: chunkmirage.ngff.Scene
+::: chunkmirage.ngff.parse_transform
+::: chunkmirage.sources.scene.open_scene
+
 ## Frontends
 
 ::: chunkmirage.frontends.base.Frontend

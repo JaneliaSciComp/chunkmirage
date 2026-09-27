@@ -31,7 +31,9 @@ speculatively, and the operation is one a viewer's shader cannot do:
 
 * **non-local**: filters, morphology, distance transforms;
 * **learned**: model inference where GPU and weights live server-side;
-* **geometric**: resampling under a registration transform, on-the-fly pyramids;
+* **geometric**: resampling under a registration transform (including OME-Zarr 0.6
+  displacement fields, which viewers cannot apply: [`scene://`](concepts/formats.md#scene-sources-ome-zarr-06-transformations)),
+  on-the-fly pyramids;
 * **multi-source**: masking one volume by another, comparing two model versions;
 * **format bridging**: exposing HDF5 or a custom reader as zarr to any viewer.
 

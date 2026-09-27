@@ -6,10 +6,10 @@ chunkmirage serves *virtual* datasets that look, to any HTTP-capable viewer
 (Neuroglancer, BigDataViewer/Fiji, vizarr, napari, webKnossos, ...), like ordinary
 Zarr v2, Zarr v3, N5, or Neuroglancer Precomputed volumes. Nothing exists on disk.
 Every chunk is computed when requested: read from a real source (zarr, n5, precomputed,
-HDF5, local or S3/GCS/HTTP), pushed through a pipeline of ops (threshold, filter,
-model inference, resampling under a registration transform, ...), encoded in whatever
-format the viewer asked for, and cached so that tweaking a parameter downstream never
-re-reads or re-computes upstream stages.
+HDF5, local or S3/GCS/HTTP) or generated (an image registered on the fly, a procedural
+volume), pushed through a pipeline of ops (threshold, filter, model inference, ...),
+encoded in whatever format the viewer asked for, and cached so that tweaking a parameter
+downstream never re-reads or re-computes upstream stages.
 
 ```
 viewer  --HTTP-->  chunkmirage  --tensorstore/h5py-->  real data (zarr/n5/precomputed/hdf5, file/s3/gcs/http)
@@ -71,6 +71,21 @@ curl -X PUT localhost:8000/api/datasets/<name> -H 'content-type: application/jso
 
 Upstream stages stay cached; only the changed stage and its dependents recompute.
 
+### Registration without writing it out
+
+A `scene://` source serves an image resampled through OME-Zarr 0.6 coordinate
+transformations, displacement fields included, which no viewer applies itself yet. Every
+viewer sees the registered volume and nothing is written:
+
+```bash
+# download the RFC-5 fly-brain example (~49 MB) and serve fixed, moving and registered
+uv run python examples/fly_brain_registration.py /tmp/fly
+# or serve just the registered brain
+chunkmirage serve "scene:///tmp/fly/fly_brains.zarr?image=FCWB&target=JRC2018F"
+```
+
+Details: [formats](docs/concepts/formats.md#scene-sources-ome-zarr-06-transformations).
+
 ## As a library
 
 ```python
@@ -109,10 +124,18 @@ WebGPU) roadmap.
 
 ## Status
 
-Early scaffold. Working: tensorstore sources (zarr v2, n5, precomputed over file/s3/gcs/http),
-N5 / Zarr v2 / Zarr v3 / precomputed frontends, threshold/cast/scale/filter ops with halo
-support, per-stage LRU cache, live REST edits, CLI. Not yet: HDF5 source, GPU ops,
-registration/resampling op, MCP server, browser build.
+Early, but working:
+
+* **Sources:** zarr v2/v3, N5 and precomputed (file, S3, GCS, HTTP) and HDF5; computed
+  `synthetic://` volumes and `scene://` registration through OME-Zarr 0.6
+  transformations.
+* **Frontends:** N5, Zarr v2, Zarr v3 and precomputed, all served at once.
+* **Ops:** threshold, cast, scale, Gaussian, uniform and difference-of-Gaussians filters,
+  morphology, connected components; halos handled for you.
+* **Live editing:** per-stage LRU cache, REST edits, a control page, and a
+  python-neuroglancer viewer that keeps the camera while layers refetch.
+
+Not yet: GPU ops, MCP server, browser build. See the [roadmap](docs/roadmap.md).
 
 ## License
 

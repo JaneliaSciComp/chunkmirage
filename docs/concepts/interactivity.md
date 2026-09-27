@@ -104,10 +104,13 @@ Two cases, and they belong in different places:
 * **Affine** (translate, rotate, scale, shear): Neuroglancer applies a per-layer affine
   transform on the client, editable live in the layer's *Source* tab, with no refetch and
   no server. Do not route these through chunkmirage.
-* **Non-affine** (displacement fields, piecewise or non-rigid registration, resampling into
-  another dataset's grid): the client cannot do these. They are a chunkmirage op that reads
-  the field and resamples with a halo. Changing the field or its parameters changes the
-  digest and the viewer refetches as above. The `Resample` op is on the [roadmap](../roadmap.md).
+* **Non-affine** (displacement fields, non-rigid registration, resampling into another
+  dataset's grid): the client cannot do these. A
+  [`scene://` source](formats.md#scene-sources-ome-zarr-06-transformations) resamples an
+  image through OME-Zarr 0.6 transformations on the server, chunk by chunk. Editing the
+  scene's transformations and `PUT`ting the dataset again changes the digest, and the
+  viewer refetches as above. Landmarks edited live in the viewer are on the
+  [roadmap](../roadmap.md).
 
 ## For your own tooling
 
