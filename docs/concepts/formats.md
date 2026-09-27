@@ -131,6 +131,55 @@ The cache key of each level folds in the whole transformation chain, so editing 
 scene's metadata and re-`PUT`ting the dataset gives new URLs. A field rewritten in place
 under the same path keeps its key; restart or clear the cache after doing that.
 
+### Warp sources (procedural deformations)
+
+```
+warp://<image>?field=swirl&angle=90&radius=200&centre=z,y,x&plane=y,x
+warp://<image>?field=swirls&count=8&seed=0&angle=90&radius=200
+```
+
+serves `<image>` (anything above or below, including `synthetic://` URLs) twisted on its
+own grid by swirls computed from coordinates, and with `&show=field` the displacement
+itself: a `(c, z, y, x)` float32 volume whose three components are the z, y and x
+displacement in the image's units. Nothing is stored, not even the field, so any
+parameter can change at any time: `PUT` a new URL and the viewer refetches what is on
+screen. The resampling is the same as for scene sources, and each chunk reads only the
+compact region its rotated voxels come from, however large the displacement.
+
+`swirl` is one twist about an axis along a spatial axis (z for the default `plane=y,x`),
+fading with distance from that axis, so it is a column through the volume. `swirls`
+(3-D images) are `count` balls of twist at random places, each about its own axis in a
+random direction and fading with distance from its centre, so they move points along z
+too. Their displacements add; where they overlap the sum is smooth but no longer a pure
+rotation. The same `seed` gives the same swirls.
+
+With `&frames=N` the swirl grows along a new leading `t` axis, from none at frame 0 to
+`angle` at the last, so a viewer animates it by playing `t` (Neuroglancer's playback)
+instead of loading new URLs: each frame is its own chunks, computed when first shown and
+cached from then on. `examples/swirl_demo.py` shows the original, the swirled image and
+the field side by side and plays the frames.
+
+| parameter | default | meaning |
+| --------- | ------- | ------- |
+| `field` | (required) | `swirl` or `swirls` |
+| `angle` | `90` | twist on the axis, degrees; it fades as `exp(-(r/radius)²)` with distance `r` from the axis (`swirl`) or the centre (`swirls`). Each of the `swirls` turns by ½ to 1 × `angle`, either way |
+| `radius` | `swirl`: a quarter of the smaller in-plane extent; `swirls`: a fifth of the smallest extent | fall-off distance, image units; each of the `swirls` gets ½ to 1 × `radius` |
+| `centre` | the volume centre | image units, C order: a point on the axis (`swirl`), the middle of the box the centres fall in (`swirls`) |
+| `plane` | the last two axes, e.g. `y,x` | `swirl`: the two axes that turn |
+| `count` | `8` | `swirls`: how many |
+| `seed` | `0` | `swirls`: random seed for their centres, axes, radii and angles |
+| `spread` | half the volume | `swirls`: half-size of the box around `centre` their centres fall in; one value or `z,y,x` |
+| `show` | `image` | `field` serves the displacement instead |
+| `frames` | none | frames on a leading `t` axis; frame `i` twists by `angle·i/(frames−1)`. An image's own `t` axis must hold one time point, which the frames replace |
+| `chunk` | the image's | output chunk shape of the spatial axes, C order; thin chunks such as `8,128,128` compute less for a view of one plane |
+| `interpolation` | `linear`; `nearest` for uint32/uint64 | as for scene sources |
+
+The parameters follow the last `?`, so the image URL may carry its own query. To show the
+field as RGB, its components must be a Neuroglancer shader channel dimension (`c^`, read
+with `getDataValue(0..2)`). The precomputed frontend makes them one, but holds only
+`(c, z, y, x)`; with frames, serve zarr and rename the channel dimension `c'` to `c^`
+(`Viewer.rename_dimensions`, as the demo does).
+
 ### Stored sources
 
 Sources are detected by content, not extension: `zarr.json` → zarr v3, `.zarray` → zarr v2,

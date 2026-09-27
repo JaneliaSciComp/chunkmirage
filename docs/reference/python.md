@@ -32,10 +32,13 @@ The model every registration format is read into, the OME-Zarr 0.6 reader, and t
 ::: chunkmirage.transforms.VectorField
 ::: chunkmirage.transforms.Displacements
 ::: chunkmirage.transforms.InverseDisplacements
+::: chunkmirage.transforms.SwirlField
+::: chunkmirage.transforms.Swirls
 ::: chunkmirage.transforms.simplify
 ::: chunkmirage.ngff.Scene
 ::: chunkmirage.ngff.parse_transform
 ::: chunkmirage.sources.scene.open_scene
+::: chunkmirage.sources.warp.open_warp
 
 ## Frontends
 

@@ -103,6 +103,10 @@ warps in its own format. So a registration is read into one small internal model
 `chunkmirage.transforms` (affine, displacement and coordinate fields, sequence,
 byDimension, bijection), by one reader per format; `chunkmirage.ngff` reads OME-Zarr 0.6,
 and bigstream, BigWarp or ITK readers can be added without touching the resampler.
+A field only has to answer `sample(points)`, so procedural fields fit too: `warp://`
+sources twist an image through swirls computed from coordinates, which makes a
+deformation you can change continuously without storing anything, or sweep along a `t`
+axis of frames that a viewer plays without refetching anything it has already shown.
 
 The resampler is a **source** (`scene://`), not an op, for three reasons: the output grid
 belongs to another image, not to the input; each output level should read a different

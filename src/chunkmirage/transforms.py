@@ -154,8 +154,87 @@ class VectorField:
         return out
 
 
+class SwirlField:
+    """A procedural displacement field: a twist about an axis, computed exactly from
+    coordinates, so nothing is stored and any parameter can change at any time.
+
+    Points at distance ``r`` from the axis through ``centre`` turn about it by
+    ``angle * exp(-(r / radius)**2)`` degrees: fully on the axis, fading out over about
+    ``radius``. Only the two ``plane`` axes move. Same interface as ``VectorField``.
+    """
+
+    order = 1
+
+    def __init__(self, centre, radius: float, angle: float, plane=(-2, -1)):
+        self.centre = np.asarray(centre, dtype=float)
+        self.ndim = self.ncomp = len(self.centre)
+        self.radius = float(radius)
+        self.angle = float(angle)
+        self.plane = tuple(int(p) % self.ndim for p in plane)
+        if self.radius <= 0 or len(set(self.plane)) != 2:
+            raise ValueError("swirl needs radius > 0 and two distinct plane axes")
+        self.spacing = np.full(self.ndim, self.radius / 1000)  # tolerance scale for inverses
+        c = ",".join(f"{v:.6g}" for v in self.centre)
+        self.key = f"swirl({c};r={self.radius:.6g};a={self.angle:.6g};plane={self.plane})"
+
+    def sample(self, pts: np.ndarray) -> np.ndarray:
+        a, b = self.plane
+        u, v = pts[:, a] - self.centre[a], pts[:, b] - self.centre[b]
+        theta = np.deg2rad(self.angle) * np.exp(-(u * u + v * v) / self.radius**2)
+        cos, sin = np.cos(theta), np.sin(theta)
+        d = np.zeros(pts.shape, dtype=float)
+        d[:, a] = cos * u - sin * v - u
+        d[:, b] = sin * u + cos * v - v
+        return d
+
+
+class Swirls:
+    """Several 3-D swirls, their displacements added: swirl ``k`` turns points about the
+    axis ``axes[k]`` (a direction, C order) through ``centres[k]`` by
+    ``angles[k] * exp(-(d / radii[k])**2)`` degrees, ``d`` the distance from its centre.
+    So each is a ball of twist fading in every direction, and a tilted axis moves points
+    along all three axes. Where swirls overlap the sum is smooth but no longer a pure
+    rotation. Same interface as ``VectorField``.
+    """
+
+    order = 1
+    CUTOFF = 5.3  # beyond this many radii a swirl moves points by < 1e-12 of its twist
+
+    def __init__(self, centres, axes, radii, angles):
+        self.centres = np.asarray(centres, dtype=float).reshape(-1, 3)
+        axes = np.asarray(axes, dtype=float).reshape(-1, 3)
+        self.axes = axes / np.linalg.norm(axes, axis=1, keepdims=True)
+        self.radii = np.asarray(radii, dtype=float).reshape(-1)
+        self.angles = np.asarray(angles, dtype=float).reshape(-1)
+        k = len(self.centres)
+        if not (len(self.axes) == len(self.radii) == len(self.angles) == k) or k == 0:
+            raise ValueError("swirls need one axis, radius and angle per centre")
+        if (self.radii <= 0).any() or not np.isfinite(self.axes).all():
+            raise ValueError("swirls need radii > 0 and non-zero axes")
+        self.ndim = self.ncomp = 3
+        self.spacing = np.full(3, self.radii.min() / 1000)  # tolerance scale for inverses
+        params = np.concatenate(
+            [self.centres, self.axes, self.radii[:, None], self.angles[:, None]], 1
+        )
+        self.key = "swirls(" + hashlib.sha1(np.round(params, 9).tobytes()).hexdigest()[:16] + ")"
+
+    def sample(self, pts: np.ndarray) -> np.ndarray:
+        d = np.zeros(pts.shape, dtype=float)
+        lo, hi = np.nanmin(pts, axis=0), np.nanmax(pts, axis=0)
+        for c, n, r, a in zip(self.centres, self.axes, self.radii, self.angles):
+            if np.linalg.norm(np.clip(c, lo, hi) - c) > self.CUTOFF * r:
+                continue  # too far from every point to matter
+            v = pts - c
+            theta = np.deg2rad(a) * np.exp(-np.einsum("ij,ij->i", v, v) / r**2)
+            cos, sin = np.cos(theta)[:, None], np.sin(theta)[:, None]
+            # Rodrigues: v turned about n by theta
+            d += v * (cos - 1) + np.cross(n, v) * sin + np.outer(v @ n, n) * (1 - cos)
+        return d
+
+
 class Displacements(Transform):
-    """``y = x + d(x)`` with ``d`` a vector field in the input space."""
+    """``y = x + d(x)`` with ``d`` a vector field in the input space (sampled, or
+    procedural like ``SwirlField``)."""
 
     def __init__(self, field: VectorField):
         self.field = field

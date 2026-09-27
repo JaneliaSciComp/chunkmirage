@@ -84,6 +84,8 @@ uv run python examples/fly_brain_registration.py /tmp/fly
 chunkmirage serve "scene:///tmp/fly/fly_brains.zarr?image=FCWB&target=JRC2018F"
 ```
 
+`warp://` sources twist any volume through procedural 3-D swirls instead, optionally along
+a time axis that Neuroglancer plays: `uv run python examples/swirl_demo.py --animate`.
 Details: [formats](docs/concepts/formats.md#scene-sources-ome-zarr-06-transformations).
 
 ## As a library
@@ -127,8 +129,8 @@ WebGPU) roadmap.
 Early, but working:
 
 * **Sources:** zarr v2/v3, N5 and precomputed (file, S3, GCS, HTTP) and HDF5; computed
-  `synthetic://` volumes and `scene://` registration through OME-Zarr 0.6
-  transformations.
+  `synthetic://` volumes, `scene://` registration through OME-Zarr 0.6 transformations,
+  and `warp://` procedural deformations.
 * **Frontends:** N5, Zarr v2, Zarr v3 and precomputed, all served at once.
 * **Ops:** threshold, cast, scale, Gaussian, uniform and difference-of-Gaussians filters,
   morphology, connected components; halos handled for you.

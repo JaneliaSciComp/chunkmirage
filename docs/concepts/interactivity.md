@@ -53,6 +53,15 @@ the new URL into the viewer, from least to most convenient:
    current state as an appspot link: a snapshot that does not follow later edits but
    needs no python server.
 
+**Animating: a time axis, not new URLs.** A new URL is a cache miss for everything that
+layer has on screen, so it goes blank until the new chunks arrive; stepping a parameter
+faster than a screenful computes never shows a finished frame. For a parameter you want
+to sweep, serve the sweep as a `t` axis instead (as
+[`warp://…&frames=N`](formats.md#warp-sources-procedural-deformations) does) and play it
+with Neuroglancer's playback (click the dimension in the top bar, or set `velocity` in the
+state). Nothing is invalidated: each frame is fetched once, then comes from the browser's
+and the server's caches.
+
 Two browser rules bite when the server is on a private network address (`10.x`,
 `192.168.x`) and the viewer is a public https site such as appspot:
 
@@ -109,8 +118,11 @@ Two cases, and they belong in different places:
   [`scene://` source](formats.md#scene-sources-ome-zarr-06-transformations) resamples an
   image through OME-Zarr 0.6 transformations on the server, chunk by chunk. Editing the
   scene's transformations and `PUT`ting the dataset again changes the digest, and the
-  viewer refetches as above. Landmarks edited live in the viewer are on the
-  [roadmap](../roadmap.md).
+  viewer refetches as above. For a deformation you can change continuously, a
+  [`warp://` source](formats.md#warp-sources-procedural-deformations) computes a swirl
+  from coordinates, over a `t` axis of frames if you like; `examples/swirl_demo.py` plays
+  it in the python viewer with its displacement field shown as an RGB layer. Landmarks
+  edited live in the viewer are on the [roadmap](../roadmap.md).
 
 ## For your own tooling
 
