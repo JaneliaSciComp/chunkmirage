@@ -57,6 +57,24 @@ Usually one of three things:
   cost grows with the world volume a chunk covers (procedural generators, on-the-fly
   downsampling) are slowest exactly there. The synthetic sources bound this cost per chunk.
 
+## Can a server use up my machine's memory?
+
+It is bounded by design: chunks are computed one region at a time, caches have byte limits
+(`--cache-gb`, `--source-cache-gb`, a scene's `field_cache_gb`), and inputs that would
+force huge reads are refused (displacement fields stored in huge chunks, transformations
+that spread one chunk over gigabytes; see
+[scene sources](concepts/formats.md#scene-sources-ome-zarr-06-transformations)). But ops are
+your code and data can surprise, so on a shared workstation give the server a hard memory
+cap. Then an overrun kills the server, not your desktop session:
+
+```bash
+systemd-run --user --scope -p MemoryMax=32G -p MemorySwapMax=0 chunkmirage serve ...
+```
+
+`MemorySwapMax=0` matters: without it the kernel swaps before the cap is reached, and the
+whole machine slows to a crawl first. `--threads` also bounds how many chunks are computed
+at once; lower it if individual ops are memory-hungry.
+
 ## Why not just use Neuroglancer shaders?
 
 For pointwise ops on one source (threshold, windowing, colormaps, channel mixing) you

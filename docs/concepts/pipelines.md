@@ -63,8 +63,9 @@ named stages is on the [roadmap](../roadmap.md).
 ## Transforms
 
 Affine transforms are a Neuroglancer client feature (per-layer, live, no refetch); do not put
-them in a pipeline. Non-affine resampling is a planned op. See
-[Interactivity](interactivity.md#transforms-on-the-fly).
+them in a pipeline. Non-affine resampling (registration through displacement fields) is a
+[`scene://` source](formats.md#scene-sources-ome-zarr-06-transformations), so ops apply to
+the registered image. See [Interactivity](interactivity.md#transforms-on-the-fly).
 
 ## Re-chunking
 

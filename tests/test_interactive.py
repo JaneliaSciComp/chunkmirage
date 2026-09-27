@@ -126,3 +126,52 @@ def test_python_viewer_tracks_edits(registry, zarr2_path):
         assert "raw" not in [layer.name for layer in v.viewer.state.layers]
     finally:
         v.close()
+
+
+def test_viewer_dimensions_put_space_first_and_time_last(tmp_path):
+    from chunkmirage.core import ArrayInfo
+    from chunkmirage.neuroglancer import dimensions, global_dimensions
+
+    info = ArrayInfo(
+        shape=(5, 2, 10, 20, 30),
+        dtype="uint16",
+        chunk_shape=(1, 1, 8, 8, 8),
+        voxel_size=(2.0, 1.0, 1.0, 0.5, 0.5),
+        units=("millisecond", "", "micrometer", "micrometer", "micrometer"),
+        axes=("t", "c", "z", "y", "x"),
+    )
+    assert dimensions(info) == {
+        "t": [0.002, "s"],
+        "c'": [1.0, ""],
+        "z": [1e-6, "m"],
+        "y": [5e-7, "m"],
+        "x": [5e-7, "m"],
+    }
+    dims, position, display = global_dimensions(info)
+    assert list(dims) == ["z", "y", "x", "t"]
+    assert position == [5.0, 10.0, 15.0, 0.5] and display == ["x", "y", "z"]
+
+
+def test_python_viewer_renames_dimensions_across_edits(registry):
+    pytest.importorskip("neuroglancer")
+    from chunkmirage.viewer import Viewer
+
+    v = Viewer(registry, "http://localhost:9999", format="zarr3")
+    try:
+        v.set_dimensions("raw")
+        assert list(v.viewer.state.display_dimensions) == ["x", "y", "z"]
+        v.rename_dimensions("thr", {"x": "xx"})
+        v.set_ops("thr", [{"op": "threshold", "low": 100}])
+        src = v.viewer.state.layers["thr"].source[0]
+        assert "/thr/@" in src.url
+        assert list(src.transform.output_dimensions.names) == ["z", "y", "xx"]
+        link = v.hosted_link()
+        assert link.startswith("https://neuroglancer-demo.appspot.com/#!") and "%22xx%22" in link
+    finally:
+        v.close()
+    with pytest.raises(ValueError, match="zarr format"):
+        w = Viewer(registry, "http://localhost:9999", format="n5")
+        try:
+            w.rename_dimensions("thr", {"x": "xx"})
+        finally:
+            w.close()

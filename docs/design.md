@@ -95,6 +95,32 @@ Viewers cache chunks by URL. The API hands out source URLs of the form
 `/{name}/@{digest}/{fmt}` where `digest` is the pipeline hash. After an edit the digest
 changes, the viewer sees a new URL, and refetches. The un-versioned path also works.
 
+### Coordinate transformations and registration
+
+Viewers apply affine transforms themselves, but none applies a displacement field (as of
+OME-Zarr 0.6, where they became standard), and before 0.6 every registration tool stored
+warps in its own format. So a registration is read into one small internal model,
+`chunkmirage.transforms` (affine, displacement and coordinate fields, sequence,
+byDimension, bijection), by one reader per format; `chunkmirage.ngff` reads OME-Zarr 0.6,
+and bigstream, BigWarp or ITK readers can be added without touching the resampler.
+A field only has to answer `sample(points)`, so procedural fields fit too: `warp://`
+sources twist an image through swirls computed from coordinates, which makes a
+deformation you can change continuously without storing anything, or sweep along a `t`
+axis of frames that a viewer plays without refetching anything it has already shown.
+
+The resampler is a **source** (`scene://`), not an op, for three reasons: the output grid
+belongs to another image, not to the input; each output level should read a different
+source level (chosen through the transform); and the region an output chunk needs is the
+exact bounding box of its transformed voxel centres, which no fixed halo describes. As a
+source it is stage 0 of the pipeline, so its chunks are cached like raw chunks and every
+op downstream sees the registered image. The chain for each level is simplified once
+(runs of linear pieces fold into one matrix), so a typical grid → field → affine → source
+index chain costs two small matrix products and one field lookup per voxel.
+
+Inverses are taken only in closed form or from a stored `bijection`, unless the URL asks
+for `inverse=approx`; an estimated inverse of a folding field would silently show wrong
+data, so unconvergent points are left empty instead.
+
 ## Language and stack
 
 **Server: Python.** The whole point is that scientists write ops in numpy/torch/scipy;
@@ -125,8 +151,8 @@ Three layers, from most to least structured:
 
 1. **Built-in ops**: pointwise (threshold, cast, scale), filters (gaussian, uniform).
    Planned: label ops (connected components, size filter, relabel), morphology, distance
-   transform, on-the-fly downsampling, `Resample` (affine / displacement field, the
-   registration use case), `Combine` (multi-source: mask, difference, blend).
+   transform, on-the-fly downsampling, `Combine` (multi-source: mask, difference, blend).
+   Registration is a source, not an op (see below).
 2. **Plugins**: subclass `Op`, declare `name`, `halo`, `cache`, register via the
    `chunkmirage.ops` entry point. cellmap-flow's models become one plugin package.
    Params are pydantic fields, so every op ships a JSON schema the UI/MCP can render.

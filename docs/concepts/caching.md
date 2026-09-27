@@ -45,7 +45,8 @@ shapes.
 
 Every cache entry is keyed by `(stage_hash, chunk_index)` where `stage_hash` folds in:
 
-* the source identity (path or URL) and scale level,
+* the source identity (path or URL) and scale level; for a `scene://` source, also the
+  whole transformation chain, so an edited registration gets fresh keys,
 * the output chunk shape,
 * the spec of every op up to and including this stage.
 

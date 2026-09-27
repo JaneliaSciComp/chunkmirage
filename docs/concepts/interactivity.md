@@ -45,7 +45,22 @@ the new URL into the viewer, from least to most convenient:
    appspot, just with state sync. This is the recommended interactive mode. The control
    page detects a running python viewer (the server reports it as `viewer_url` in `GET /`)
    and embeds it by default, so sliders and viewer sit on one page with the camera
-   preserved.
+   preserved. The viewer's dimensions come from the first dataset by name, or from
+   `Viewer.set_dimensions(name)`: spatial axes first, then the rest (time last), with x, y
+   and z displayed. `Viewer.rename_dimensions(name, {"c'": "c^"})` renames a dataset's
+   dimensions in its layer (here, the channel axis becomes a shader channel); the rename
+   is rebuilt from the dataset's axes on every edit. `Viewer.hosted_link()` gives the
+   current state as an appspot link: a snapshot that does not follow later edits but
+   needs no python server.
+
+**Animating: a time axis, not new URLs.** A new URL is a cache miss for everything that
+layer has on screen, so it goes blank until the new chunks arrive; stepping a parameter
+faster than a screenful computes never shows a finished frame. For a parameter you want
+to sweep, serve the sweep as a `t` axis instead (as
+[`warp://…&frames=N`](formats.md#warp-sources-procedural-deformations) does) and play it
+with Neuroglancer's playback (click the dimension in the top bar, or set `velocity` in the
+state). Nothing is invalidated: each frame is fetched once, then comes from the browser's
+and the server's caches.
 
 Two browser rules bite when the server is on a private network address (`10.x`,
 `192.168.x`) and the viewer is a public https site such as appspot:
@@ -98,10 +113,16 @@ Two cases, and they belong in different places:
 * **Affine** (translate, rotate, scale, shear): Neuroglancer applies a per-layer affine
   transform on the client, editable live in the layer's *Source* tab, with no refetch and
   no server. Do not route these through chunkmirage.
-* **Non-affine** (displacement fields, piecewise or non-rigid registration, resampling into
-  another dataset's grid): the client cannot do these. They are a chunkmirage op that reads
-  the field and resamples with a halo. Changing the field or its parameters changes the
-  digest and the viewer refetches as above. The `Resample` op is on the [roadmap](../roadmap.md).
+* **Non-affine** (displacement fields, non-rigid registration, resampling into another
+  dataset's grid): the client cannot do these. A
+  [`scene://` source](formats.md#scene-sources-ome-zarr-06-transformations) resamples an
+  image through OME-Zarr 0.6 transformations on the server, chunk by chunk. Editing the
+  scene's transformations and `PUT`ting the dataset again changes the digest, and the
+  viewer refetches as above. For a deformation you can change continuously, a
+  [`warp://` source](formats.md#warp-sources-procedural-deformations) computes a swirl
+  from coordinates, over a `t` axis of frames if you like; `examples/swirl_demo.py` plays
+  it in the python viewer with its displacement field shown as an RGB layer. Landmarks
+  edited live in the viewer are on the [roadmap](../roadmap.md).
 
 ## For your own tooling
 
