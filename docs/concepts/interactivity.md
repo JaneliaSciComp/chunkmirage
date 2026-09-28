@@ -101,6 +101,12 @@ whose subject alternative names cover the machine's IP, hostname and `localhost`
 browser has to trust it once: open the printed `https://…/` URL, accept the warning, then
 open the viewer link. Neuroglancer's chunk fetches will otherwise fail silently.
 
+The examples (`examples/swirl_demo.py`, `examples/fly_brain_registration.py`) do this by
+default, so the links they print can be sent to anyone on the network: they bind every
+interface, use the machine's IP, and serve https with that certificate. `--host 127.0.0.1`
+keeps one local (plain http, `localhost` links); `--no-https` keeps plain http on the
+network, where only the python viewer link works from other machines.
+
 Edits are global: everyone viewing dataset `thresh` sees the same pipeline, and a slider
 drag by one person changes it for all. For independent exploration, create a copy under
 another name (`POST /api/datasets` with the same spec); upstream stages are shared through

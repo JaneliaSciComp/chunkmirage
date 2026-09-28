@@ -96,13 +96,24 @@ def main() -> None:
         default="8,128,128",
         help="output chunks, z,y,x: thin in z means less to compute for the x-y view",
     )
-    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="bind address (default: every interface, so links use this machine's IP and "
+        "work for others; 127.0.0.1 keeps it local, with localhost links over plain http)",
+    )
+    ap.add_argument(
+        "--no-https",
+        action="store_true",
+        help="serve chunks over plain http on the network: the viewer link still works "
+        "from other machines, the appspot link does not (https pages cannot fetch http)",
+    )
     ap.add_argument("--port", type=int, help="chunk server port (default: 8000 or the next free)")
     ap.add_argument(
         "--viewer-port", type=int, help="python viewer port (default: 8001 or the next free)"
     )
     ap.add_argument(
-        "--public-url", help="address browsers use for chunks (default http://localhost:PORT)"
+        "--public-url", help="address browsers use for chunks (default: this machine's IP)"
     )
     ap.add_argument("--threads", type=int, default=16, help="chunk-computing threads")
     args = ap.parse_args()
@@ -110,7 +121,7 @@ def main() -> None:
     import neuroglancer
     import uvicorn
 
-    from chunkmirage.netutil import free_port
+    from chunkmirage.netutil import free_port, is_loopback, public_host_for, serving_address
     from chunkmirage.server import DatasetRegistry, create_app
     from chunkmirage.viewer import Viewer
 
@@ -131,8 +142,16 @@ def main() -> None:
     registry.add("swirled", {"source": warp_url(args.image, extra)})
     registry.add("swirl_field", {"source": warp_url(args.image, extra, field=True)})
 
-    public = args.public_url or f"http://localhost:{port}"
-    viewer = Viewer(registry, public, bind_address=args.host, port=viewer_port)
+    https = not (args.no_https or is_loopback(args.host))
+    address, ssl = serving_address(args.host, port, https=https)
+    public = (args.public_url or address).rstrip("/")
+    viewer = Viewer(
+        registry,
+        public,
+        bind_address=args.host,
+        port=viewer_port,
+        public_host=public_host_for(args.host),
+    )
     viewer.set_dimensions("swirled")  # space, then t: the frames
 
     original, field = registry.get("original"), registry.get("swirl_field")
@@ -184,14 +203,19 @@ def main() -> None:
 
     print(f"\nviewer:  {viewer.url}", flush=True)
     print(f"public:  {viewer.hosted_link()}")
-    print(f"chunks:  {public}  (forward both ports if this runs on a remote machine)")
+    print(f"chunks:  {public}")
+    if https:
+        print(
+            "https:   self-signed certificate: each browser (yours and anyone you send a link "
+            f"to) must trust it once: open {public}/ and accept the warning"
+        )
     print(
         "left: original (red) + swirled (green); right: the swirl field as RGB (z, y, x)\n"
         f"t: {args.frames} frames from no twist to {args.angle:g} degrees; click t to play\n",
         flush=True,
     )
     app = create_app(registry, threads=args.threads)
-    uvicorn.run(app, host=args.host, port=port, log_level="warning")
+    uvicorn.run(app, host=args.host, port=port, log_level="warning", **ssl)
 
 
 if __name__ == "__main__":

@@ -48,3 +48,15 @@ def test_free_port_skips_ports_in_use_and_avoided():
         port = free_port("127.0.0.1", taken, tries=20)
         assert port != taken and taken < port < taken + 20
         assert free_port("127.0.0.1", taken, avoid={port}, tries=20) not in (taken, port)
+
+
+def test_serving_address_uses_the_network_ip_and_given_certificate(monkeypatch):
+    from chunkmirage import netutil
+
+    monkeypatch.setattr(netutil, "lan_ip", lambda: "10.1.2.3")
+    assert netutil.serving_address("0.0.0.0", 8005, https=False) == ("http://10.1.2.3:8005", {})
+    assert netutil.serving_address("127.0.0.1", 8005, https=False)[0] == "http://localhost:8005"
+    url, ssl = netutil.serving_address("0.0.0.0", 8005, https=True, cert="c.pem", key="k.pem")
+    assert url == "https://10.1.2.3:8005"
+    assert ssl == {"ssl_certfile": "c.pem", "ssl_keyfile": "k.pem"}
+    assert netutil.is_loopback("127.0.0.1") and not netutil.is_loopback("0.0.0.0")

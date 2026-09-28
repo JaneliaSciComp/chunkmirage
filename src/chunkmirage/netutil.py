@@ -46,6 +46,26 @@ def public_host_for(bind_host: str) -> str:
     return bind_host
 
 
+def serving_address(
+    host: str, port: int, *, https: bool, cert: str | None = None, key: str | None = None
+) -> tuple[str, dict]:
+    """Base URL that browsers, including other machines', use for a server bound to
+    ``host:port`` (the network IP when bound to every interface), and the uvicorn
+    ``ssl_*`` arguments. With ``https`` and no ``cert``/``key``, a self-signed certificate
+    for that address is generated (or reused)."""
+    public_host = public_host_for(host)
+    ssl: dict = {}
+    if https:
+        if not (cert and key):
+            cert, key = ensure_self_signed_cert(hosts=[public_host])
+        ssl = {"ssl_certfile": cert, "ssl_keyfile": key}
+    return f"{'https' if https else 'http'}://{public_host}:{port}", ssl
+
+
+def is_loopback(host: str) -> bool:
+    return host in ("127.0.0.1", "::1", "localhost")
+
+
 def default_cert_dir() -> str:
     import os
 
