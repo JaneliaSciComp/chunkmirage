@@ -219,7 +219,9 @@ def main() -> None:
     from chunkmirage import create_app
 
     out = build(Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve())
-    port = 8000
+    from chunkmirage.netutil import free_port
+
+    port = free_port("127.0.0.1", 8000)  # 8000, or the next free port if it is taken
     pipes, link = demo(out, f"http://localhost:{port}")
     print(
         "\nLayers: JRC2018F (green, fixed), FCWB_registered (magenta, warped on the fly) and"

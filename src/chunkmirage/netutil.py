@@ -20,6 +20,23 @@ def lan_ip() -> str:
         s.close()
 
 
+def free_port(host: str = "127.0.0.1", start: int = 8000, *, avoid=(), tries: int = 100) -> int:
+    """The first port from ``start`` up that a server could bind on ``host`` (skipping
+    ``avoid``). It is checked by binding, so another process could still take it before
+    the server starts; in practice that race does not happen."""
+    for port in range(start, start + tries):
+        if port in avoid:
+            continue
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # as servers do
+            try:
+                s.bind((host, port))
+            except OSError:
+                continue
+            return port
+    raise OSError(f"no free port in {start}..{start + tries - 1} on {host}")
+
+
 def public_host_for(bind_host: str) -> str:
     """Host other machines should use to reach a server bound to ``bind_host``."""
     if bind_host in ("0.0.0.0", "::", ""):

@@ -74,7 +74,9 @@ def serve(
         None, help="output chunk shape, e.g. 64,64,64 (default: source chunks)"
     ),
     host: str = typer.Option("0.0.0.0"),
-    port: int = typer.Option(8000),
+    port: int | None = typer.Option(
+        None, help="port to serve on (default: 8000, or the first free one above it)"
+    ),
     https: bool = typer.Option(
         False,
         "--https",
@@ -127,13 +129,17 @@ def serve(
     viewer_port: int = typer.Option(0, help="port for --python-viewer (default: random free port)"),
 ):
     """Serve SOURCE through a pipeline of ops as n5 / zarr / zarr3 / precomputed."""
-    from chunkmirage.netutil import ensure_self_signed_cert, public_host_for
+    from chunkmirage.netutil import ensure_self_signed_cert, free_port, public_host_for
     from chunkmirage.neuroglancer import source_url, viewer_link
     from chunkmirage.server import create_app
 
     registry = build_registry(
         source, name, op, chunk, raw=raw, cache_gb=cache_gb, source_cache_gb=source_cache_gb
     )
+    if port is None:
+        port = free_port(host, 8000)
+        if port != 8000:
+            typer.echo(f"port:         {port} (8000 is in use)")
     public_host = public_host_for(host)
     ssl: dict = {}
     if https:
