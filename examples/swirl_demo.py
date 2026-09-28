@@ -97,8 +97,10 @@ def main() -> None:
         help="output chunks, z,y,x: thin in z means less to compute for the x-y view",
     )
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=8000)
-    ap.add_argument("--viewer-port", type=int, default=8001)
+    ap.add_argument("--port", type=int, help="chunk server port (default: 8000 or the next free)")
+    ap.add_argument(
+        "--viewer-port", type=int, help="python viewer port (default: 8001 or the next free)"
+    )
     ap.add_argument(
         "--public-url", help="address browsers use for chunks (default http://localhost:PORT)"
     )
@@ -108,8 +110,12 @@ def main() -> None:
     import neuroglancer
     import uvicorn
 
+    from chunkmirage.netutil import free_port
     from chunkmirage.server import DatasetRegistry, create_app
     from chunkmirage.viewer import Viewer
+
+    port = args.port or free_port(args.host, 8000)
+    viewer_port = args.viewer_port or free_port(args.host, 8001, avoid={port})
 
     extra = f"field={args.field}&angle={args.angle:g}&frames={args.frames}&chunk={args.chunk}"
     extra += f"&radius={args.radius:g}" if args.radius else ""
@@ -125,8 +131,8 @@ def main() -> None:
     registry.add("swirled", {"source": warp_url(args.image, extra)})
     registry.add("swirl_field", {"source": warp_url(args.image, extra, field=True)})
 
-    public = args.public_url or f"http://localhost:{args.port}"
-    viewer = Viewer(registry, public, bind_address=args.host, port=args.viewer_port)
+    public = args.public_url or f"http://localhost:{port}"
+    viewer = Viewer(registry, public, bind_address=args.host, port=viewer_port)
     viewer.set_dimensions("swirled")  # space, then t: the frames
 
     original, field = registry.get("original"), registry.get("swirl_field")
@@ -185,7 +191,7 @@ def main() -> None:
         flush=True,
     )
     app = create_app(registry, threads=args.threads)
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    uvicorn.run(app, host=args.host, port=port, log_level="warning")
 
 
 if __name__ == "__main__":
