@@ -7,7 +7,7 @@ rewrites it as a final OME-Zarr 0.6 scene (the published copy is a 0.6.dev1 draf
 codec name tensorstore rejects), and serves three layers: JRC2018F, FCWB as stored (in
 its own coordinates), and FCWB resampled onto the JRC2018F grid:
 
-    uv run python examples/fly_brain_registration.py [OUT_DIR]
+    uv run python examples/fly_brain_registration.py [OUT_DIR] [--host 127.0.0.1] [--no-https]
 
 Neuroglancer cannot open the scene (it has no displacement-field support), but it shows
 the printed link registered anyway: every chunk is resampled on the server. The
@@ -21,7 +21,6 @@ from __future__ import annotations
 import http.client
 import json
 import shutil
-import sys
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -214,21 +213,44 @@ def demo(out: Path, public_url: str) -> tuple[dict, str]:
 
 
 def main() -> None:
+    import argparse
+
     import uvicorn
 
     from chunkmirage import create_app
+    from chunkmirage.netutil import free_port, is_loopback, serving_address
 
-    out = build(Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve())
-    from chunkmirage.netutil import free_port
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("out", nargs="?", default=".", help="where to put the downloaded data")
+    ap.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="bind address (default: every interface; links use this machine's IP)",
+    )
+    ap.add_argument("--port", type=int, help="default: 8000 or the next free port")
+    ap.add_argument(
+        "--no-https",
+        action="store_true",
+        help="plain http (appspot links then work only on localhost)",
+    )
+    args = ap.parse_args()
 
-    port = free_port("127.0.0.1", 8000)  # 8000, or the next free port if it is taken
-    pipes, link = demo(out, f"http://localhost:{port}")
+    out = build(Path(args.out).resolve())
+    port = args.port or free_port(args.host, 8000)
+    https = not (args.no_https or is_loopback(args.host))
+    public, ssl = serving_address(args.host, port, https=https)
+    pipes, link = demo(out, public)
     print(
         "\nLayers: JRC2018F (green, fixed), FCWB_registered (magenta, warped on the fly) and"
         "\nFCWB_original (magenta, hidden: toggle it and FCWB_registered to compare)."
     )
     print("neuroglancer:", link)
-    uvicorn.run(create_app(pipes), port=port)
+    if https:
+        print(
+            "https: self-signed certificate: each browser (yours and anyone you send the link "
+            f"to) must trust it once: open {public}/ and accept the warning"
+        )
+    uvicorn.run(create_app(pipes), host=args.host, port=port, **ssl)
 
 
 if __name__ == "__main__":
