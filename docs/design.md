@@ -198,8 +198,13 @@ Fully client-side is feasible and would make a compelling hosted demo:
   shaders, with the gradients written out by hand (WGSL has no autograd, and no float
   atomics, so each control point gathers its voxels' gradients). Fed the same data, its
   field matches the PyTorch solver's to about 1% (a median 0.25 µm on a gut whose field
-  moves tissue by 21 µm), and so do its scores. WebGPU needs a secure page:
-  `examples/browser/serve.py` serves it over https with the self-signed certificate.
+  moves tissue by 21 µm), and so do its scores. It then shows before and after in
+  Neuroglancer hosted on the page's origin: the page's service worker hands the viewer's
+  requests for the registered volume to the page, whose web workers resample the moving
+  image through the field as `scene://` does, reading it from its URL through a cache of
+  decoded blocks. So all of `register://` runs client side. WebGPU needs a secure page:
+  `examples/browser/serve.py` serves it over https with the self-signed certificate and
+  relays the standard Neuroglancer client under `/ng/`; a static host would carry a copy.
 
 ## Deployment shapes
 

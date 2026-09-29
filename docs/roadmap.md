@@ -40,8 +40,10 @@ describe shipped features as future work.
    it cannot target the hosted appspot viewer. A first piece exists:
    `examples/browser/register.html` fits `register://`'s deformable registration on the
    viewer's GPU, reading OME-Zarr straight from its URLs (see the
-   [design notes](design.md#client-side-browser-roadmap)); what remains is serving the
-   registered volume, and ops, to Neuroglancer through the service worker.
+   [design notes](design.md#client-side-browser-roadmap)) and serves the registered
+   volume to Neuroglancer through a service worker, computed by web workers. What remains
+   is ops (WebGPU filters, ONNX Runtime Web inference) through the same service worker,
+   and a vendored Neuroglancer build for static hosting.
 
 ## Untapped potential
 

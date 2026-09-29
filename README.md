@@ -93,9 +93,11 @@ uv sync --extra all --extra gpu        # gpu: PyTorch, about 3 GB
 uv run python examples/register_demo.py FIXED MOVING --affine fixed_to_moving.npy
 ```
 
-With no arguments it registers a synthetic volume onto a swirled copy of itself. The same
-solve also runs in the browser, on the viewer's GPU, reading straight from the data's URLs:
-`uv run python examples/browser/serve.py` and open the printed `register.html` link. `warp://`
+With no arguments it registers a synthetic volume onto a swirled copy of itself. The whole
+thing also runs in the browser: `uv run python examples/browser/serve.py` and open the
+printed `register.html` link. The page reads both images straight from their URLs, solves on
+the viewer's GPU (WebGPU), and shows before and after in Neuroglancer, the registered volume
+computed in the browser as the viewer asks for it. `warp://`
 sources make such swirls, optionally along a time axis that Neuroglancer plays:
 `uv run python examples/swirl_demo.py --animate`. Details:
 [formats](docs/concepts/formats.md#scene-sources-ome-zarr-06-transformations).
