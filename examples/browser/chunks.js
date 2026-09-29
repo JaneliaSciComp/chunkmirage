@@ -9,7 +9,7 @@ const CACHE_BYTES = 256 * 2 ** 20;  // decoded blocks kept per worker
 const TYPED = { uint8: Uint8Array, uint16: Uint16Array, uint32: Uint32Array, int8: Int8Array, int16: Int16Array, int32: Int32Array, float32: Float32Array, float64: Float64Array };
 
 let moving = null, fixedLevels = null, chunkShape = null, Typed = null, blockBytes = 0;
-const views = new Map();           // view id -> {affine, grid | null}
+const views = new Map();           // view id -> {kind: "image" | "field", affine, grid | null}
 const blocks = new Map();          // block key -> Promise<{data, shape}>, in use order
 let cached = 0;
 
@@ -22,7 +22,7 @@ self.onmessage = async ({ data: m }) => {
       blockBytes = BLOCK ** 3 * Typed.BYTES_PER_ELEMENT;
       self.postMessage({ type: "ready" });
     } else if (m.type === "view") {
-      views.set(m.id, { affine: m.affine, grid: m.grid });
+      views.set(m.id, { kind: m.kind ?? "image", affine: m.affine, grid: m.grid });
     } else if (m.type === "chunk") {
       const body = await chunk(m);
       self.postMessage({ type: "chunk", reqId: m.reqId, body }, [body]);
@@ -71,9 +71,31 @@ async function region(li, channel, lo, hi) {
   return { data: out, shape };
 }
 
+/** The field itself on the fixed grid: its three components (z, y, x), physical units. */
+function fieldChunk(grid, fl, start, size) {
+  const cs = chunkShape, n = cs[0] * cs[1] * cs[2];
+  const out = new Float32Array(3 * n), d = [0, 0, 0];
+  for (let i = 0; i < size[0]; i++) {
+    const x0 = fl.origin[0] + (start[0] + i) * fl.voxel[0];
+    for (let j = 0; j < size[1]; j++) {
+      const x1 = fl.origin[1] + (start[1] + j) * fl.voxel[1];
+      for (let k = 0; k < size[2]; k++) {
+        fieldAt(grid, x0, x1, fl.origin[2] + (start[2] + k) * fl.voxel[2], d);
+        const p = (i * cs[1] + j) * cs[2] + k;
+        out[p] = d[0]; out[n + p] = d[1]; out[2 * n + p] = d[2];
+      }
+    }
+  }
+  return out.buffer;
+}
+
 async function chunk({ id, level, channel, index }) {
   const view = views.get(id);
   const fl = fixedLevels[level], cs = chunkShape;
+  if (view?.kind === "field") {
+    const start = index.map((i, a) => i * cs[a]);
+    return fieldChunk(view.grid, fl, start, start.map((s, a) => Math.max(0, Math.min(cs[a], fl.shape[a] - s))));
+  }
   const out = new Typed(cs[0] * cs[1] * cs[2]);  // a whole chunk: zero past the array's edge
   const start = index.map((i, a) => i * cs[a]);
   const size = start.map((s, a) => Math.max(0, Math.min(cs[a], fl.shape[a] - s)));

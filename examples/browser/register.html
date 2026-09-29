@@ -61,7 +61,7 @@
   main iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
   .empty { position: absolute; inset: 0; display: grid; place-content: center; gap: 6px; padding: 24px; text-align: center; color: var(--faint); }
   .empty b { color: var(--muted); font-weight: 600; }
-  .captions { position: absolute; left: 0; right: 0; bottom: 14px; display: grid; grid-template-columns: 1fr 1fr; pointer-events: none; }
+  .captions { position: absolute; left: 0; right: 0; bottom: 14px; display: grid; grid-template-columns: 1fr 1fr 1fr; pointer-events: none; }
   .captions span { justify-self: center; padding: 3px 9px; border-radius: 4px; background: rgba(0, 0, 0, .65); color: #d7dbe0; font-size: 12px; }
   [hidden] { display: none !important; }
   @media (max-width: 820px) {
@@ -122,7 +122,7 @@
   <div class="empty" id="empty"><b>Enter a fixed and a moving image, then Register.</b>
     <span>Needs WebGPU: Chrome or Edge, or Safari 26. The images must allow CORS.</span></div>
   <iframe id="ng" title="Neuroglancer" hidden></iframe>
-  <div class="captions" id="captions" hidden><span>Before: the affine alone</span><span id="afterCaption">After: solving…</span></div>
+  <div class="captions" id="captions" hidden><span>Before: the affine alone</span><span id="afterCaption">After: solving…</span><span id="fieldCaption">Field: after the solve</span></div>
 </main>
 <script type="module">
 import { nearestLevel, openImage, percentiles, readLevel } from "./ome.js";
@@ -208,13 +208,14 @@ async function answer(path) {  // a request under /virtual/<page>/<view>/..., or
   if (!parts || parts[0] !== PAGE || !session) return null;
   const [, view, ...rest] = parts;
   const notFound = { status: 404, body: "", type: "text/plain" };
-  if (!session.views.has(view)) return notFound;
-  if (rest.length === 1 && rest[0] === "zarr.json") return asJson(groupMetadata(view));
-  if (rest.length === 2 && rest[1] === "zarr.json") return asJson(arrayMetadata(Number(rest[0])));
+  const kind = session.views.get(view);
+  if (!kind) return notFound;
+  if (rest.length === 1 && rest[0] === "zarr.json") return asJson(groupMetadata(view, kind));
+  if (rest.length === 2 && rest[1] === "zarr.json") return asJson(arrayMetadata(Number(rest[0]), kind));
   if (rest[1] === "c") {
-    const level = Number(rest[0]), idx = rest.slice(2).map(Number), n = session.moving.lead;
-    const c = session.moving.names.indexOf("c");
-    const channel = c >= 0 ? idx[c] : 0, index = idx.slice(n);
+    const level = Number(rest[0]), idx = rest.slice(2).map(Number);
+    const n = kind === "field" ? 1 : session.moving.lead, c = session.moving.names.indexOf("c");
+    const channel = kind === "field" || c < 0 ? 0 : idx[c], index = idx.slice(n);
     const key = ((((level * 7 + channel) * 131 + (index[0] >> 2)) * 131 + index[1]) * 131 + index[2]) >>> 0;
     const body = await session.pool.chunk({ type: "chunk", id: view, level, channel, index }, key);
     return { status: 200, body, type: "application/octet-stream" };
@@ -223,9 +224,19 @@ async function answer(path) {  // a request under /virtual/<page>/<view>/..., or
 }
 
 // The registered volume as OME-Zarr 0.5: the moving image's time and channel axes on the
-// fixed image's grid and levels; uncompressed chunks, since they are computed here.
-function groupMetadata(view) {
+// fixed image's grid and levels; uncompressed chunks, since they are computed here. A field
+// view is the displacement instead: three components (z, y, x) on the same grid.
+function groupMetadata(view, kind) {
   const { fixed, moving } = session, m0 = moving.levels[0], n = moving.lead;
+  if (kind === "field") return {
+    zarr_format: 3, node_type: "group",
+    attributes: { ome: { version: "0.5", multiscales: [{
+      name: view, axes: [{ name: "c", type: "channel" }, ...fixed.axes.slice(-3)],
+      datasets: fixed.levels.map((l, i) => ({ path: String(i), coordinateTransformations: [
+        { type: "scale", scale: [1, ...l.voxel] }, { type: "translation", translation: [0, ...l.origin] },
+      ] })),
+    }] } },
+  };
   return {
     zarr_format: 3, node_type: "group",
     attributes: { ome: { version: "0.5", multiscales: [{
@@ -238,15 +249,16 @@ function groupMetadata(view) {
   };
 }
 
-function arrayMetadata(level) {
-  const { fixed, moving } = session, lead = moving.levels[0].fullShape.slice(0, moving.lead);
+function arrayMetadata(level, kind) {
+  const { fixed, moving } = session, field = kind === "field";
+  const lead = field ? [3] : moving.levels[0].fullShape.slice(0, moving.lead);
   return {
     zarr_format: 3, node_type: "array", shape: [...lead, ...fixed.levels[level].shape],
-    data_type: moving.dtype, fill_value: 0,
-    chunk_grid: { name: "regular", configuration: { chunk_shape: [...lead.map(() => 1), ...CHUNK] } },
+    data_type: field ? "float32" : moving.dtype, fill_value: 0,
+    chunk_grid: { name: "regular", configuration: { chunk_shape: [...(field ? [3] : lead.map(() => 1)), ...CHUNK] } },
     chunk_key_encoding: { name: "default", configuration: { separator: "/" } },
     codecs: [{ name: "bytes", configuration: { endian: "little" } }],
-    dimension_names: [...moving.names.slice(0, moving.lead), "z", "y", "x"], attributes: {},
+    dimension_names: [...(field ? ["c"] : moving.names.slice(0, moving.lead)), "z", "y", "x"], attributes: {},
   };
 }
 
@@ -271,16 +283,29 @@ async function startServing(fixed, moving) {
     type: "setup", moving: moving.url, chunkShape: CHUNK,
     fixedLevels: fixed.levels.map((l) => ({ shape: l.shape, voxel: l.voxel, origin: l.origin })),
   });
-  session = { fixed, moving, pool, views: new Set() };
+  session = { fixed, moving, pool, views: new Map() };  // view id -> "image" | "field"
 }
 
-function publish(id, affine, grid) {
-  session.pool.broadcast({ type: "view", id, affine, grid });
-  session.views.add(id);
+function publish(id, affine, grid, kind = "image") {
+  session.pool.broadcast({ type: "view", id, kind, affine, grid });
+  session.views.set(id, kind);
   return `zarr3://${new URL(`virtual/${PAGE}/${id}/`, location.href).href}`;
 }
 
 // ------------------------------------------------ Neuroglancer (hosted on this origin, /ng/)
+// How far the field moved each point, as a heat map up to `scale` (physical units), or with
+// `direction` its direction as colour: (z, y, x) components as (red, green, blue), grey at none.
+const FIELD_SHADER = (scale) => `#uicontrol float scale slider(min=${(scale / 20).toPrecision(2)}, max=${(scale * 4).toPrecision(2)}, default=${scale.toPrecision(3)})
+#uicontrol bool direction checkbox(default=false)
+void main() {
+  vec3 d = vec3(getDataValue(0), getDataValue(1), getDataValue(2));
+  if (direction) {
+    emitRGB(clamp(vec3(0.5) + 0.5 * d / scale, 0.0, 1.0));
+  } else {
+    emitRGB(colormapJet(clamp(length(d) / scale, 0.0, 1.0)));
+  }
+}
+`;
 function viewerState(p, sources, ranges) {
   const { fixed } = session, l0 = fixed.levels[0];
   const toM = TO_METRES[fixed.axes.at(-1).unit] ?? 1;
@@ -295,9 +320,14 @@ function viewerState(p, sources, ranges) {
   });
   const { moving } = session;
   const layers = [layer("fixed", `zarr3://${fixed.url}/`, "#ff4fd8", ranges.fixed, p.fixedChannel, fixed)];
-  for (const [name, src] of Object.entries(sources)) layers.push(layer(name, src, "#45f07a", ranges.moving, p.movingChannel, moving));
-  const main = document.querySelector("main");  // fit the whole x-y slice in one of two panels
-  const w = (main.clientWidth || 1200) / 2 - 20, h = (main.clientHeight || 800) - 90;
+  for (const name of ["before", "after"]) if (sources[name]) layers.push(layer(name, sources[name], "#45f07a", ranges.moving, p.movingChannel, moving));
+  if (sources.field) layers.push({
+    type: "image", name: "field", shader: FIELD_SHADER(ranges.field),
+    // its components are the shader's channels (getDataValue(0..2)): rename c' to c^
+    source: { url: sources.field, transform: { outputDimensions: { "c^": [1, ""], z: dims.z, y: dims.y, x: dims.x } } },
+  });
+  const main = document.querySelector("main");  // fit the whole x-y slice in one of three panels
+  const w = (main.clientWidth || 1200) / 3 - 20, h = (main.clientHeight || 800) - 90;
   return {
     dimensions: dims, position, displayDimensions: ["x", "y", "z"],
     crossSectionScale: Math.max(l0.shape[2] / w, l0.shape[1] / h) * 1.05,
@@ -305,6 +335,7 @@ function viewerState(p, sources, ranges) {
     layout: { type: "row", children: [
       { type: "viewer", layers: ["fixed", "before"], layout: "xy" },
       { type: "viewer", layers: sources.after ? ["fixed", "after"] : ["fixed"], layout: "xy" },
+      { type: "viewer", layers: sources.field ? ["field"] : ["fixed"], layout: "xy" },
     ] },
     selectedLayer: { layer: sources.after ? "after" : "before", visible: false },
   };
@@ -409,8 +440,13 @@ async function run() {
     });
     const id = `after-${++solves}`;
     const after = publish(id, affine, res.grid);
-    showViewer(viewerState(p, { before, after }, ranges), true);
+    const field = publish(`field-${solves}`, affine, res.grid, "field");
+    const sizes = new Float32Array(res.grid.values.length / 3);
+    for (let i = 0; i < sizes.length; i++) sizes[i] = Math.hypot(res.grid.values[3 * i], res.grid.values[3 * i + 1], res.grid.values[3 * i + 2]);
+    ranges.field = Math.max(percentiles(sizes, [99])[0], 1e-6);
+    showViewer(viewerState(p, { before, after, field }, ranges), true);
     $("afterCaption").textContent = "After: affine and solved field";
+    $("fieldCaption").textContent = `Field: how far it moves (up to ${ranges.field.toPrecision(3)} ${fixed.axes.at(-1).unit ?? ""})`;
     $("summary").textContent = `Solved in ${res.seconds.toFixed(1)} s on the GPU.`;
     const result = { gpu: g.name, levels, stages: res.stages, solveSeconds: res.seconds, grid: { ...res.grid, values: Array.from(res.grid.values) } };
     window.__result = result;
