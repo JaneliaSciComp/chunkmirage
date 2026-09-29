@@ -202,9 +202,13 @@ Fully client-side is feasible and would make a compelling hosted demo:
   Neuroglancer hosted on the page's origin: the page's service worker hands the viewer's
   requests for the registered volume to the page, whose web workers resample the moving
   image through the field as `scene://` does, reading it from its URL through a cache of
-  decoded blocks. So all of `register://` runs client side. WebGPU needs a secure page:
-  `examples/browser/serve.py` serves it over https with the self-signed certificate and
-  relays the standard Neuroglancer client under `/ng/`; a static host would carry a copy.
+  decoded blocks. So all of `register://` runs client side. WebGPU and service workers
+  need a secure page, and a service worker will not run on a certificate that was only
+  clicked through: `examples/browser/serve.py` serves the page over https with the
+  self-signed certificate (trusted once in the system; it is made to the rules macOS and
+  browsers apply even then, at most 398 days and for server authentication) or over plain
+  http for `localhost`, and relays the standard Neuroglancer client under `/ng/`. A static
+  host with a real certificate would carry a copy of the client and need neither.
 
 ## Deployment shapes
 

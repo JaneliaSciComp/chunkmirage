@@ -73,6 +73,31 @@ def default_cert_dir() -> str:
     return os.path.join(base, "chunkmirage")
 
 
+CERT_DAYS = 397  # browsers and macOS refuse server certificates valid for longer
+
+
+def _cert_usable(certfile: str) -> bool:
+    """Whether a certificate made earlier still meets the rules (and has not expired)."""
+    import datetime as dt
+
+    try:
+        from cryptography import x509
+    except ImportError:
+        return True  # cannot tell without it; keep what is there
+    try:
+        with open(certfile, "rb") as f:
+            cert = x509.load_pem_x509_certificate(f.read())
+        usage = cert.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+    except (ValueError, x509.ExtensionNotFound):
+        return False
+    after, before = cert.not_valid_after_utc, cert.not_valid_before_utc
+    return (
+        x509.oid.ExtendedKeyUsageOID.SERVER_AUTH in usage
+        and (after - before).days <= 398
+        and after > dt.datetime.now(dt.UTC) + dt.timedelta(days=7)
+    )
+
+
 def ensure_self_signed_cert(
     cert_dir: str | None = None, hosts: list[str] | None = None
 ) -> tuple[str, str]:
@@ -84,8 +109,12 @@ def ensure_self_signed_cert(
     told to trust it (visit the server URL once and accept the warning).
 
     The certificate's subject alternative names include ``hosts`` (default: this machine's
-    LAN IP and hostname) plus ``localhost``. Uses the ``cryptography`` package when present,
-    else the ``openssl`` CLI.
+    LAN IP and hostname) plus ``localhost``. It meets the rules browsers and macOS apply
+    even to certificates a user chose to trust (at most 398 days, for server
+    authentication), so it can be trusted once in the system instead of clicked through;
+    a service worker, which a clicked-through certificate does not allow, then works. One
+    that does not meet them (older versions made ten-year ones), or has expired, is made
+    again. Uses the ``cryptography`` package when present, else the ``openssl`` CLI.
     """
     import datetime as dt
     import os
@@ -96,7 +125,7 @@ def ensure_self_signed_cert(
     os.makedirs(cert_dir, exist_ok=True)
     certfile = os.path.join(cert_dir, "chunkmirage.crt")
     keyfile = os.path.join(cert_dir, "chunkmirage.key")
-    if os.path.exists(certfile) and os.path.exists(keyfile):
+    if os.path.exists(certfile) and os.path.exists(keyfile) and _cert_usable(certfile):
         return certfile, keyfile
 
     hosts = list(hosts or [lan_ip(), socket.gethostname()])
@@ -125,7 +154,7 @@ def ensure_self_signed_cert(
                 "rsa:2048",
                 "-nodes",
                 "-days",
-                "3650",
+                str(CERT_DAYS),
                 "-keyout",
                 keyfile,
                 "-out",
@@ -134,6 +163,10 @@ def ensure_self_signed_cert(
                 "/CN=chunkmirage",
                 "-addext",
                 f"subjectAltName={san}",
+                "-addext",
+                "extendedKeyUsage=serverAuth",
+                "-addext",
+                "basicConstraints=critical,CA:FALSE",
             ],
             check=True,
             capture_output=True,
@@ -156,8 +189,12 @@ def ensure_self_signed_cert(
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - dt.timedelta(days=1))
-        .not_valid_after(now + dt.timedelta(days=3650))
+        .not_valid_after(now + dt.timedelta(days=CERT_DAYS))
         .add_extension(x509.SubjectAlternativeName(sans), critical=False)
+        .add_extension(
+            x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]), critical=False
+        )
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .sign(key, hashes.SHA256())
     )
     with open(keyfile, "wb") as f:

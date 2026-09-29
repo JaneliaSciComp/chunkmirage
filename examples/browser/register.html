@@ -245,7 +245,16 @@ function arrayMetadata(level) {
 
 async function startServing(fixed, moving) {
   if (!navigator.serviceWorker) throw new Error("this browser has no service workers (a private window?)");
-  await navigator.serviceWorker.register("sw.js", { scope: "./" });
+  try {
+    await navigator.serviceWorker.register("sw.js", { scope: "./" });
+  } catch (e) {
+    const local = ["localhost", "127.0.0.1"].includes(location.hostname);
+    throw new Error(local ? e.message : `${e.message}\n\nBrowsers only run the viewer's service worker on a page whose certificate `
+      + "they trust, and clicking through the warning is not enough. Either trust this server's certificate "
+      + `(download it from ${location.origin}/certificate.crt; on a Mac, open it in Keychain Access and set it to Always Trust), `
+      + "or open the page through localhost: forward this server's port to your computer (VS Code's Ports panel, "
+      + "or ssh -L) and run serve.py with --host 127.0.0.1.");
+  }
   await navigator.serviceWorker.ready;
   if (session && session.fixed.url === fixed.url && session.moving.url === moving.url) return;
   session?.pool.terminate();
