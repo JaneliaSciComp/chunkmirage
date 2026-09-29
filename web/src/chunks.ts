@@ -28,7 +28,9 @@ ctx.onmessage = async ({ data: m }: MessageEvent<ToWorker>) => {
       blockBytes = BLOCK ** 3 * Typed.BYTES_PER_ELEMENT;
       post({ type: "ready" });
     } else if (m.type === "view") {
-      views.set(m.id, { kind: m.kind ?? "image", affine: m.affine, grid: m.grid });
+      views.set(m.id, { kind: m.kind, affine: m.affine, grid: m.grid });
+    } else if (m.type === "drop") {
+      for (const id of m.ids) views.delete(id);
     } else if (m.type === "chunk") {
       const body = await chunk(m);
       post({ type: "chunk", reqId: m.reqId, body }, [body]);
@@ -95,21 +97,22 @@ function fieldChunk(grid: ControlGrid, fl: LevelGrid, start: number[], size: num
   return out.buffer;
 }
 
+let scratch = { m: new Float32Array(0), inside: new Uint8Array(0) };  // per chunk, reused
+
 async function chunk({ id, level, channel, index }: { id: string; level: number; channel: number; index: number[] }): Promise<ArrayBuffer> {
   const view = views.get(id);
   const fl = fixedLevels[level], cs = chunkShape;
-  if (view?.kind === "field" && view.grid) {
-    const start = index.map((i, a) => i * cs[a]);
-    return fieldChunk(view.grid, fl, start, start.map((s, a) => Math.max(0, Math.min(cs[a], fl.shape[a] - s))));
-  }
-  const out = new Typed(cs[0] * cs[1] * cs[2]);  // a whole chunk: zero past the array's edge
   const start = index.map((i, a) => i * cs[a]);
   const size = start.map((s, a) => Math.max(0, Math.min(cs[a], fl.shape[a] - s)));
+  if (view?.kind === "field" && view.grid) return fieldChunk(view.grid, fl, start, size);
+  const out = new Typed(cs[0] * cs[1] * cs[2]);  // a whole chunk: zero past the array's edge
   if (!view || size.some((n) => n === 0)) return out.buffer;
   const li = nearestLevel(moving, fl.voxel), ml = moving.levels[li];
   const A = view.affine, d = [0, 0, 0];
   const n = size[0] * size[1] * size[2];
-  const m = new Float32Array(3 * n), inside = new Uint8Array(n);
+  if (scratch.inside.length < n) scratch = { m: new Float32Array(3 * n), inside: new Uint8Array(n) };
+  const { m, inside } = scratch;
+  inside.fill(0, 0, n);
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   let p = 0, any = false;
   for (let i = 0; i < size[0]; i++) {
@@ -142,22 +145,22 @@ async function chunk({ id, level, channel, index }: { id: string; level: number;
   const rlo = lo.map((v) => Math.max(0, v)), rhi = hi.map((v, a) => Math.min(ml.shape[a], v + 1));
   const { data: src, shape: rs } = await region(li, channel, rlo, rhi);
   const round = Typed !== Float32Array && Typed !== Float64Array;
-  const top = ml.shape.map((v) => v - 1);
+  const [tz, ty, tx] = ml.shape.map((v) => v - 1), [lz, ly, lx] = rlo, [, ry, rx] = rs;
   p = 0;
   for (let i = 0; i < size[0]; i++) for (let j = 0; j < size[1]; j++) for (let k = 0; k < size[2]; k++, p++) {
     if (!inside[p]) continue;
     // trilinear, neighbours clamped to the image (map_coordinates' mode="nearest")
+    const cz = m[3 * p], cy = m[3 * p + 1], cx = m[3 * p + 2];
+    const z0 = Math.floor(cz), y0 = Math.floor(cy), x0 = Math.floor(cx), fz = cz - z0, fy = cy - y0, fx = cx - x0;
     let val = 0;
-    const c = [m[3 * p], m[3 * p + 1], m[3 * p + 2]];
-    const f0 = c.map((v) => Math.floor(v)), fr = c.map((v, a) => v - f0[a]);
     for (let q = 0; q < 8; q++) {
-      const o = [q & 1, (q >> 1) & 1, (q >> 2) & 1];
-      const w = (o[0] ? fr[0] : 1 - fr[0]) * (o[1] ? fr[1] : 1 - fr[1]) * (o[2] ? fr[2] : 1 - fr[2]);
+      const oz = q & 1, oy = (q >> 1) & 1, ox = (q >> 2) & 1;
+      const w = (oz ? fz : 1 - fz) * (oy ? fy : 1 - fy) * (ox ? fx : 1 - fx);
       if (!w) continue;
-      const z = Math.min(Math.max(f0[0] + o[0], 0), top[0]) - rlo[0];
-      const y = Math.min(Math.max(f0[1] + o[1], 0), top[1]) - rlo[1];
-      const x = Math.min(Math.max(f0[2] + o[2], 0), top[2]) - rlo[2];
-      val += w * src[(z * rs[1] + y) * rs[2] + x];
+      const z = Math.min(Math.max(z0 + oz, 0), tz) - lz;
+      const y = Math.min(Math.max(y0 + oy, 0), ty) - ly;
+      const x = Math.min(Math.max(x0 + ox, 0), tx) - lx;
+      val += w * src[(z * ry + y) * rx + x];
     }
     out[(i * cs[1] + j) * cs[2] + k] = round ? Math.round(val) : val;
   }

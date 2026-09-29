@@ -143,12 +143,12 @@ def test_channels_are_matched_and_all_registered(tmp_path):
     "extra, message",
     [
         ("bogus=1", "unknown register:// parameters"),
-        ("show=both", "show must be"),
+        ("show=both", r"show\s+Input should be 'image', 'pair' or 'field'"),
         ("window=4", "positive odd"),
         ("levels=0,5", "levels 0..1"),
         ("iterations=1,2,3", "one per level"),
         ("affine=1,2,3", "4x4 or 3x4"),
-        ("frames=0", "at least 1"),
+        ("frames=0", r"frames\s+Input should be greater than or equal to 1"),
     ],
 )
 def test_bad_urls_explain_themselves(extra, message):
@@ -177,11 +177,12 @@ def test_default_levels_go_from_coarse_enough_to_fine_enough():
 
 def test_flat_windows_carry_no_signal():
     torch = pytest.importorskip("torch")
-    from chunkmirage.registration import _lncc
+    from chunkmirage.registration import _lncc, _window_stats
 
     rng = np.random.default_rng(0)
     img = torch.as_tensor(rng.random((1, 1, 12, 12, 12)), dtype=torch.float32)
-    np.testing.assert_allclose(_lncc(img, img, 5).numpy(), 1, atol=1e-4)  # itself: perfect
+    stats = _window_stats(img, 5)
+    np.testing.assert_allclose(_lncc(img, stats, img, 5).numpy(), 1, atol=1e-4)  # itself: perfect
     flat = torch.full_like(img, 0.5)
-    assert not _lncc(img, flat, 5).any()  # no contrast: nothing to gain from a warp
-    assert (_lncc(img, 2 * img + 1, 5) > 0.999).all()  # intensity scale does not matter
+    assert not _lncc(img, stats, flat, 5).any()  # no contrast: nothing to gain from a warp
+    assert (_lncc(img, stats, 2 * img + 1, 5) > 0.999).all()  # intensity scale does not matter

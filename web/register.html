@@ -97,7 +97,7 @@
       <p class="hint">The reference. It stays where it is.</p>
       <div class="pair">
         <label class="field">OME-Zarr URL<input name="fixed" required autocomplete="off" spellcheck="false"></label>
-        <label class="field">Channel<input name="fixed_channel" type="number" min="0"></label>
+        <label class="field">Channel<input name="fixed_channel" type="number"></label>
       </div>
     </div>
     <div class="group">
@@ -105,7 +105,7 @@
       <p class="hint">Warped onto the fixed image's grid.</p>
       <div class="pair">
         <label class="field">OME-Zarr URL<input name="moving" required autocomplete="off" spellcheck="false"></label>
-        <label class="field">Channel<input name="moving_channel" type="number" min="0"></label>
+        <label class="field">Channel<input name="moving_channel" type="number"></label>
       </div>
     </div>
     <label class="field group"><span class="title">Affine, fixed to moving</span>
@@ -118,9 +118,9 @@
       <summary>Solver settings</summary>
       <div class="settings">
         <label class="field">Levels, coarse to fine<input name="levels" placeholder="automatic"></label>
-        <label class="field">Iterations per level<input name="iterations" type="number" min="0"></label>
-        <label class="field">Smoothness<input name="smooth" type="number" min="0" step="any"></label>
-        <label class="field">Grid spacing, voxels<input name="grid" type="number" min="1" step="any"></label>
+        <label class="field">Iterations per level<input name="iterations" type="number"></label>
+        <label class="field">Smoothness<input name="smooth" type="number" step="any"></label>
+        <label class="field">Grid spacing, voxels<input name="grid" type="number" step="any"></label>
       </div>
     </details>
     <button id="go" type="submit">Register</button>

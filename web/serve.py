@@ -37,9 +37,10 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from chunkmirage.neuroglancer import DEFAULT_VIEWER as NEUROGLANCER
+
 HERE = Path(__file__).resolve().parent
 DIST = HERE / "dist"  # npm run build
-NEUROGLANCER = "https://neuroglancer-demo.appspot.com"
 QUIET = ("/favicon", "/data/example.json")  # asked for and not needed: no example fetched here
 
 
@@ -53,13 +54,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path == "/ng" or path.startswith("/ng/"):
             return self.neuroglancer(path[len("/ng/") :] or "index.html")
         if path == "/certificate.crt" and self.certificate:  # the public half, to trust it
-            body = Path(self.certificate).read_bytes()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/x-x509-ca-cert")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            return self.wfile.write(body)
+            return self.send(Path(self.certificate).read_bytes(), "application/x-x509-ca-cert")
         return super().do_GET()
+
+    def send(self, body: bytes, kind: str, encoding: str | None = None) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", kind)
+        if encoding:
+            self.send_header("Content-Encoding", encoding)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def neuroglancer(self, name: str) -> None:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
@@ -75,17 +80,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self.send_error(e.code)
             with self.lock:
                 self.client[name] = hit
-        body, kind, encoding = hit
-        self.send_response(200)
-        self.send_header("Content-Type", kind)
-        if encoding:
-            self.send_header("Content-Encoding", encoding)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self.send(*hit)
 
     def end_headers(self):
-        self.send_header("Cache-Control", "no-cache")  # pick up edits to the page and workers
+        if not self.path.startswith("/data/"):  # pick up rebuilds of the page and its workers
+            self.send_header("Cache-Control", "no-cache")
         super().end_headers()
 
     def log_request(self, code="-", size="-"):  # failures only: the page reports the rest

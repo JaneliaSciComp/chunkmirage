@@ -83,3 +83,25 @@ def test_certificate_meets_the_rules_for_trusting_it(tmp_path):
         netutil._cert_usable(cert_file)
         and (tmp_path / "chunkmirage.crt").stat().st_mtime_ns != mtime
     )
+
+
+def test_without_cryptography_openssl_applies_the_same_rules(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+    import sys
+
+    if not shutil.which("openssl"):
+        pytest.skip("no openssl")
+    from chunkmirage import netutil
+
+    monkeypatch.setitem(sys.modules, "cryptography", None)  # as without the https extra
+    cert_file, _ = netutil.ensure_self_signed_cert(str(tmp_path), hosts=["10.1.2.3"])
+    assert netutil._cert_usable(cert_file)
+    old = tmp_path / "old.crt"  # what older versions made: ten years, no server usage
+    subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "3650"]
+        + ["-keyout", str(tmp_path / "old.key"), "-out", str(old), "-subj", "/CN=old"],
+        check=True,
+        capture_output=True,
+    )
+    assert not netutil._cert_usable(str(old))

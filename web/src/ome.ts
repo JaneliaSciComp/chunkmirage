@@ -77,6 +77,8 @@ export async function readLevel(img: Image, i: number, channel: number) {
   return { data: r.data as Numbers, shape: lvl.shape, voxel: lvl.voxel, origin: lvl.origin };
 }
 
+export const prod = (a: number[]) => a.reduce((x, y) => x * y, 1);
+
 /** numpy's (linear) percentiles, on every step-th value as chunkmirage.registration does. */
 export function percentiles(data: ArrayLike<number>, ps: number[]): number[] {
   const step = Math.max(1, Math.floor(data.length / 1e6));
@@ -99,22 +101,20 @@ export function nearestLevel(img: Image, voxel: number[]): number {
   return best;
 }
 
-/** Trilinear value of a displacement grid at (x0, x1, x2), written into `out`. */
+/** Trilinear value of a displacement grid at (x0, x1, x2), written into `out`; nearest
+ * edge value beyond the grid. Called per voxel, so it allocates nothing. */
 export function fieldAt(grid: ControlGrid, x0: number, x1: number, x2: number, out: number[]): number[] {
   const { shape: G, origin: o, spacing: s, values: u } = grid;
-  const c = [(x0 - o[0]) / s[0], (x1 - o[1]) / s[1], (x2 - o[2]) / s[2]];
-  const i = [0, 0, 0], f = [0, 0, 0];
-  for (let a = 0; a < 3; a++) {
-    const g = Math.min(Math.max(c[a], 0), G[a] - 1);
-    i[a] = Math.max(0, Math.min(Math.floor(g), G[a] - 2));
-    f[a] = g - i[a];
-  }
+  // each axis: the grid cell (clamped to the grid) and the fraction across it
+  const g0 = Math.min(Math.max((x0 - o[0]) / s[0], 0), G[0] - 1), i0 = Math.max(0, Math.min(Math.floor(g0), G[0] - 2)), f0 = g0 - i0;
+  const g1 = Math.min(Math.max((x1 - o[1]) / s[1], 0), G[1] - 1), i1 = Math.max(0, Math.min(Math.floor(g1), G[1] - 2)), f1 = g1 - i1;
+  const g2 = Math.min(Math.max((x2 - o[2]) / s[2], 0), G[2] - 1), i2 = Math.max(0, Math.min(Math.floor(g2), G[2] - 2)), f2 = g2 - i2;
   out[0] = out[1] = out[2] = 0;
   for (let k = 0; k < 8; k++) {
     const oz = k & 1, oy = (k >> 1) & 1, ox = (k >> 2) & 1;
-    const w = (oz ? f[0] : 1 - f[0]) * (oy ? f[1] : 1 - f[1]) * (ox ? f[2] : 1 - f[2]);
+    const w = (oz ? f0 : 1 - f0) * (oy ? f1 : 1 - f1) * (ox ? f2 : 1 - f2);
     if (!w) continue;
-    const idx = (((i[0] + oz) * G[1] + i[1] + oy) * G[2] + i[2] + ox) * 3;
+    const idx = (((i0 + oz) * G[1] + i1 + oy) * G[2] + i2 + ox) * 3;
     out[0] += w * u[idx]; out[1] += w * u[idx + 1]; out[2] += w * u[idx + 2];
   }
   return out;

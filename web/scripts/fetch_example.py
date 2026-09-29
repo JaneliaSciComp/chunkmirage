@@ -6,8 +6,9 @@ JRC2018F (Bogovic et al. 2020) and FCWB (Costa et al. 2016) come from the OME-NG
 transformation examples, with the transform published between them. That bucket allows
 no CORS and uses a draft OME-Zarr 0.6 layout, so this copies the arrays byte for byte
 and writes 0.5 metadata over them: OUT/fly/JRC2018F, OUT/fly/FCWB, and OUT/example.json,
-which register.html fills its form from when a link names no images (with the affine
-left empty, so the page finds one; the published affine only to say how close it came).
+which register.html fills its form from when a link names no images. The page starts from
+the images as stored, finding an affine itself, or from the published one, and says how
+close a found affine came to it.
 The docs workflow runs it into the published site; locally, run it into web/public/data
 (ignored by git), which the build copies next to the page.
 """
@@ -156,7 +157,7 @@ def main(argv: list[str] | None = None) -> None:
     example = {
         "fixed": f"fly/{FIXED}",
         "moving": f"fly/{MOVING}",  # relative to example.json
-        "published_affine": ", ".join(repr(v) for row in affine for v in row),  # to compare with
+        "published_affine": affine,  # rows [A | t], to start from or compare with
         "about": ABOUT,
         "published_about": PUBLISHED_ABOUT,
         "source": SOURCE,

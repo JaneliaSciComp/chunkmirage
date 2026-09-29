@@ -217,9 +217,7 @@ def main() -> None:
         s.layers["field"].shader = FIELD_SHADER.format(gain=0.5 / dmax, max_gain=2.0 / dmax)
         s.layers["field"].visible = False
         s.layers["registered"].visible = False
-        vox = dict(zip(info.axes, info.voxel_size))
-        width = info.shape[-1] * vox["x"]
-        s.cross_section_scale = width / vox["x"] / 700  # the whole x extent across a panel
+        s.cross_section_scale = info.shape[-1] / 700  # the whole x extent across a panel
         if args.frames:
             s.velocity["t"] = neuroglancer.DimensionPlaybackVelocity(
                 velocity=4, at_boundary="loop", paused=True

@@ -77,13 +77,15 @@ CERT_DAYS = 397  # browsers and macOS refuse server certificates valid for longe
 
 
 def _cert_usable(certfile: str) -> bool:
-    """Whether a certificate made earlier still meets the rules (and has not expired)."""
+    """Whether a certificate made earlier still meets the rules: for server authentication,
+    valid for at most ``CERT_DAYS`` (plus the day it starts early), and not expiring
+    within a week. Read with ``cryptography`` when present, else the ``openssl`` CLI."""
     import datetime as dt
 
     try:
         from cryptography import x509
     except ImportError:
-        return True  # cannot tell without it; keep what is there
+        return _openssl_cert_usable(certfile)
     try:
         with open(certfile, "rb") as f:
             cert = x509.load_pem_x509_certificate(f.read())
@@ -93,9 +95,34 @@ def _cert_usable(certfile: str) -> bool:
     after, before = cert.not_valid_after_utc, cert.not_valid_before_utc
     return (
         x509.oid.ExtendedKeyUsageOID.SERVER_AUTH in usage
-        and (after - before).days <= 398
+        and (after - before).days <= CERT_DAYS + 1
         and after > dt.datetime.now(dt.UTC) + dt.timedelta(days=7)
     )
+
+
+def _openssl_cert_usable(certfile: str) -> bool:
+    import datetime as dt
+    import subprocess
+
+    week = str(7 * 24 * 3600)
+    cmd = ["openssl", "x509", "-in", certfile, "-noout", "-dates", "-ext", "extendedKeyUsage"]
+    cmd += ["-checkend", week]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except OSError:
+        return True  # no openssl either: cannot tell, keep what is there
+    if r.returncode != 0:  # expiring within the week, or unreadable
+        return False
+    fields = dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
+    try:
+        before, after = (
+            dt.datetime.strptime(fields[k].strip(), "%b %d %H:%M:%S %Y %Z")
+            for k in ("notBefore", "notAfter")
+        )
+    except (KeyError, ValueError):
+        return False
+    usage = "TLS Web Server Authentication" in r.stdout
+    return usage and (after - before).days <= CERT_DAYS + 1
 
 
 def ensure_self_signed_cert(

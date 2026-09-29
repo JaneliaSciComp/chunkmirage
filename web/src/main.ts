@@ -5,13 +5,9 @@
 import { affineDistance, findAffine, type FoundAffine } from "./affine";
 import type { RegisterParams } from "./generated/chunkmirage";
 import schema from "./generated/chunkmirage.schema.json";
-import { nearestLevel, openImage, percentiles, readLevel, type Image, type Numbers } from "./ome";
-import { gpu, prod, solve } from "./solver";
+import { nearestLevel, openImage, percentiles, prod, readLevel, type Image, type Numbers } from "./ome";
+import { gpu, solve } from "./solver";
 import type { Affine, ControlGrid, FromWorker, Reply, ToWorker, ViewKind, Volume } from "./types";
-
-declare global {
-  interface Window { __done?: boolean; __result?: unknown }  // for scripted runs (headless tests)
-}
 
 const CHUNK = [16, 128, 128];    // chunks of the registered volume, z, y, x
 const MAX_VOXELS = 1 << 22;      // finest automatic level: the whole level sits on the GPU
@@ -36,42 +32,18 @@ const form = $<HTMLFormElement>("form");
 const input = (name: FieldName) => form.elements.namedItem(name) as HTMLInputElement | HTMLTextAreaElement;
 const values = () => Object.fromEntries(new FormData(form)) as Form;
 
-// RegisterParams' defaults, as the form shows them
-const REGISTER = schema.$defs.RegisterParams.properties;
-const DEFAULTS: Partial<Form> = {
-  fixed_channel: String(REGISTER.fixed_channel.default), moving_channel: String(REGISTER.moving_channel.default),
-  iterations: String(REGISTER.iterations.default[0]), smooth: String(REGISTER.smooth.default), grid: String(REGISTER.grid.default),
-};
-for (const [k, v] of Object.entries(DEFAULTS)) input(k as FieldName).value = v;
+// RegisterParams' properties: the form's defaults and lower bounds
+const REGISTER = schema.$defs.RegisterParams.properties as Record<string,
+  { default?: unknown; minimum?: number; exclusiveMinimum?: number; items?: { minimum?: number } }>;
 
 let session: Session | null = null;  // images, chunk workers and published views
 let solves = 0, previews = 0;
 let previewing: Promise<void> = Promise.resolve(), previewTimer: ReturnType<typeof setTimeout> | undefined;
 let exampleRef: { fixed: string; moving: string; affine: Affine } | null = null;  // the example's published affine
-
-const query = new URLSearchParams(location.search);
-if (!query.has("fixed") && !query.has("moving")) await loadExample();
-for (const [k, v] of query) {
-  const el = form.elements.namedItem(k);
-  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.value = v;
-}
-if (input("affine").value) {  // one row of the matrix per line
-  const v = input("affine").value.split(/[\s,;]+/).filter(Boolean);
-  if (v.length === 12 || v.length === 16) input("affine").value = [0, 4, 8].map((i) => v.slice(i, i + 4).join(", ")).join("\n");
-}
-form.addEventListener("submit", (e) => { e.preventDefault(); void run(); });
-form.addEventListener("input", () => showCommand());
-copyOnClick($("copy"), () => location.href, "Copy link to this run");
-copyOnClick($("copyPy"), () => $("pyCommand").textContent ?? "", "Copy");
-showCommand();
 const INSECURE = window.isSecureContext ? null :
   `${location.origin} is not a secure page to this browser, so it allows neither WebGPU nor the viewer's service worker. `
   + "Open it over https, or as localhost (a forwarded port), or in Chrome add this address to "
   + "chrome://flags/#unsafely-treat-insecure-origin-as-secure and relaunch.";
-if (INSECURE) { $("status").hidden = false; $("error").hidden = false; $("error").textContent = INSECURE; }
-else if (query.get("run") === "1") void run();
-else schedulePreview();
-for (const k of ["fixed", "moving", "fixed_channel", "moving_channel", "affine"] as const) input(k).addEventListener("change", schedulePreview);
 
 function copyOnClick(link: HTMLElement, text: () => string, label: string) {
   link.addEventListener("click", async (e) => {
@@ -87,10 +59,9 @@ function copyOnClick(link: HTMLElement, text: () => string, label: string) {
 /** A register:// query from its parameters, leaving out what matches the defaults. Values
  * are escaped only where the URL needs it: & ? # % + and spaces. */
 function toQuery(p: RegisterParams): string {
-  const props = REGISTER as Record<string, { default?: unknown }>;
   const esc = (v: string) => v.replace(/[%&+#? ]/g, encodeURIComponent);
   return Object.entries(p).flatMap(([k, v]) =>
-    v == null || JSON.stringify(v) === JSON.stringify(props[k]?.default) ? []
+    v == null || JSON.stringify(v) === JSON.stringify(REGISTER[k]?.default) ? []
       : [`${k}=${esc(Array.isArray(v) ? v.join(",") : String(v))}`]).join("&");
 }
 
@@ -116,7 +87,7 @@ function showCommand(solvedLevels?: number[]) {
 /** The images in data/example.json, if this copy of the page has one (fetch_example.py). */
 async function loadExample() {
   const url = new URL("data/example.json", location.href);
-  let ex: { fixed: string; moving: string; about: string; source: string; published_affine?: string; published_about?: string };
+  let ex: { fixed: string; moving: string; about: string; source: string; published_affine?: Affine; published_about?: string };
   try {
     const r = await fetch(url);
     if (!r.ok) return;
@@ -129,7 +100,7 @@ async function loadExample() {
   about.append(`${ex.about} (`, link, ")");
   note.append(about);
   if (ex.published_affine) {  // start as stored (Register finds the affine) or from the published one
-    const ref = { fixed: input("fixed").value, moving: input("moving").value, affine: parseAffine(ex.published_affine) };
+    const ref = { fixed: input("fixed").value, moving: input("moving").value, affine: ex.published_affine };
     exampleRef = ref;
     const start = document.createElement("div");
     start.className = "start";
@@ -167,7 +138,7 @@ async function preview() {
   const p = channels(f);
   try {
     const affine = parseAffine(f.affine);
-    const [fixed, moving] = await Promise.all([openImage(f.fixed), openImage(f.moving)]);
+    const [fixed, moving] = await images(f);
     const s = await startServing(fixed, moving);
     const key = `${p.fixedChannel},${p.movingChannel}`;
     if (!s.ranges || s.rangesKey !== key) {  // contrast from the level the solve starts on
@@ -176,8 +147,10 @@ async function preview() {
       s.ranges = { fixed: contrast(fl.data), moving: contrast(ml.data) };
       s.rangesKey = key;
     }
-    const before = publish(s, `before-${++previews}`, affine, null);  // a new URL: the viewer caches by URL
-    showViewer(s, viewerState(s, p, { before }, s.ranges), Boolean(s.shown));
+    const id = `before-${++previews}`;  // a new URL each time: the viewer caches by URL
+    const before = publish(s, id, affine, null);
+    retain(s, [id]);
+    showViewer(s, viewerState(s, p, { before }));
     $("beforeCaption").textContent = beforeCaption(f.affine);
     $("afterCaption").textContent = "After: press Register";
     $("fieldCaption").textContent = "Field: press Register";
@@ -260,23 +233,16 @@ async function answer(path: string): Promise<Reply> {  // a request under /virtu
 // fixed image's grid and levels; uncompressed chunks, since they are computed here. A field
 // view is the displacement instead: three components (z, y, x) on the same grid.
 function groupMetadata({ fixed, moving }: Session, view: string, kind: ViewKind) {
-  const m0 = moving.levels[0], n = moving.lead;
-  if (kind === "field") return {
-    zarr_format: 3, node_type: "group",
-    attributes: { ome: { version: "0.5", multiscales: [{
-      name: view, axes: [{ name: "c", type: "channel" }, ...fixed.axes.slice(-3)],
-      datasets: fixed.levels.map((l, i) => ({ path: String(i), coordinateTransformations: [
-        { type: "scale", scale: [1, ...l.voxel] }, { type: "translation", translation: [0, ...l.origin] },
-      ] })),
-    }] } },
-  };
+  // the leading axes: the field's components, or the moving image's time and channel
+  const field = kind === "field", m0 = moving.levels[0], n = moving.lead;
+  const axes = field ? [{ name: "c", type: "channel" }] : moving.axes.slice(0, n);
+  const scale = field ? [1] : m0.scale.slice(0, n), shift = field ? [0] : m0.shift.slice(0, n);
   return {
     zarr_format: 3, node_type: "group",
     attributes: { ome: { version: "0.5", multiscales: [{
-      name: view, axes: [...moving.axes.slice(0, n), ...fixed.axes.slice(-3)],
+      name: view, axes: [...axes, ...fixed.axes.slice(-3)],
       datasets: fixed.levels.map((l, i) => ({ path: String(i), coordinateTransformations: [
-        { type: "scale", scale: [...m0.scale.slice(0, n), ...l.voxel] },
-        { type: "translation", translation: [...m0.shift.slice(0, n), ...l.origin] },
+        { type: "scale", scale: [...scale, ...l.voxel] }, { type: "translation", translation: [...shift, ...l.origin] },
       ] })),
     }] } },
   };
@@ -327,6 +293,20 @@ function publish(s: Session, id: string, affine: Affine, grid: ControlGrid | nul
   return `zarr3://${new URL(`virtual/${PAGE}/${id}/`, location.href).href}`;
 }
 
+/** Forget the views the viewer no longer shows, here and in the chunk workers. */
+function retain(s: Session, keep: string[]) {
+  const ids = [...s.views.keys()].filter((id) => !keep.includes(id));
+  for (const id of ids) s.views.delete(id);
+  if (ids.length) s.pool.broadcast({ type: "drop", ids });
+}
+
+/** The two images, reused while the form names the same ones. */
+async function images(f: Form): Promise<[Image, Image]> {
+  const same = (img: Image, url: string) => img.url === url.replace(/\/+$/, "");
+  if (session && same(session.fixed, f.fixed) && same(session.moving, f.moving)) return [session.fixed, session.moving];
+  return Promise.all([openImage(f.fixed), openImage(f.moving)]);
+}
+
 // ------------------------------------------------ Neuroglancer (hosted on this origin, ng/)
 // How far the field moved each point, as a heat map up to `scale` (physical units), or with
 // `direction` its direction as colour: (z, y, x) components as (red, green, blue), grey at none.
@@ -350,8 +330,8 @@ interface NgLayer { name: string; shaderControls?: unknown; [k: string]: unknown
 interface NgState { layers: NgLayer[]; [k: string]: unknown }
 interface NgViewer { state: { toJSON(): NgState; restoreState(s: NgState): void } }
 
-function viewerState(s: Session, p: Channels, sources: { before?: string; after?: string; field?: string }, ranges: Ranges): NgState {
-  const { fixed, moving } = s, l0 = fixed.levels[0];
+function viewerState(s: Session, p: Channels, sources: { before?: string; after?: string; field?: string }): NgState {
+  const { fixed, moving } = s, l0 = fixed.levels[0], ranges = s.ranges!;
   const toM = TO_METRES[fixed.axes[fixed.axes.length - 1].unit ?? ""] ?? 1;
   const dims: Record<string, [number, string]> = { x: [l0.voxel[2] * toM, "m"], y: [l0.voxel[1] * toM, "m"], z: [l0.voxel[0] * toM, "m"] };
   const position = [l0.shape[2] / 2, l0.shape[1] / 2, l0.shape[0] / 2];
@@ -389,9 +369,10 @@ function viewerState(s: Session, p: Channels, sources: { before?: string; after?
   };
 }
 
-function showViewer(s: Session, state: NgState, keepCamera: boolean) {
+function showViewer(s: Session, state: NgState) {
   const ng = $<HTMLIFrameElement>("ng"), viewer = (ng.contentWindow as (Window & { viewer?: NgViewer }) | null)?.viewer;
-  s.shown = true;  // later views of these images keep the camera
+  const keepCamera = s.shown;  // later views of the same images keep the camera
+  s.shown = true;
   $("empty").hidden = true; ng.hidden = false; $("captions").hidden = false;
   if (keepCamera && viewer) {  // same origin: keep where the user is looking
     const cur = viewer.state.toJSON();
@@ -430,7 +411,6 @@ function contrast(data: Numbers): number[] {  // display limits from the voxels 
   return [lo, Math.max(hi, lo + 1)];
 }
 
-// function declarations, not consts: the example and a ?run=1 start before the script ends
 function channels(f: Form): Channels { return { fixedChannel: Number(f.fixed_channel), movingChannel: Number(f.moving_channel) }; }
 function uncheckStart() { for (const i of document.querySelectorAll<HTMLInputElement>(".start input")) i.checked = false; }
 function formatAffine(a: Affine) { return a.map((r) => r.map((v) => +v.toPrecision(6)).join(", ")).join("\n"); }  // a row per line
@@ -448,7 +428,7 @@ function setBar(row: HTMLElement, fraction: number) { row.querySelector<HTMLElem
 
 async function run() {
   const go = $<HTMLButtonElement>("go");
-  go.disabled = true; window.__done = false;
+  go.disabled = true;
   $("status").hidden = false; $("error").hidden = true; $("links").hidden = true; $("summary").textContent = "";
   const f = values();
   history.replaceState(null, "", "?" + new URLSearchParams(f));
@@ -458,26 +438,28 @@ async function run() {
     await previewing;  // one still starting the viewer
     if (INSECURE) throw new Error(INSECURE);
     $("gpu").textContent = "Starting the GPU…";
-    const g = await gpu();
-    $("gpu").textContent = `GPU: ${g.name || "unnamed adapter"}`;
+    const gpuReady = gpu();  // made while the images are read
+    gpuReady.then((g) => ($("gpu").textContent = `GPU: ${g.name || "unnamed adapter"}`), () => {});
     $("summary").textContent = "Reading the images…";
-    const [fixed, moving] = await Promise.all([openImage(f.fixed), openImage(f.moving)]);
+    const [fixed, moving] = await images(f);
     const unitOf = (img: Image) => img.axes[img.axes.length - 1].unit;
     if (unitOf(fixed) !== unitOf(moving)) throw new Error(`units differ: ${unitOf(fixed)} and ${unitOf(moving)}`);
     let affine = parseAffine(f.affine);
     const auto = !f.affine.trim();  // find the affine first
-    const s = await startServing(fixed, moving);
-    const before = publish(s, `before-${++previews}`, affine, null);
-
     const levels = f.levels ? f.levels.split(",").map(Number) : defaultLevels(fixed);
     const pairs = levels.map((i) => [i, nearestLevel(moving, fixed.levels[i].voxel)]);
     const tRead = performance.now();
-    const read = await Promise.all(pairs.map(([i, j]) => Promise.all([readLevel(fixed, i, p.fixedChannel), readLevel(moving, j, p.movingChannel)])));
+    const [s, read] = await Promise.all([  // the chunk workers start while the levels are read
+      startServing(fixed, moving),
+      Promise.all(pairs.map(([i, j]) => Promise.all([readLevel(fixed, i, p.fixedChannel), readLevel(moving, j, p.movingChannel)]))),
+    ]);
     const readSecs = (performance.now() - tRead) / 1000;
+    const beforeId = `before-${++previews}`, before = publish(s, beforeId, affine, null);
+    retain(s, [beforeId]);
     const ranges: Ranges = { fixed: contrast(read[0][0].data), moving: contrast(read[0][1].data) };
     s.ranges = ranges;
     s.rangesKey = `${p.fixedChannel},${p.movingChannel}`;
-    showViewer(s, viewerState(s, p, { before }, ranges), Boolean(s.shown));
+    showViewer(s, viewerState(s, p, { before }));
     $("beforeCaption").textContent = beforeCaption(f.affine);
     $("afterCaption").textContent = "After: solving…";
     $("fieldCaption").textContent = "Field: solving…";
@@ -501,7 +483,7 @@ async function run() {
       const fa = await findAffine(data[0][0], data[0][1], ({ stage, stages, iteration, iterations, similarity }) => {
         setBar(row, (stage + iteration / iterations) / stages);
         setRow(row, ".t", `fit ${stage + 1} / ${stages}`);
-        setRow(row, ".sim", `similarity ${similarity.toFixed(3)}`);
+        setRow(row, ".sim", `similarity ${similarity?.toFixed(3)}`);
       });
       affine = fa.affine;
       const ref = exampleRef && f.fixed === exampleRef.fixed && f.moving === exampleRef.moving ? exampleRef.affine : null;
@@ -516,6 +498,7 @@ async function run() {
     showCommand(levels);
     $("summary").textContent = `Read levels ${levels.join(", ")} in ${readSecs.toFixed(1)} s. Solving the field…`;
     const settings = { iterations: Number(f.iterations), smooth: Number(f.smooth), grid: Number(f.grid) };
+    const g = await gpuReady;
     const res = await solve(g, data, affine, [lo, hi], settings, ({ stage, iteration, iterations, similarity }) => {
       setBar(rows[stage], iteration / iterations);
       setRow(rows[stage], ".t", `${iteration} / ${iterations}`);
@@ -525,27 +508,55 @@ async function run() {
       setRow(rows[k], ".t", `${st.seconds.toFixed(1)} s`);
       setRow(rows[k], ".sim", `similarity ${st.first?.toFixed(3)} → ${st.final?.toFixed(3)}`);
     });
-    const id = `after-${++solves}`;
-    const after = publish(s, id, affine, res.grid);
-    const field = publish(s, `field-${solves}`, affine, res.grid, "field");
+    const afterId = `after-${++solves}`, fieldId = `field-${solves}`;
+    const after = publish(s, afterId, affine, res.grid), field = publish(s, fieldId, affine, res.grid, "field");
+    retain(s, [beforeId, afterId, fieldId]);
     const sizes = new Float32Array(res.grid.values.length / 3);
     for (let i = 0; i < sizes.length; i++) sizes[i] = Math.hypot(res.grid.values[3 * i], res.grid.values[3 * i + 1], res.grid.values[3 * i + 2]);
     ranges.field = Math.max(percentiles(sizes, [99])[0], 1e-6);
-    showViewer(s, viewerState(s, p, { before, after, field }, ranges), true);
+    showViewer(s, viewerState(s, p, { before, after, field }));
     $("afterCaption").textContent = "After: the affine and the solved field";
     $("fieldCaption").textContent = `Field: how far the solve moved each point (up to ${ranges.field.toPrecision(3)} ${unit})`;
     $("summary").textContent = found
       ? `Found the affine in ${found.seconds.toFixed(1)} s, then solved the field in ${res.seconds.toFixed(1)} s on the GPU.`
       : `Solved in ${res.seconds.toFixed(1)} s on the GPU.`;
     const result = { gpu: g.name, levels, affine, found, stages: res.stages, solveSeconds: res.seconds, grid: { ...res.grid, values: Array.from(res.grid.values) } };
-    window.__result = result;
-    $<HTMLAnchorElement>("save").href = URL.createObjectURL(new Blob([JSON.stringify(result)], { type: "application/json" }));
+    const save = $<HTMLAnchorElement>("save");
+    if (save.href.startsWith("blob:")) URL.revokeObjectURL(save.href);  // the last run's
+    save.href = URL.createObjectURL(new Blob([JSON.stringify(result)], { type: "application/json" }));
     $("links").hidden = false;
   } catch (e) {
     console.error(e);
     $("error").hidden = false; $("error").textContent = (e as Error).message ?? String(e);
     $("summary").textContent = "";
   } finally {
-    go.disabled = false; window.__done = true;
+    go.disabled = false;
   }
 }
+
+// ------------------------------------------------ start-up
+for (const name of ["fixed_channel", "moving_channel", "iterations", "smooth", "grid"] as const) {
+  const prop = REGISTER[name], el = input(name) as HTMLInputElement;
+  el.value = String(prop.default);  // iterations' [100] shows as 100
+  const min = prop.minimum ?? prop.exclusiveMinimum ?? prop.items?.minimum;
+  if (min !== undefined) el.min = String(min);
+}
+const query = new URLSearchParams(location.search);
+if (!query.has("fixed") && !query.has("moving")) await loadExample();
+for (const [k, v] of query) {
+  const el = form.elements.namedItem(k);
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.value = v;
+}
+if (input("affine").value) {  // one row of the matrix per line
+  const v = input("affine").value.split(/[\s,;]+/).filter(Boolean);
+  if (v.length === 12 || v.length === 16) input("affine").value = [0, 4, 8].map((i) => v.slice(i, i + 4).join(", ")).join("\n");
+}
+form.addEventListener("submit", (e) => { e.preventDefault(); void run(); });
+form.addEventListener("input", () => showCommand());
+copyOnClick($("copy"), () => location.href, "Copy link to this run");
+copyOnClick($("copyPy"), () => $("pyCommand").textContent ?? "", "Copy");
+showCommand();
+if (INSECURE) { $("status").hidden = false; $("error").hidden = false; $("error").textContent = INSECURE; }
+else if (query.get("run") === "1") void run();
+else schedulePreview();
+for (const k of ["fixed", "moving", "fixed_channel", "moving_channel", "affine"] as const) input(k).addEventListener("change", schedulePreview);

@@ -29,10 +29,14 @@ export interface LevelGrid {
 
 export type ViewKind = "image" | "field";
 
+/** How a fit is going: stage (level) of stages, iteration of iterations. */
+export interface Progress { stage: number; stages: number; iteration: number; iterations: number; similarity: number | null }
+
 /** What the page tells its chunk workers. */
 export type ToWorker =
   | { type: "setup"; moving: string; chunkShape: number[]; fixedLevels: LevelGrid[] }
   | { type: "view"; id: string; kind: ViewKind; affine: Affine; grid: ControlGrid | null }
+  | { type: "drop"; ids: string[] }
   | { type: "chunk"; reqId: number; id: string; level: number; channel: number; index: number[] };
 
 /** What the chunk workers answer. */

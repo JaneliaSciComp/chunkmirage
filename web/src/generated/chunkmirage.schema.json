@@ -101,7 +101,7 @@
     },
     "Label": {
       "additionalProperties": false,
-      "description": "Connected components of a mask, coloured as segments. Labels are unique per chunk, so one\n    object spanning several chunks gets several colours; that is the honest per-chunk preview.",
+      "description": "Connected components of a mask, coloured as segments. Labels are unique per chunk, so one\nobject spanning several chunks gets several colours; that is the honest per-chunk preview.",
       "properties": {
         "op": {
           "const": "label"
@@ -330,6 +330,7 @@
           ],
           "description": "Adam steps per level: one value, or one per level. 0 skips the solve (the affine alone).",
           "items": {
+            "minimum": 0,
             "type": "integer"
           },
           "type": "array"
@@ -337,16 +338,19 @@
         "smooth": {
           "default": 1.0,
           "description": "Weight of the penalty on the field's gradient.",
+          "minimum": 0,
           "type": "number"
         },
         "grid": {
           "default": 4.0,
           "description": "Control-point spacing of the field, in voxels of each level.",
+          "exclusiveMinimum": 0,
           "type": "number"
         },
         "window": {
           "default": 7,
           "description": "Correlation window, voxels, odd.",
+          "minimum": 1,
           "type": "integer"
         },
         "show": {
@@ -362,6 +366,7 @@
         "frames": {
           "anyOf": [
             {
+              "minimum": 1,
               "type": "integer"
             },
             {
@@ -391,8 +396,11 @@
           "anyOf": [
             {
               "items": {
+                "exclusiveMinimum": 0,
                 "type": "integer"
               },
+              "maxItems": 3,
+              "minItems": 3,
               "type": "array"
             },
             {

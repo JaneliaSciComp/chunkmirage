@@ -130,23 +130,25 @@ def solve(
         # there is nothing to match, and fitting would drag the moving image's edge over
         # whatever lies beyond it. The field there follows from its smoothness alone.
         seen = [warp.seen(z0, z1, settings.window)[:, :, c0:c1] for z0, z1, c0, c1 in slabs]
+        # the fixed image's side of each window does not change as the field does
+        stats = [_window_stats(fix[:, :, z0:z1], settings.window) for z0, z1, _, _ in slabs]
         n_vox = math.prod(fl.data.shape)
         t0 = time.time()
         for it in range(iters):
             u.grad = None
-            sim = 0.0
-            for (z0, z1, c0, c1), inside in zip(slabs, seen):
+            sim = torch.zeros((), device=dev)  # read back only when logged
+            for (z0, z1, c0, c1), inside, st in zip(slabs, seen, stats):
                 warped = warp(mov, u, z0, z1)
-                cc = _lncc(fix[:, :, z0:z1], warped, settings.window)[:, :, c0:c1] * inside
+                cc = _lncc(fix[:, :, z0:z1], st, warped, settings.window)[:, :, c0:c1] * inside
                 loss = -cc.sum() / n_vox
                 loss.backward()
-                sim -= float(loss.detach())
+                sim -= loss.detach()
             reg = settings.smooth * _diffusion(u, spacing)
             reg.backward()
             opt.step()
             step += 1
             if it == 0:
-                first = sim
+                first = float(sim)
             record(step)
         log.info(
             "register: stage %d/%d, %s voxels, grid %s, %d iterations in %.1f s: "
@@ -158,9 +160,9 @@ def solve(
             iters,
             time.time() - t0,
             first,
-            sim,
+            float(sim),
         )
-        del fix, mov, warp, seen
+        del fix, mov, warp, seen, stats
     log.info("register: solved in %.1f s on %s", time.time() - started, dev)
     if dev.type == "cuda":
         torch.cuda.empty_cache()
@@ -249,13 +251,17 @@ class _Warp:
         p = [ax * self.vf[i] + self.tf[i] for i, ax in enumerate(axes)]
         return torch.stack(torch.meshgrid(*p, indexing="ij"), dim=-1)
 
+    def _index(self, x):
+        """Moving-image voxel indices of fixed-space physical points ``x`` under the affine."""
+        return (x @ self.a[:, :3].T + self.a[:, 3] - self.tm) / self.vm
+
     def seen(self, z0: int, z1: int, window: int):
         """Which fixed voxels in planes ``z0:z1`` have their whole ``window`` (as far as the
         fixed image reaches) inside the moving image under the affine alone: a
         (1, 1, d, h, w) float mask."""
         import torch.nn.functional as F
 
-        idx = (self._points(z0, z1) @ self.a[:, :3].T + self.a[:, 3] - self.tm) / self.vm
+        idx = self._index(self._points(z0, z1))
         ok = ((idx >= 0) & (idx <= self.mshape)).all(dim=-1)[None, None].float()
         h = window // 2
         ok = F.pad(ok, (h,) * 6, value=1.0)  # beyond the fixed image: no data to miss
@@ -272,27 +278,40 @@ class _Warp:
         disp = F.grid_sample(
             u, g.flip(-1)[None], mode="bilinear", padding_mode="border", align_corners=True
         )[0].permute(1, 2, 3, 0)
-        q = (p + disp) @ self.a[:, :3].T + self.a[:, 3]  # moving physical
-        idx = (q - self.tm) / self.vm
-        g = 2 * idx / self.mshape - 1
+        g = 2 * self._index(p + disp) / self.mshape - 1
         return F.grid_sample(  # 0 beyond the moving image, as the served image has
             mov, g.flip(-1)[None], mode="bilinear", padding_mode="zeros", align_corners=True
         ).reshape(1, 1, d, h, w)
 
 
-def _lncc(i, j, window: int):
-    """Squared local normalized cross-correlation per voxel, in [0, 1]."""
-    import torch
+def _box_mean(x, window: int):
+    """Mean over each voxel's window (clipped at the volume's faces), per channel."""
     import torch.nn.functional as F
 
-    x = torch.cat([i, j, i * i, j * j, i * j], dim=1)
     h = window // 2
-    for k in ((window, 1, 1), (1, window, 1), (1, 1, window)):  # a box mean, one axis at a time
+    for k in ((window, 1, 1), (1, window, 1), (1, 1, window)):  # one axis at a time
         pad = tuple(h if n > 1 else 0 for n in k)
         x = F.avg_pool3d(x, k, stride=1, padding=pad, count_include_pad=False)
-    mi, mj, ii, jj, ij = x.unbind(1)
+    return x
+
+
+def _window_stats(i, window: int):
+    """The fixed image's window means and variances."""
+    import torch
+
+    mi, ii = _box_mean(torch.cat([i, i * i], dim=1), window).unbind(1)
+    return mi, ii - mi * mi
+
+
+def _lncc(i, stats, j, window: int):
+    """Squared local normalized cross-correlation per voxel, in [0, 1]; ``stats`` are the
+    fixed image ``i``'s window means and variances (``_window_stats``)."""
+    import torch
+
+    mi, vi = stats
+    mj, jj, ij = _box_mean(torch.cat([j, j * j, i * j], dim=1), window).unbind(1)
     cov = ij - mi * mj
-    vi, vj = ii - mi * mi, jj - mj * mj
+    vj = jj - mj * mj
     # Windows without contrast in either image carry no signal and are left out (as in
     # ANTs), not damped with a constant: that would reward warps that add contrast.
     ok = (vi > FLAT) & (vj > FLAT)

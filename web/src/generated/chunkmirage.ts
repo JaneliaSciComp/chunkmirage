@@ -85,7 +85,7 @@ export interface RegisterParams {
   /**
    * Output chunk shape of the spatial axes, C order. Default: the fixed image's.
    */
-  chunk?: number[] | null;
+  chunk?: [number, number, number] | null;
   /**
    * auto (the GPU with the most free memory, else the CPU), cpu, cuda:1, ...
    */
@@ -139,7 +139,7 @@ export interface Gaussian {
 }
 /**
  * Connected components of a mask, coloured as segments. Labels are unique per chunk, so one
- *     object spanning several chunks gets several colours; that is the honest per-chunk preview.
+ * object spanning several chunks gets several colours; that is the honest per-chunk preview.
  */
 export interface Label {
   op: "label";
