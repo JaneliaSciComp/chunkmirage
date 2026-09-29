@@ -127,6 +127,7 @@
     <span><span class="swatch" style="background: var(--fixed)"></span>fixed image</span>
     <span><span class="swatch" style="background: var(--moving)"></span>moving image</span>
     <span>white where they agree</span>
+    <span>top: a slice; bottom: 3D, the brightest point along each ray (drag to turn)</span>
   </div>
 </aside>
 <main>
@@ -361,10 +362,14 @@ function publish(id, affine, grid, kind = "image") {
 // ------------------------------------------------ Neuroglancer (hosted on this origin, /ng/)
 // How far the field moved each point, as a heat map up to `scale` (physical units), or with
 // `direction` its direction as colour: (z, y, x) components as (red, green, blue), grey at none.
+// In 3D the brightest point along each ray is the one that moved furthest (emitIntensity; the
+// image layers get theirs from their invlerp).
+const MAX = { volumeRendering: "max", volumeRenderingDepthSamples: 128 };  // 3D: maximum intensity
 const FIELD_SHADER = (scale) => `#uicontrol float scale slider(min=${(scale / 20).toPrecision(2)}, max=${(scale * 4).toPrecision(2)}, default=${scale.toPrecision(3)})
 #uicontrol bool direction checkbox(default=false)
 void main() {
   vec3 d = vec3(getDataValue(0), getDataValue(1), getDataValue(2));
+  emitIntensity(clamp(length(d) / scale, 0.0, 1.0));
   if (direction) {
     emitRGB(clamp(vec3(0.5) + 0.5 * d / scale, 0.0, 1.0));
   } else {
@@ -381,28 +386,30 @@ function viewerState(p, sources, ranges) {
   if (t >= 0) { dims.t = [l0.scale[t] * (TO_SECONDS[fixed.axes[t].unit] ?? 1), "s"]; position.push(0.5); }
   const shader = (colour) => `#uicontrol invlerp normalized\n#uicontrol vec3 colour color(default="${colour}")\nvoid main() { emitRGB(colour * normalized()); }\n`;
   const layer = (name, source, colour, range, channel, img) => ({
-    type: "image", name, source, blend: "additive", shader: shader(colour), shaderControls: { normalized: { range } },
+    type: "image", name, source, blend: "additive", shader: shader(colour), shaderControls: { normalized: { range } }, ...MAX,
     ...(img.names.includes("c") ? { localPosition: [channel] } : {}),
   });
   const { moving } = session;
   const layers = [layer("fixed", `zarr3://${fixed.url}/`, "#ff4fd8", ranges.fixed, p.fixedChannel, fixed)];
   for (const name of ["before", "after"]) if (sources[name]) layers.push(layer(name, sources[name], "#45f07a", ranges.moving, p.movingChannel, moving));
   if (sources.field) layers.push({
-    type: "image", name: "field", shader: FIELD_SHADER(ranges.field),
+    type: "image", name: "field", shader: FIELD_SHADER(ranges.field), ...MAX,
     // its components are the shader's channels (getDataValue(0..2)): rename c' to c^
     source: { url: sources.field, transform: { outputDimensions: { "c^": [1, ""], z: dims.z, y: dims.y, x: dims.x } } },
   });
-  const main = document.querySelector("main");  // fit the whole x-y slice in one of three panels
-  const w = (main.clientWidth || 1200) / 3 - 20, h = (main.clientHeight || 800) - 90;
+  // three columns (before, after, field), each a slice above and a 3D view below, fitted to
+  // the whole x-y extent; the 3D views share one camera, tilted to show depth
+  const main = document.querySelector("main");
+  const w = (main.clientWidth || 1200) / 3 - 20, h = ((main.clientHeight || 800) - 90) / 2;
+  const columns = [["fixed", "before"], sources.after ? ["fixed", "after"] : ["fixed"], sources.field ? ["field"] : ["fixed"]];
+  const row = (layout) => ({ type: "row", children: columns.map((names) => ({ type: "viewer", layers: names, layout })) });
   return {
     dimensions: dims, position, displayDimensions: ["x", "y", "z"],
     crossSectionScale: Math.max(l0.shape[2] / w, l0.shape[1] / h) * 1.05,
-    crossSectionBackgroundColor: "#000000", showSlices: false, layers,
-    layout: { type: "row", children: [
-      { type: "viewer", layers: ["fixed", "before"], layout: "xy" },
-      { type: "viewer", layers: sources.after ? ["fixed", "after"] : ["fixed"], layout: "xy" },
-      { type: "viewer", layers: sources.field ? ["field"] : ["fixed"], layout: "xy" },
-    ] },
+    projectionScale: Math.max(l0.shape[2] * h / w, l0.shape[1]) * 1.3,
+    projectionOrientation: [-0.2164, 0, 0, 0.9763],  // 25 degrees about x
+    crossSectionBackgroundColor: "#000000", projectionBackgroundColor: "#000000", showSlices: false, layers,
+    layout: { type: "column", children: [row("xy"), row("3d")] },
     selectedLayer: { layer: sources.after ? "after" : "before", visible: false },
   };
 }
