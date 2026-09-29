@@ -5,6 +5,12 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+env:
+  # The Neuroglancer the browser page embeds, built from Google's source here rather than
+  # kept in this repo. The page answers the viewer's requests through a service worker,
+  # which only sees requests from pages on its own site, so the viewer has to be served
+  # from here too (an iframe of neuroglancer-demo.appspot.com would miss them).
+  NEUROGLANCER: v2.41.2
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -12,4 +18,26 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --group docs
-      - run: uv run mkdocs gh-deploy --force --strict
+      - run: uv run mkdocs build --strict
+      - uses: actions/cache@v4
+        id: neuroglancer
+        with:
+          path: neuroglancer
+          key: neuroglancer-${{ env.NEUROGLANCER }}
+      - if: steps.neuroglancer.outputs.cache-hit != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - if: steps.neuroglancer.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$NEUROGLANCER" https://github.com/google/neuroglancer "$RUNNER_TEMP/src"
+          cd "$RUNNER_TEMP/src"
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-audit --no-fund
+          npm run build -- --output="$GITHUB_WORKSPACE/neuroglancer"
+          find "$GITHUB_WORKSPACE/neuroglancer" -name '*.map' -delete
+      # The browser page at <site>/browser/register.html, its viewer at browser/ng/.
+      - run: |
+          mkdir site/browser
+          cp examples/browser/*.html examples/browser/*.js site/browser/
+          cp -r neuroglancer site/browser/ng
+      - run: uv run ghp-import --no-jekyll --push --force -m "Deployed ${GITHUB_SHA} with the browser page" site

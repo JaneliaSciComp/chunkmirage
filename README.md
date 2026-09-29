@@ -94,8 +94,9 @@ uv run python examples/register_demo.py FIXED MOVING --affine fixed_to_moving.np
 ```
 
 With no arguments it registers a synthetic volume onto a swirled copy of itself. The whole
-thing also runs in the browser: `uv run python examples/browser/serve.py` and open the
-printed `register.html` link. The page reads both images straight from their URLs, solves on
+thing also runs in the browser, at
+[browser/register.html](https://yuriyzubov.github.io/chunkmirage/browser/register.html)
+(or locally: `uv run python examples/browser/serve.py` and open the printed link). The page reads both images straight from their URLs, solves on
 the viewer's GPU (WebGPU), and shows before and after in Neuroglancer, the registered volume
 computed in the browser as the viewer asks for it. `warp://`
 sources make such swirls, optionally along a time axis that Neuroglancer plays:

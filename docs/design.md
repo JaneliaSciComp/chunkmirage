@@ -207,8 +207,12 @@ Fully client-side is feasible and would make a compelling hosted demo:
   clicked through: `examples/browser/serve.py` serves the page over https with the
   self-signed certificate (trusted once in the system; it is made to the rules macOS and
   browsers apply even then, at most 398 days and for server authentication) or over plain
-  http for `localhost`, and relays the standard Neuroglancer client under `/ng/`. A static
-  host with a real certificate would carry a copy of the client and need neither.
+  http for `localhost`, and relays the standard Neuroglancer client under `/ng/`. The docs
+  site needs neither: the docs workflow builds Neuroglancer from Google's source at a
+  pinned tag (cached, so about 15 s the first time) and publishes it at `browser/ng/`
+  next to the page, at
+  [browser/register.html](https://yuriyzubov.github.io/chunkmirage/browser/register.html).
+  Nothing of Neuroglancer is kept in this repo.
 
 ## Deployment shapes
 

@@ -41,9 +41,9 @@ describe shipped features as future work.
    `examples/browser/register.html` fits `register://`'s deformable registration on the
    viewer's GPU, reading OME-Zarr straight from its URLs (see the
    [design notes](design.md#client-side-browser-roadmap)) and serves the registered
-   volume to Neuroglancer through a service worker, computed by web workers. What remains
-   is ops (WebGPU filters, ONNX Runtime Web inference) through the same service worker,
-   and a vendored Neuroglancer build for static hosting.
+   volume to Neuroglancer through a service worker, computed by web workers. The docs
+   site hosts it with its own Neuroglancer build. What remains is ops (WebGPU filters,
+   ONNX Runtime Web inference) through the same service worker.
 
 ## Untapped potential
 
