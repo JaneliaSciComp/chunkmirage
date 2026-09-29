@@ -18,7 +18,13 @@ describe shipped features as future work.
    served pipeline and running downstream analysis with no intermediate written.
 5. **DAG pipelines, multi-source ops.** Named stages with fan-out (one model, many
    post-processors) and a `Combine` op taking another pipeline as input. Unlocks masking,
-   model-vs-model disagreement views, registration overlays.
+   model-vs-model disagreement views, registration overlays. With it, structured sources:
+   a pipeline's source as a JSON object as well as a URL, such as
+   `{"register": {"moving": ..., "fixed": ..., "affine": [...]}}`, typed by the same schema
+   (`chunkmirage schema`) so nested sources and long parameters need no escaping and the
+   browser engine, an MCP server or an agent build specs instead of strings. The URL
+   schemes (`register://`, `scene://`, ...) stay as shorthand for the command line and
+   links; `register://` becomes a two-input node rather than a source.
 6. **More registration inputs, live landmarks, fusion.** Readers for bigstream/EASI-FISH
    (`affine.mat` plus a deform zarr), BigWarp landmarks and ANTs/ITK fields into the same
    transform model; landmark pairs drawn in Neuroglancer, fitted to a thin-plate spline and
@@ -44,7 +50,11 @@ describe shipped features as future work.
    serves the registered volume to Neuroglancer through a service worker, computed by web
    workers. The docs site hosts it with its own Neuroglancer build. What remains is ops
    (WebGPU filters, ONNX Runtime Web inference) through the same service worker, and an
-   affine search for Python's `register://` to match the page's.
+   affine search for Python's `register://` to match the page's. User code in the browser
+   would come in two tiers: array functions exported to ONNX run on the GPU in both engines
+   (ONNX Runtime and ONNX Runtime Web), and anything else runs in the page through Pyodide,
+   on the CPU. Whether the page's WebGPU shaders can also serve Python (wgpu-py), as one
+   implementation of the solver for both, is still to be measured against PyTorch.
 
 ## Untapped potential
 
