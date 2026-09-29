@@ -23,7 +23,7 @@ viewer  --HTTP-->  chunkmirage  --tensorstore/h5py-->  real data (zarr/n5/precom
 ## Quick start
 
 ```bash
-uv sync --all-extras --group dev            # or: pip install -e ".[all]"
+uv sync --extra all --group dev            # or: pip install -e ".[all]"
 chunkmirage serve /path/to/data.zarr/em/fibsem-uint8 --op threshold:low=120 --port 8000
 ```
 
@@ -33,7 +33,7 @@ chunkmirage serve /path/to/data.zarr/em/fibsem-uint8 --op threshold:low=120 --po
 
    ```bash
    git clone https://github.com/yuriyzubov/chunkmirage && cd chunkmirage
-   uv sync --all-extras
+   uv sync --extra all
    uv run chunkmirage serve "synthetic://blobs+noise?shape=4096,4096,4096" \
        --op gaussian:sigma=1.5 --op threshold:low=110 \
        --op morphology:operation=open,radius=2 --op label:min_size=200 --python-viewer
@@ -84,9 +84,19 @@ uv run python examples/fly_brain_registration.py /tmp/fly
 chunkmirage serve "scene:///tmp/fly/fly_brains.zarr?image=FCWB&target=JRC2018F"
 ```
 
-`warp://` sources twist any volume through procedural 3-D swirls instead, optionally along
-a time axis that Neuroglancer plays: `uv run python examples/swirl_demo.py --animate`.
-Details: [formats](docs/concepts/formats.md#scene-sources-ome-zarr-06-transformations).
+`register://` sources solve the registration too: a deformable field fitted on the GPU
+in seconds from coarse levels, then every level served through it. The demo compares
+before and after in the viewer's own GPU shader, and solves again as you change settings:
+
+```bash
+uv sync --extra all --extra gpu        # gpu: PyTorch, about 3 GB
+uv run python examples/register_demo.py FIXED MOVING --affine fixed_to_moving.npy
+```
+
+With no arguments it registers a synthetic volume onto a swirled copy of itself. `warp://`
+sources make such swirls, optionally along a time axis that Neuroglancer plays:
+`uv run python examples/swirl_demo.py --animate`. Details:
+[formats](docs/concepts/formats.md#scene-sources-ome-zarr-06-transformations).
 
 ## As a library
 
@@ -130,14 +140,15 @@ Early, but working:
 
 * **Sources:** zarr v2/v3, N5 and precomputed (file, S3, GCS, HTTP) and HDF5; computed
   `synthetic://` volumes, `scene://` registration through OME-Zarr 0.6 transformations,
-  and `warp://` procedural deformations.
+  `warp://` procedural deformations, and `register://` deformable registration solved on
+  a GPU.
 * **Frontends:** N5, Zarr v2, Zarr v3 and precomputed, all served at once.
 * **Ops:** threshold, cast, scale, Gaussian, uniform and difference-of-Gaussians filters,
   morphology, connected components; halos handled for you.
 * **Live editing:** per-stage LRU cache, REST edits, a control page, and a
   python-neuroglancer viewer that keeps the camera while layers refetch.
 
-Not yet: GPU ops, MCP server, browser build. See the [roadmap](docs/roadmap.md).
+Not yet: GPU ops (only registration uses the GPU), MCP server, browser build. See the [roadmap](docs/roadmap.md).
 
 ## License
 

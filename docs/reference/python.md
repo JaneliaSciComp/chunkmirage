@@ -24,8 +24,8 @@
 
 ## Coordinate transformations
 
-The model every registration format is read into, the OME-Zarr 0.6 reader, and the
-`scene://` source built on them.
+The model every registration format is read into, the OME-Zarr 0.6 reader, the
+deformable solver, and the `scene://`, `warp://` and `register://` sources built on them.
 
 ::: chunkmirage.transforms.Transform
 ::: chunkmirage.transforms.Affine
@@ -39,6 +39,9 @@ The model every registration format is read into, the OME-Zarr 0.6 reader, and t
 ::: chunkmirage.ngff.parse_transform
 ::: chunkmirage.sources.scene.open_scene
 ::: chunkmirage.sources.warp.open_warp
+::: chunkmirage.registration.solve
+::: chunkmirage.registration.Settings
+::: chunkmirage.sources.register.open_register
 
 ## Frontends
 

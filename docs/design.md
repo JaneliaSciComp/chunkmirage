@@ -121,6 +121,18 @@ Inverses are taken only in closed form or from a stored `bijection`, unless the 
 for `inverse=approx`; an estimated inverse of a folding field would silently show wrong
 data, so unconvergent points are left empty instead.
 
+Solving a registration is a source too (`register://`): opening it fits a displacement
+field on a GPU from a few coarse levels, keeps the field in memory and serves every level
+through the same resampler. The split follows the costs. The field is global (any output
+chunk may depend on all of it) but cheap to fit at coarse levels and small to keep, while
+resampling full resolution is expensive and local, which is exactly what chunk-by-chunk
+serving does lazily. So the fit happens once, when the source opens, and nothing of the
+registered volume is ever written. PyTorch supplies autograd and grid sampling, as an
+optional dependency; the objective is local cross-correlation with flat windows left out,
+because damping them with a constant instead rewards warps that add contrast (the tests
+catch that). Adam is written out rather than taken from `torch.optim`, whose import loads
+`torch._dynamo`: about 9 s from a network file system.
+
 ## Language and stack
 
 **Server: Python.** The whole point is that scientists write ops in numpy/torch/scipy;

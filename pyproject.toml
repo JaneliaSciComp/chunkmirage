@@ -24,6 +24,8 @@ ops = ["scipy>=1.12"]
 mcp = ["mcp>=1.0"]
 viewer = ["neuroglancer>=2.40"]
 https = ["cryptography>=42"]
+# register:// solves on a GPU when there is one (CPU otherwise); ~3 GB of wheels, so not in `all`
+gpu = ["torch>=2.6", "scipy>=1.12"]
 all = ["chunkmirage[hdf5,ops,mcp,viewer,https]"]
 
 [project.scripts]
@@ -47,6 +49,16 @@ dev = [
     "ruff>=0.5",
     "neuroglancer>=2.40",
 ]
+
+# CUDA 12.8 torch: covers Turing (sm_75) through Blackwell and runs on any driver >= 525,
+# unlike PyPI's default build, which may need a newer driver than a workstation has.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]
