@@ -83,7 +83,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")  # pick up edits to the page and workers
         super().end_headers()
 
-    def log_message(self, *args):  # quiet: the page reports its own progress
+    def log_request(self, code="-", size="-"):  # failures only: the page reports the rest
+        if str(code).isdigit() and int(code) >= 400 and not self.path.startswith("/favicon"):
+            print(
+                f"{code} {self.command} {self.path[:200]}  (from {self.client_address[0]})",
+                flush=True,
+            )
+
+    def log_message(self, *args):
         pass
 
 
