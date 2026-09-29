@@ -60,6 +60,10 @@
   .example { margin: 0; font-size: 12px; color: var(--faint); }
   .hint { margin: 0; font-size: 11px; color: var(--faint); }
   .example a { color: var(--muted); }
+  .example p { margin: 0; }
+  .start { display: grid; gap: 4px; margin: 8px 0; }
+  .start label { display: flex; gap: 6px; align-items: baseline; color: var(--muted); cursor: pointer; }
+  .start input { width: auto; margin: 0; }
   main { position: relative; min-width: 0; background: #000; }
   main iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
   .empty { position: absolute; inset: 0; display: grid; place-content: center; gap: 6px; padding: 24px; text-align: center; color: var(--faint); }
@@ -117,7 +121,7 @@
     </details>
     <button id="go" type="submit">Register</button>
   </form>
-  <p class="example" id="example" hidden></p>
+  <div class="example" id="example" hidden></div>
   <section class="status" id="status" hidden>
     <div class="gpu" id="gpu"></div>
     <div id="stages" class="status"></div>
@@ -194,10 +198,30 @@ async function loadExample() {
   } catch { return; }
   for (const k of ["fixed", "moving"]) form.elements[k].value = new URL(ex[k], url).href;
   for (const [k, v] of Object.entries(ex)) if (form.elements[k] && !["fixed", "moving"].includes(k)) form.elements[k].value = v;
-  if (ex.published_affine) exampleRef = { fixed: form.elements.fixed.value, moving: form.elements.moving.value, affine: parseAffine(ex.published_affine) };
-  const note = $("example"), link = document.createElement("a");
+  const note = $("example"), about = document.createElement("p"), link = document.createElement("a");
   link.href = ex.source; link.textContent = "source";
-  note.append(`${ex.about} `, link, ". Or enter your own images.");
+  about.append(`${ex.about} (`, link, ")");
+  note.append(about);
+  if (ex.published_affine) {  // start as stored (Register finds the affine) or from the published one
+    exampleRef = { fixed: form.elements.fixed.value, moving: form.elements.moving.value, affine: parseAffine(ex.published_affine) };
+    const start = document.createElement("div");
+    start.className = "start";
+    start.innerHTML = `<span>Start from</span>
+      <label><input type="radio" name="start" value="stored" checked><span>the images as stored: Register finds the affine</span></label>
+      <label><input type="radio" name="start" value="published"><span></span></label>`;
+    start.querySelector("[value=published] + span").textContent = ex.published_about ?? "the published affine";
+    const choose = (which) => {
+      start.querySelector(`[value=${which}]`).checked = true;
+      form.elements.affine.value = which === "published" ? formatAffine(exampleRef.affine) : "";
+    };
+    start.addEventListener("change", (e) => { choose(e.target.value); schedulePreview(); });
+    if (query.get("start") === "published") choose("published");
+    form.elements.affine.addEventListener("input", uncheckStart);  // an affine of one's own
+    note.append(start);
+  }
+  const own = document.createElement("p");
+  own.textContent = "Or enter your own images.";
+  note.append(own);
   note.hidden = false;
   $("empty").querySelector("b").textContent = "Loading the example…";
 }
@@ -470,7 +494,10 @@ function affineRow() {  // above the levels' rows
   return el;
 }
 
-const beforeCaption = (text) => (text.trim() ? "Before: placed by the affine alone" : "Before: as they are, no affine");
+// function declarations: the example, loaded before the rest of this script runs, uses them
+function uncheckStart() { for (const i of document.querySelectorAll(".start input")) i.checked = false; }
+function formatAffine(a) { return a.map((r) => r.map((v) => +v.toPrecision(6)).join(", ")).join("\n"); }  // a row per line
+function beforeCaption(text) { return text.trim() ? "Before: placed by the affine alone" : "Before: as they are, no affine"; }
 
 function stageRows(levels, shapes) {
   $("stages").innerHTML = "";
@@ -540,7 +567,8 @@ async function run() {
       row.querySelector(".t").textContent = `${found.seconds.toFixed(1)} s`;
       row.querySelector(".sim").textContent = `similarity ${found.identity.toFixed(3)} → ${found.final.toFixed(3)}`
         + (found.distance == null ? "" : ` · ${found.distance.toFixed(1)} ${unit} from the published affine`);
-      form.elements.affine.value = affine.map((r) => r.map((v) => +v.toPrecision(6)).join(", ")).join("\n");
+      form.elements.affine.value = formatAffine(affine);
+      uncheckStart();  // the box now holds the found affine
     }
     $("summary").textContent = `Read levels ${levels.join(", ")} in ${readSecs.toFixed(1)} s. Solving the field…`;
     const settings = { iterations: Number(f.iterations), smooth: Number(f.smooth), grid: Number(f.grid) };

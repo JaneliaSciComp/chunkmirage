@@ -28,10 +28,12 @@ SOURCE = "https://ngff-rfc5-coordinate-transformation-examples.s3.amazonaws.com/
 FIXED, MOVING = "JRC2018F", "FCWB"
 ABOUT = (
     "Example: the fly brain templates JRC2018F (Bogovic et al. 2020) as fixed and FCWB "
-    "(Costa et al. 2016) as moving, from the OME-NGFF transformation examples, as they are "
-    "stored: FCWB is about half as deep and sits elsewhere. With the affine left empty, "
-    "Register finds one, then the field, and says how close its affine comes to the one "
-    "published with them."
+    "(Costa et al. 2016) as moving, from the OME-NGFF transformation examples. As stored, "
+    "FCWB is about half as deep and sits elsewhere."
+)
+PUBLISHED_ABOUT = (  # the page's second way to start
+    "the published affine: the affine part of the JRC2018F-to-FCWB transform in the same "
+    "examples, where a displacement field of its own comes first"
 )
 
 
@@ -128,7 +130,7 @@ def main(argv: list[str] | None = None) -> None:
     example = {
         "fixed": f"fly/{FIXED}", "moving": f"fly/{MOVING}",  # relative to example.json
         "published_affine": ", ".join(repr(v) for row in affine for v in row),  # to compare with
-        "about": ABOUT, "source": SOURCE,
+        "about": ABOUT, "published_about": PUBLISHED_ABOUT, "source": SOURCE,
     }
     (args.out / "example.json").write_text(json.dumps(example, indent=2))
     print(f"wrote {args.out}: {FIXED} and {MOVING}, {total / 1e6:.1f} MB", file=sys.stderr)

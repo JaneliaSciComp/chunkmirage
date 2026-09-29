@@ -217,7 +217,9 @@ Fully client-side is feasible and would make a compelling hosted demo:
   `examples/browser/fetch_example.py` copies them at deploy time from the OME-NGFF
   transformation examples, whose bucket allows no CORS and uses a draft 0.6 layout,
   rewriting only the metadata as 0.5, and the site serves them next to the page. So the
-  example needs no CORS, no VPN and no local network access.
+  example needs no CORS, no VPN and no local network access. It can also start from the
+  affine published with them (the affine part of the examples' JRC2018F-to-FCWB transform;
+  `?start=published`).
 * With the affine left empty the page finds one before the field (`affine.js`, on the CPU:
   a few hundred thousand voxels are enough). It matches the two images' intensity
   moments, centre to centre and principal axis to principal axis, which leaves the axes'
