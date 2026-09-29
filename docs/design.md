@@ -192,7 +192,16 @@ Fully client-side is feasible and would make a compelling hosted demo:
 * A shared Rust crate (chunk key parsing, zarr/n5/precomputed codecs) compiled to WASM and
   to a Python extension would keep the two implementations from drifting. Not needed to
   start.
-* The first piece is registration: `examples/browser/register.html` reads two OME-Zarr
+* It lives in this repo as `web/`, a TypeScript project (Vite) next to the Python package,
+  because the two share one definition: the Pydantic models (`PipelineSpec`, each op's
+  parameters, `RegisterParams`) export a JSON Schema (`chunkmirage schema`), and `web/`
+  generates its TypeScript types and form defaults from the committed copy. A model change
+  and the page it breaks then land in one pull request: `tests/test_schema.py` fails until
+  the copy is regenerated, and the `web` CI job until the types are. The Python package
+  stays standalone all the same, since its wheel holds only `src/chunkmirage`. Demos that
+  span several projects, and plugins with ops for both engines, would be repos of their
+  own, built on the published packages.
+* The first piece is registration: `web/register.html` reads two OME-Zarr
   images from their URLs with `zarrita.js` (range requests into sharded stores, zstd and
   blosc through numcodecs) and fits the same field as `register://` in WebGPU compute
   shaders, with the gradients written out by hand (WGSL has no autograd, and no float
@@ -204,7 +213,7 @@ Fully client-side is feasible and would make a compelling hosted demo:
   image through the field as `scene://` does, reading it from its URL through a cache of
   decoded blocks. So all of `register://` runs client side. WebGPU and service workers
   need a secure page, and a service worker will not run on a certificate that was only
-  clicked through: `examples/browser/serve.py` serves the page over https with the
+  clicked through: `web/serve.py` serves the build over https with the
   self-signed certificate (trusted once in the system; it is made to the rules macOS and
   browsers apply even then, at most 398 days and for server authentication) or over plain
   http for `localhost`, and relays the standard Neuroglancer client under `/ng/`. The docs
@@ -214,13 +223,13 @@ Fully client-side is feasible and would make a compelling hosted demo:
   [browser/register.html](https://yuriyzubov.github.io/chunkmirage/browser/register.html).
   Nothing of Neuroglancer is kept in this repo. With no images in its link the page opens
   with an example, two fly brain templates (JRC2018F and FCWB) as they are stored:
-  `examples/browser/fetch_example.py` copies them at deploy time from the OME-NGFF
+  `web/scripts/fetch_example.py` copies them at deploy time from the OME-NGFF
   transformation examples, whose bucket allows no CORS and uses a draft 0.6 layout,
   rewriting only the metadata as 0.5, and the site serves them next to the page. So the
   example needs no CORS, no VPN and no local network access. It can also start from the
   affine published with them (the affine part of the examples' JRC2018F-to-FCWB transform;
   `?start=published`).
-* With the affine left empty the page finds one before the field (`affine.js`, on the CPU:
+* With the affine left empty the page finds one before the field (`affine.ts`, on the CPU:
   a few hundred thousand voxels are enough). It matches the two images' intensity
   moments, centre to centre and principal axis to principal axis, which leaves the axes'
   signs open; of the four orientations that do not mirror the image, the best correlated
@@ -230,6 +239,11 @@ Fully client-side is feasible and would make a compelling hosted demo:
   correlation from 0.14 to 0.84 (moments) and 0.87 (fit), and ends 2 µm from the published
   affine (the voxels are 2.5 µm), in about 5 s. The moments assume both images show the
   same whole object; a crop of one would need an affine given.
+* The page shows the same registration as a `chunkmirage serve 'register://…'` command,
+  built through the generated `RegisterParams` type, with the found affine and the solved
+  levels filled in after a run. Solved from that command, Python's field matches the
+  page's to 0.01 µm (median; 0.04 µm at the 95th percentile) on the fly templates, whose
+  field moves tissue by 7 µm (median). Python's `register://` has no affine search yet.
 
 ## Deployment shapes
 

@@ -241,7 +241,13 @@ re-solves when you type new settings, the viewer keeping its camera.
 | `device` | `auto` | `auto` is the GPU with the most free memory, else the CPU; or `cpu`, `cuda:1`, ... |
 
 The parameters follow the last `?`, so the moving image's URL may carry its own query (a
-`warp://` URL, say, which is how the tests check that a known swirl is undone).
+`warp://` URL, say, which is how the tests check that a known swirl is undone). They are
+one Pydantic model, `RegisterParams`, whose JSON Schema (`chunkmirage schema`) the browser
+engine's types and form defaults are generated from: the
+[browser page](https://yuriyzubov.github.io/chunkmirage/browser/register.html) solves the
+same spec on the viewer's GPU and shows the `chunkmirage serve 'register://…'` command for
+its settings, and fed the same affine and levels the two fields agree to 0.01 µm (median)
+on the fly templates, whose field moves tissue by 7 µm (median).
 
 ### Stored sources
 

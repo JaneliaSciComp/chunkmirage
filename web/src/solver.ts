@@ -6,11 +6,19 @@
 // squared local correlation (box sums of three per-window factors), then the chain rule
 // through trilinear sampling; WGSL has no float atomics, so each control point gathers
 // its voxels' gradients rather than voxels scattering into control points.
+import schema from "./generated/chunkmirage.schema.json";
+import type { Affine, ControlGrid, Volume } from "./types";
 
 const WG = 256;
 export const FLAT = 1e-4;   // windows with less variance than this carry no signal
-export const WINDOW = 7;    // correlation window, voxels
+export const WINDOW: number = schema.$defs.RegisterParams.properties.window.default;  // correlation window, voxels
 const STEP = 0.5;           // Adam learning rate, voxels of each level
+
+export interface Settings { iterations: number; smooth: number; grid: number }
+export interface Progress { stage: number; stages: number; iteration: number; iterations: number; similarity: number | null }
+export interface Stage { shape: number[]; grid: number[]; seconds: number; first: number | null; final: number | null }
+export interface Gpu { device: GPUDevice; pipelines: Record<Kernel, GPUComputePipeline>; name: string }
+type Kernel = keyof typeof KERNELS;
 
 const COMMON = /* wgsl */ `
 struct Params {
@@ -39,7 +47,7 @@ fn window_count(p: u32) -> f32 {
   return f32(e.x * e.y * e.z);
 }
 `;
-const ENTRY = (body) => `
+const ENTRY = (body: string) => `
 @compute @workgroup_size(${WG})
 fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>,
         @builtin(local_invocation_index) li: u32) {
@@ -232,34 +240,34 @@ fn u_at(q: vec3<u32>, k: u32) -> f32 { return U[((q.x * P.gshape.y + q.y) * P.gs
   U[p] -= P.adam.x * (m * P.adam.y) / (sqrt(v * P.adam.z) + 1e-8);`),
 };
 
-export async function gpu() {
+export async function gpu(): Promise<Gpu> {
   if (!navigator.gpu) throw new Error("this browser has no WebGPU (chrome://gpu shows why; on Linux Chrome may need chrome://flags/#enable-unsafe-webgpu)");
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
   if (!adapter) throw new Error("no WebGPU adapter");
   const device = await adapter.requestDevice({
     requiredLimits: { maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxBufferSize: adapter.limits.maxBufferSize },
   });
-  const pipelines = {};
-  for (const [name, code] of Object.entries(KERNELS)) {
+  const pipelines = {} as Record<Kernel, GPUComputePipeline>;
+  for (const [name, code] of Object.entries(KERNELS) as [Kernel, string][]) {
     const module = device.createShaderModule({ code });
     const info = await module.getCompilationInfo();
     for (const m of info.messages) if (m.type === "error") throw new Error(`${name}: ${m.message} (line ${m.lineNum})`);
     pipelines[name] = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "main" } });
   }
-  const info = adapter.info ?? {};
+  const info = adapter.info;
   return { device, pipelines, name: [info.vendor, info.architecture, info.description].filter(Boolean).join(" ") };
 }
 
-export const prod = (a) => a.reduce((x, y) => x * y, 1);
+export const prod = (a: number[]) => a.reduce((x, y) => x * y, 1);
 
-export function controlShape(lo, hi, voxel, grid) {
+export function controlShape(lo: number[], hi: number[], voxel: number[], grid: number): number[] {
   return lo.map((l, a) => Math.max(2, Math.ceil((hi[a] - l) / (grid * voxel[a])) + 1));
 }
 
-function refine(u, from, to) {  // trilinear, both grids spanning the same box
+function refine(u: Float32Array, from: number[], to: number[]): Float32Array {  // trilinear, both grids spanning the same box
   const out = new Float32Array(3 * prod(to));
-  const at = (z, y, x, k) => u[((z * from[1] + y) * from[2] + x) * 3 + k];
-  const coord = (i, a) => { const c = to[a] > 1 ? (i * (from[a] - 1)) / (to[a] - 1) : 0; const i0 = Math.min(Math.floor(c), from[a] - 2); return [Math.max(i0, 0), c - Math.max(i0, 0)]; };
+  const at = (z: number, y: number, x: number, k: number) => u[((z * from[1] + y) * from[2] + x) * 3 + k];
+  const coord = (i: number, a: number): [number, number] => { const c = to[a] > 1 ? (i * (from[a] - 1)) / (to[a] - 1) : 0; const i0 = Math.min(Math.floor(c), from[a] - 2); return [Math.max(i0, 0), c - Math.max(i0, 0)]; };
   for (let z = 0; z < to[0]; z++) for (let y = 0; y < to[1]; y++) for (let x = 0; x < to[2]; x++) {
     const [z0, fz] = coord(z, 0), [y0, fy] = coord(y, 1), [x0, fx] = coord(x, 2);
     for (let k = 0; k < 3; k++) {
@@ -275,15 +283,22 @@ function refine(u, from, to) {  // trilinear, both grids spanning the same box
   return out;
 }
 
+type Buffers = Record<"P" | "F" | "M" | "U" | "J" | "C" | "S" | "T" | "AB" | "STAT" | "CC" | "GD" | "GU" | "MOM" | "VEL", GPUBuffer>;
+
 class Level {
-  constructor(g, fixed, moving, affine, box, gshape, settings) {
+  g: Gpu; N: number; G: number; spacing: number[]; buffers: Buffers; axes: GPUBuffer[];
+  params: ArrayBuffer; lr: number;
+  groups: Record<"prep" | "statics" | "warp" | "products" | "cc" | "grad" | "gather" | "adam", GPUBindGroup>
+    & Record<"boxPrep" | "boxJ" | "boxAB", GPUBindGroup[]>;
+
+  constructor(g: Gpu, fixed: Volume, moving: Volume, affine: Affine, box: number[][], gshape: number[], settings: Settings) {
     const { device } = g;
-    this.g = g; this.fixed = fixed; this.moving = moving; this.gshape = gshape;
+    this.g = g;
     const N = prod(fixed.shape), G = prod(gshape);
     this.N = N; this.G = G;
     const lo = box[0], hi = box[1];
     this.spacing = lo.map((l, a) => (hi[a] - l) / (gshape[a] - 1));
-    const buf = (n, usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST) =>
+    const buf = (n: number, usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST) =>
       device.createBuffer({ size: Math.max(16, n * 4), usage });
     this.buffers = {
       P: device.createBuffer({ size: 16 * 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
@@ -297,8 +312,8 @@ class Level {
       return b;
     });
     const B = this.buffers;
-    device.queue.writeBuffer(B.F, 0, fixed.norm);
-    device.queue.writeBuffer(B.M, 0, moving.norm);
+    device.queue.writeBuffer(B.F, 0, fixed.norm as Float32Array<ArrayBuffer>);
+    device.queue.writeBuffer(B.M, 0, moving.norm as Float32Array<ArrayBuffer>);
     // Params
     const p = new ArrayBuffer(16 * 16), u32 = new Uint32Array(p), f32 = new Float32Array(p);
     u32.set([...fixed.shape, N], 0); u32.set([...moving.shape, prod(moving.shape)], 4); u32.set([...gshape, G], 8);
@@ -311,11 +326,11 @@ class Level {
     this.params = p;
     this.lr = STEP * (fixed.voxel.reduce((x, y) => x + y) / 3);
     device.queue.writeBuffer(B.P, 0, p);
-    const bind = (name, ...names) => device.createBindGroup({
+    const bind = (name: Kernel, ...names: (keyof Buffers | GPUBuffer)[]) => device.createBindGroup({
       layout: g.pipelines[name].getBindGroupLayout(0),
       entries: names.map((n, i) => ({ binding: i, resource: { buffer: typeof n === "string" ? B[n] : n } })),
     });
-    const boxes = (a, b, c, d) => [bind("box", "P", this.axes[0], a, b), bind("box", "P", this.axes[1], b, c), bind("box", "P", this.axes[2], c, d)];
+    const boxes = (a: GPUBuffer, b: GPUBuffer, c: GPUBuffer, d: GPUBuffer) => [bind("box", "P", this.axes[0], a, b), bind("box", "P", this.axes[1], b, c), bind("box", "P", this.axes[2], c, d)];
     this.groups = {
       prep: bind("prep", "P", "F", "S"), statics: bind("statics", "P", "T", "STAT"),
       boxPrep: boxes(B.S, B.T, B.S, B.T),
@@ -329,17 +344,17 @@ class Level {
     pass.end(); device.queue.submit([enc.finish()]);
   }
 
-  dispatch(pass, name, n, group = this.groups[name]) {
+  dispatch(pass: GPUComputePassEncoder, name: Kernel, n: number, group = this.groups[name as keyof Level["groups"]] as GPUBindGroup) {
     const blocks = Math.ceil(n / WG), x = Math.min(blocks, 65535);
     pass.setPipeline(this.g.pipelines[name]); pass.setBindGroup(0, group);
     pass.dispatchWorkgroups(x, Math.ceil(blocks / x));
   }
 
-  boxes(pass, key) { for (const grp of this.groups[key]) this.dispatch(pass, "box", this.N, grp); }
+  boxes(pass: GPUComputePassEncoder, key: "boxPrep" | "boxJ" | "boxAB") { for (const grp of this.groups[key]) this.dispatch(pass, "box", this.N, grp); }
 
-  setField(u) { this.g.device.queue.writeBuffer(this.buffers.U, 0, u); }
+  setField(u: Float32Array) { this.g.device.queue.writeBuffer(this.buffers.U, 0, u as Float32Array<ArrayBuffer>); }
 
-  step(t) {  // one Adam iteration
+  step(t: number) {  // one Adam iteration
     const f32 = new Float32Array(this.params);
     f32.set([this.lr, 1 / (1 - 0.9 ** t), 1 / (1 - 0.999 ** t), 0], 56);
     this.g.device.queue.writeBuffer(this.buffers.P, 0, this.params);
@@ -350,7 +365,7 @@ class Level {
     pass.end(); this.g.device.queue.submit([enc.finish()]);
   }
 
-  async read(name, n) {
+  async read(name: keyof Buffers, n: number): Promise<Float32Array> {
     const { device } = this.g;
     const staging = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     const enc = device.createCommandEncoder();
@@ -364,7 +379,7 @@ class Level {
 
   async similarity() { const cc = await this.read("CC", this.N); let s = 0; for (const v of cc) s += v; return s / this.N; }
 
-  async warped(u) {  // the moving image through field u, on this level's grid
+  async warped(u: Float32Array) {  // the moving image through field u, on this level's grid
     this.setField(u);
     const enc = this.g.device.createCommandEncoder(), pass = enc.beginComputePass();
     this.dispatch(pass, "warp", this.N); pass.end(); this.g.device.queue.submit([enc.finish()]);
@@ -381,13 +396,16 @@ class Level {
  * Returns {grid: {shape, origin, spacing, values}, stages, seconds, before, after}: before
  * and after are the finest level's moving image through no field and the solved one.
  */
-export async function solve(g, data, affine, box, settings, onProgress = () => {}) {
+export async function solve(
+  g: Gpu, data: [Volume, Volume][], affine: Affine, box: number[][], settings: Settings,
+  onProgress: (p: Progress) => void = () => {},
+): Promise<{ grid: ControlGrid; stages: Stage[]; seconds: number; before: Float32Array; after: Float32Array }> {
   const [lo, hi] = box;
   const t0 = performance.now();
   let gshape = controlShape(lo, hi, data[0][0].voxel, settings.grid);
-  let u = new Float32Array(3 * prod(gshape));
-  const stages = [];
-  let last = null;
+  let u: Float32Array = new Float32Array(3 * prod(gshape));
+  const stages: Stage[] = [];
+  let last: Level | null = null;
   for (const [s, [fl, ml]] of data.entries()) {
     const shape = controlShape(lo, hi, fl.voxel, settings.grid);
     if (shape.join() !== gshape.join()) { u = refine(u, gshape, shape); gshape = shape; }
@@ -395,7 +413,7 @@ export async function solve(g, data, affine, box, settings, onProgress = () => {
     const lvl = new Level(g, fl, ml, affine, box, gshape, settings);
     lvl.setField(u);
     const ts = performance.now();
-    let first = null, sim = null;
+    let first: number | null = null, sim: number | null = null;
     for (let t = 1; t <= settings.iterations; t++) {
       lvl.step(t);
       if (t === 1) sim = first = await lvl.similarity();
@@ -408,6 +426,7 @@ export async function solve(g, data, affine, box, settings, onProgress = () => {
     last = lvl;
   }
   const seconds = (performance.now() - t0) / 1000;
+  if (!last) throw new Error("no levels to solve on");
   const before = await last.warped(new Float32Array(3 * prod(gshape)));
   const after = await last.warped(u);
   last.destroy();

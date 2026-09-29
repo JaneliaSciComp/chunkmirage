@@ -4,6 +4,8 @@
 
 ::: chunkmirage.pipeline.Pipeline
 ::: chunkmirage.pipeline.PipelineSpec
+::: chunkmirage.sources.register.RegisterParams
+::: chunkmirage.schema.spec_schema
 ::: chunkmirage.sources.registry.open_source
 ::: chunkmirage.server.create_app
 ::: chunkmirage.server.DatasetRegistry

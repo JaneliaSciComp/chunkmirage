@@ -4,6 +4,7 @@
 chunkmirage serve SOURCE [options]
 chunkmirage ops
 chunkmirage inspect SOURCE
+chunkmirage schema [--out FILE]
 ```
 
 `SOURCE` is anything chunkmirage reads: a stored array or multiscale group (zarr, N5,
@@ -46,3 +47,12 @@ Lists registered ops with halo, cache flag and parameters.
 
 Prints shape, chunks, dtype, voxel size, units and axes per scale level as chunkmirage sees
 them, which is useful for checking metadata detection before serving.
+
+## `schema`
+
+Prints the JSON Schema of what chunkmirage exchanges: `PipelineSpec`, each registered op's
+parameters (tagged with its `op` name, and their union `OpSpec`), and `RegisterParams`, the
+query of a [`register://`](../concepts/formats.md#register-sources-deformable-registration-on-a-gpu)
+URL. `--out FILE` writes it instead. The browser engine (`web/`) generates its TypeScript
+types and form defaults from the copy in `web/src/generated/`, so the two engines share one
+definition; `tests/test_schema.py` keeps that copy current, and CI checks the generated types.

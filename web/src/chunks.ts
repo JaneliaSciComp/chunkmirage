@@ -2,60 +2,66 @@
 // the fixed image's grid through the affine and, for a solved view, the field), as
 // chunkmirage's scene:// resampler does on a server. The page hands it Neuroglancer's
 // chunk requests, relayed by the service worker, and passes the bytes back.
-import { fieldAt, leadIndex, nearestLevel, openImage, zarr } from "./ome.js";
+import { fieldAt, leadIndex, nearestLevel, openImage, zarr, type Image, type Numbers } from "./ome";
+import type { Affine, ControlGrid, FromWorker, LevelGrid, ToWorker, ViewKind } from "./types";
 
+const ctx = self as unknown as DedicatedWorkerGlobalScope;
 const BLOCK = 64;                  // moving-image blocks are read and cached this big
 const CACHE_BYTES = 256 * 2 ** 20;  // decoded blocks kept per worker
-const TYPED = { uint8: Uint8Array, uint16: Uint16Array, uint32: Uint32Array, int8: Int8Array, int16: Int16Array, int32: Int32Array, float32: Float32Array, float64: Float64Array };
+type TypedCtor = { new (n: number): Numbers & { buffer: ArrayBuffer }; BYTES_PER_ELEMENT: number };
+const TYPED: Record<string, TypedCtor> = { uint8: Uint8Array, uint16: Uint16Array, uint32: Uint32Array, int8: Int8Array, int16: Int16Array, int32: Int32Array, float32: Float32Array, float64: Float64Array };
 
-let moving = null, fixedLevels = null, chunkShape = null, Typed = null, blockBytes = 0;
-const views = new Map();           // view id -> {kind: "image" | "field", affine, grid | null}
-const blocks = new Map();          // block key -> Promise<{data, shape}>, in use order
+interface View { kind: ViewKind; affine: Affine; grid: ControlGrid | null }
+interface Block { data: Numbers; shape: number[] }
+let moving: Image, fixedLevels: LevelGrid[], chunkShape: number[], Typed: TypedCtor = Float32Array, blockBytes = 0;
+const views = new Map<string, View>();
+const blocks = new Map<string, Promise<Block>>();  // in use order
 let cached = 0;
+const post = (m: FromWorker, transfer: Transferable[] = []) => ctx.postMessage(m, transfer);
 
-self.onmessage = async ({ data: m }) => {
+ctx.onmessage = async ({ data: m }: MessageEvent<ToWorker>) => {
   try {
     if (m.type === "setup") {
       moving = await openImage(m.moving);
       fixedLevels = m.fixedLevels; chunkShape = m.chunkShape;
       Typed = TYPED[moving.dtype] ?? Float32Array;
       blockBytes = BLOCK ** 3 * Typed.BYTES_PER_ELEMENT;
-      self.postMessage({ type: "ready" });
+      post({ type: "ready" });
     } else if (m.type === "view") {
       views.set(m.id, { kind: m.kind ?? "image", affine: m.affine, grid: m.grid });
     } else if (m.type === "chunk") {
       const body = await chunk(m);
-      self.postMessage({ type: "chunk", reqId: m.reqId, body }, [body]);
+      post({ type: "chunk", reqId: m.reqId, body }, [body]);
     }
   } catch (e) {
-    self.postMessage({ type: "error", reqId: m.reqId, message: String(e?.stack ?? e) });
+    post({ type: "error", reqId: m.type === "chunk" ? m.reqId : undefined, message: String((e as Error)?.stack ?? e) });
   }
 };
 
-async function block(li, channel, b) {
+async function block(li: number, channel: number, b: number[]): Promise<Block> {
   const key = `${li}/${channel}/${b.join(",")}`;
   let hit = blocks.get(key);
   if (hit) { blocks.delete(key); blocks.set(key, hit); return hit; }
   const lvl = moving.levels[li];
   const lo = b.map((v) => v * BLOCK), hi = lo.map((v, a) => Math.min(v + BLOCK, lvl.shape[a]));
   hit = zarr.get(lvl.arr, [...leadIndex(moving, channel), ...lo.map((v, a) => zarr.slice(v, hi[a]))])
-    .then((r) => ({ data: r.data, shape: hi.map((v, a) => v - lo[a]) }))
+    .then((r) => ({ data: r.data as Numbers, shape: hi.map((v, a) => v - lo[a]) }))
     .catch((e) => { blocks.delete(key); throw e; });  // a failed read is retried next time
   blocks.set(key, hit);
   cached += blockBytes;
   while (cached > CACHE_BYTES && blocks.size > 1) {
-    blocks.delete(blocks.keys().next().value);
+    blocks.delete(blocks.keys().next().value as string);
     cached -= blockBytes;
   }
   return hit;
 }
 
 /** The moving image's voxels [lo, hi) of level li, one channel, from cached blocks. */
-async function region(li, channel, lo, hi) {
+async function region(li: number, channel: number, lo: number[], hi: number[]) {
   const shape = hi.map((v, a) => v - lo[a]);
   const out = new Typed(shape[0] * shape[1] * shape[2]);
   const b0 = lo.map((v) => Math.floor(v / BLOCK)), b1 = hi.map((v) => Math.floor((v - 1) / BLOCK));
-  const wanted = [];
+  const wanted: number[][] = [];
   for (let z = b0[0]; z <= b1[0]; z++) for (let y = b0[1]; y <= b1[1]; y++) for (let x = b0[2]; x <= b1[2]; x++) wanted.push([z, y, x]);
   const got = await Promise.all(wanted.map((b) => block(li, channel, b)));
   wanted.forEach((b, n) => {
@@ -65,14 +71,14 @@ async function region(li, channel, lo, hi) {
     for (let z = from[0]; z < to[0]; z++) for (let y = from[1]; y < to[1]; y++) {
       const src = ((z - start[0]) * bs[1] + (y - start[1])) * bs[2] - start[2];
       const dst = ((z - lo[0]) * shape[1] + (y - lo[1])) * shape[2] - lo[2];
-      out.set(data.subarray(src + from[2], src + to[2]), dst + from[2]);
+      out.set(data.subarray(src + from[2], src + to[2]) as ArrayLike<number>, dst + from[2]);
     }
   });
   return { data: out, shape };
 }
 
 /** The field itself on the fixed grid: its three components (z, y, x), physical units. */
-function fieldChunk(grid, fl, start, size) {
+function fieldChunk(grid: ControlGrid, fl: LevelGrid, start: number[], size: number[]): ArrayBuffer {
   const cs = chunkShape, n = cs[0] * cs[1] * cs[2];
   const out = new Float32Array(3 * n), d = [0, 0, 0];
   for (let i = 0; i < size[0]; i++) {
@@ -89,10 +95,10 @@ function fieldChunk(grid, fl, start, size) {
   return out.buffer;
 }
 
-async function chunk({ id, level, channel, index }) {
+async function chunk({ id, level, channel, index }: { id: string; level: number; channel: number; index: number[] }): Promise<ArrayBuffer> {
   const view = views.get(id);
   const fl = fixedLevels[level], cs = chunkShape;
-  if (view?.kind === "field") {
+  if (view?.kind === "field" && view.grid) {
     const start = index.map((i, a) => i * cs[a]);
     return fieldChunk(view.grid, fl, start, start.map((s, a) => Math.max(0, Math.min(cs[a], fl.shape[a] - s))));
   }

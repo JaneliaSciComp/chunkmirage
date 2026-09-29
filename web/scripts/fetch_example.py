@@ -1,15 +1,15 @@
 """Fetch the browser page's example: two fly brain templates, as OME-Zarr 0.5.
 
-    python examples/browser/fetch_example.py OUT
+    uv run python web/scripts/fetch_example.py OUT
 
 JRC2018F (Bogovic et al. 2020) and FCWB (Costa et al. 2016) come from the OME-NGFF
 transformation examples, with the transform published between them. That bucket allows
 no CORS and uses a draft OME-Zarr 0.6 layout, so this copies the arrays byte for byte
 and writes 0.5 metadata over them: OUT/fly/JRC2018F, OUT/fly/FCWB, and OUT/example.json,
 which register.html fills its form from when a link names no images (with the affine
-left empty, so the page finds one; the published affine only to say how close it came). The docs workflow
-runs it into the published site; locally, run it into examples/browser/data (ignored by
-git) and serve.py serves it too.
+left empty, so the page finds one; the published affine only to say how close it came).
+The docs workflow runs it into the published site; locally, run it into web/public/data
+(ignored by git), which the build copies next to the page.
 """
 
 from __future__ import annotations
@@ -63,7 +63,9 @@ def affine_between(root: dict, fixed: str, moving: str) -> list[list[float]]:
             continue
         steps = t["forward"]["transformations"]
         if [s["type"] for s in steps] != ["displacements", "affine"]:
-            raise SystemExit(f"{fixed} to {moving} is {[s['type'] for s in steps]}, not a field then an affine")
+            raise SystemExit(
+                f"{fixed} to {moving} is {[s['type'] for s in steps]}, not a field then an affine"
+            )
         return steps[1]["affine"]
     raise SystemExit(f"no transform from {fixed} to {moving} in {SOURCE}")
 
@@ -71,21 +73,42 @@ def affine_between(root: dict, fixed: str, moving: str) -> list[list[float]]:
 def multiscales_05(name: str, group: dict) -> dict:
     """0.6.dev1 multiscales (one object with coordinate systems) as 0.5 (a list, with axes)."""
     ms = group["attributes"]["ome"]["multiscales"]
-    axes = [{k: a[k] for k in ("name", "type", "unit") if k in a} for a in ms["coordinateSystems"][0]["axes"]]
+    axes = [
+        {k: a[k] for k in ("name", "type", "unit") if k in a}
+        for a in ms["coordinateSystems"][0]["axes"]
+    ]
     datasets = []
     for d in ms["datasets"]:
         (t,) = d["coordinateTransformations"]
         steps = t["transformations"] if t["type"] == "sequence" else [t]
-        datasets.append({"path": d["path"], "coordinateTransformations": [
-            {k: v for k, v in s.items() if k in ("type", "scale", "translation")} for s in steps]})
-    return {"zarr_format": 3, "node_type": "group", "attributes": {
-        "ome": {"version": "0.5", "multiscales": [{"name": name, "axes": axes, "datasets": datasets}]}}}
+        datasets.append(
+            {
+                "path": d["path"],
+                "coordinateTransformations": [
+                    {k: v for k, v in s.items() if k in ("type", "scale", "translation")}
+                    for s in steps
+                ],
+            }
+        )
+    return {
+        "zarr_format": 3,
+        "node_type": "group",
+        "attributes": {
+            "ome": {
+                "version": "0.5",
+                "multiscales": [{"name": name, "axes": axes, "datasets": datasets}],
+            }
+        },
+    }
 
 
 def chunk_keys(meta: dict):
     enc = meta["chunk_key_encoding"]
     sep = enc.get("configuration", {}).get("separator", "/" if enc["name"] == "default" else ".")
-    grid = [math.ceil(s / c) for s, c in zip(meta["shape"], meta["chunk_grid"]["configuration"]["chunk_shape"])]
+    grid = [
+        math.ceil(s / c)
+        for s, c in zip(meta["shape"], meta["chunk_grid"]["configuration"]["chunk_shape"])
+    ]
     for idx in itertools.product(*map(range, grid)):
         key = sep.join(map(str, idx))
         yield "c" + sep + key if enc["name"] == "default" else key
@@ -96,7 +119,10 @@ def copy_array(url: str, out: Path) -> int:
     for c in meta["codecs"]:  # the spec's name for it; the bytes are the same
         if c["name"] == "zstandard":
             c["name"] = "zstd"
-            c["configuration"] = {"level": c.get("configuration", {}).get("level", 0), "checksum": False}
+            c["configuration"] = {
+                "level": c.get("configuration", {}).get("level", 0),
+                "checksum": False,
+            }
     out.mkdir(parents=True, exist_ok=True)
     (out / "zarr.json").write_text(json.dumps(meta, indent=2))
 
@@ -128,9 +154,12 @@ def main(argv: list[str] | None = None) -> None:
         for d in meta["attributes"]["ome"]["multiscales"][0]["datasets"]:
             total += copy_array(f"{SOURCE}/{name}/{d['path']}", dest / d["path"])
     example = {
-        "fixed": f"fly/{FIXED}", "moving": f"fly/{MOVING}",  # relative to example.json
+        "fixed": f"fly/{FIXED}",
+        "moving": f"fly/{MOVING}",  # relative to example.json
         "published_affine": ", ".join(repr(v) for row in affine for v in row),  # to compare with
-        "about": ABOUT, "published_about": PUBLISHED_ABOUT, "source": SOURCE,
+        "about": ABOUT,
+        "published_about": PUBLISHED_ABOUT,
+        "source": SOURCE,
     }
     (args.out / "example.json").write_text(json.dumps(example, indent=2))
     print(f"wrote {args.out}: {FIXED} and {MOVING}, {total / 1e6:.1f} MB", file=sys.stderr)

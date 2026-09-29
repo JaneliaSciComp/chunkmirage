@@ -54,9 +54,11 @@ import math
 import threading
 from collections import OrderedDict
 from pathlib import Path
+from typing import Literal
 from urllib.parse import parse_qs
 
 import numpy as np
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from chunkmirage.core import ArrayInfo, Box
 from chunkmirage.registration import Grid, Level, Settings, solve
@@ -67,22 +69,136 @@ from chunkmirage.transforms import Affine, Displacements, Sequence, VectorField,
 
 log = logging.getLogger("chunkmirage")
 
-_PARAMS = {
-    "fixed",
-    "affine",
-    "fixed_channel",
-    "moving_channel",
-    "levels",
-    "iterations",
-    "smooth",
-    "grid",
-    "window",
-    "show",
-    "frames",
-    "interpolation",
-    "chunk",
-    "device",
-}
+
+class RegisterParams(BaseModel):
+    """The query of a ``register://`` URL. The one definition of it: the browser engine
+    (``web/``) generates its TypeScript types and form defaults from this model's JSON
+    Schema (``chunkmirage schema``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fixed: str = Field(
+        description="The fixed image: anything open_source reads. The output has its grid and levels."
+    )
+    affine: str | None = Field(
+        None,
+        description=(
+            "The fixed-to-moving affine in physical units, C order: a .npy or text file holding a 4x4"
+            " or 3x4 matrix, or its 12 or 16 values inline, row by row. Default: identity."
+        ),
+    )
+    fixed_channel: int = Field(
+        0, ge=0, description="The fixed image's channel to match on, for images with a c axis."
+    )
+    moving_channel: int = Field(
+        0,
+        ge=0,
+        description=(
+            "The moving image's channel to match on; the output has every channel of the moving image."
+        ),
+    )
+    levels: list[int] | None = Field(
+        None,
+        description=(
+            "Fixed-image levels to solve on, coarse to fine. Default: from the coarsest with at least"
+            " 16 voxels on every axis to the finest with at most 2^25."
+        ),
+    )
+    iterations: list[int] = Field(
+        [100],
+        description=(
+            "Adam steps per level: one value, or one per level. 0 skips the solve (the affine alone)."
+        ),
+    )
+    smooth: float = Field(1.0, description="Weight of the penalty on the field's gradient.")
+    grid: float = Field(
+        4.0, description="Control-point spacing of the field, in voxels of each level."
+    )
+    window: int = Field(7, description="Correlation window, voxels, odd.")
+    show: Literal["image", "pair", "field"] = Field(
+        "image",
+        description=(
+            "image: the registered moving image; pair: a c axis of two, the fixed image's channel"
+            " then the registered one; field: u itself, components first, in physical units."
+        ),
+    )
+    frames: int | None = Field(
+        None,
+        description=(
+            "A leading t axis of that many fields from the solve, from none (the affine alone) to the"
+            " final one, to watch it converge."
+        ),
+    )
+    interpolation: Literal["linear", "nearest"] | None = Field(
+        None, description=("Default: nearest for uint32/uint64 (labels), else linear.")
+    )
+    chunk: list[int] | None = Field(
+        None,
+        description=(
+            "Output chunk shape of the spatial axes, C order. Default: the fixed image's."
+        ),
+    )
+    device: str = Field(
+        "auto",
+        description="auto (the GPU with the most free memory, else the CPU), cpu, cuda:1, ...",
+    )
+
+    @classmethod
+    def from_query(cls, q: dict[str, str]) -> RegisterParams:
+        if unknown := set(q) - set(cls.model_fields):
+            raise ValueError(
+                f"unknown register:// parameters {sorted(unknown)}; allowed: {sorted(cls.model_fields)}"
+            )
+        return cls(**q)
+
+    @field_validator("levels", "iterations", "chunk", mode="before")
+    @classmethod
+    def _comma_separated(cls, v):
+        return [int(x) for x in v.split(",")] if isinstance(v, str) else v
+
+    @field_validator("show", mode="before")
+    @classmethod
+    def _show(cls, v):
+        if v not in ("image", "pair", "field"):
+            raise ValueError(f"show must be image, pair or field, got {v!r}")
+        return v
+
+    @field_validator("interpolation", mode="before")
+    @classmethod
+    def _interpolation(cls, v):
+        if v is not None and v not in ("linear", "nearest"):
+            raise ValueError(f"interpolation must be linear or nearest, got {v!r}")
+        return v
+
+    @field_validator("window")
+    @classmethod
+    def _window(cls, v):
+        if v < 1 or v % 2 == 0:
+            raise ValueError(f"window must be a positive odd number, got {v}")
+        return v
+
+    @field_validator("frames")
+    @classmethod
+    def _frames(cls, v):
+        if v is not None and v < 1:
+            raise ValueError(f"frames must be at least 1, got {v}")
+        return v
+
+    @field_validator("grid", "smooth")
+    @classmethod
+    def _positive(cls, v, info):
+        if (info.field_name == "grid" and v <= 0) or v < 0:
+            raise ValueError("grid must be > 0 and smooth >= 0")
+        return v
+
+    @field_validator("chunk")
+    @classmethod
+    def _chunk(cls, v):
+        if v is not None and (len(v) != 3 or min(v) < 1):
+            raise ValueError("chunk needs 3 positive sizes (z,y,x)")
+        return v
+
+
 MAX_SOLVE_VOXELS = 1 << 25  # finest default level: its whole volume sits on the GPU
 MIN_SOLVE_SIZE = 16  # coarsest default level: at least this many voxels on every axis
 KEEP = 8  # solved fields remembered per process
@@ -179,10 +295,6 @@ def _affine(value: str | None) -> np.ndarray:
     return m
 
 
-def _ints(q: dict, key: str) -> list[int] | None:
-    return [int(v) for v in q[key].split(",")] if key in q else None
-
-
 _FIELDS = ("shape", "chunk_shape", "voxel_size", "units", "axes", "translation")
 
 
@@ -208,17 +320,12 @@ def open_register(url: str, *, cache_bytes: int = 0) -> MultiscaleSource:
             "register:// needs a moving image and fixed=...: register://<moving>?fixed=<fixed>"
             " (the parameters follow the last '?')"
         )
-    if unknown := set(q) - _PARAMS:
-        raise ValueError(
-            f"unknown register:// parameters {sorted(unknown)}; allowed: {sorted(_PARAMS)}"
-        )
-    show = q.get("show", "image")
-    if show not in ("image", "pair", "field"):
-        raise ValueError(f"show must be image, pair or field, got {show!r}")
+    p = RegisterParams.from_query(q)
+    show = p.show
 
     mov = open_source(location, cache_bytes=cache_bytes)
-    fix = open_source(q["fixed"], cache_bytes=cache_bytes)
-    nm, nf = _n_lead(mov, location), _n_lead(fix, q["fixed"])
+    fix = open_source(p.fixed, cache_bytes=cache_bytes)
+    nm, nf = _n_lead(mov, location), _n_lead(fix, p.fixed)
     minfo, finfo = mov.levels[0].info, fix.levels[0].info
     if tuple(minfo.axes[nm:]) != tuple(finfo.axes[nf:]):
         raise ValueError(f"spatial axes differ: moving {minfo.axes}, fixed {finfo.axes}")
@@ -226,31 +333,24 @@ def open_register(url: str, *, cache_bytes: int = 0) -> MultiscaleSource:
         raise ValueError(
             f"spatial units differ: moving {minfo.units[nm:]}, fixed {finfo.units[nf:]}"
         )
-    mlead = _lead(mov, nm, int(q.get("moving_channel", 0)), "moving")
-    flead = _lead(fix, nf, int(q.get("fixed_channel", 0)), "fixed")
-    affine = _affine(q.get("affine"))
+    mlead = _lead(mov, nm, p.moving_channel, "moving")
+    flead = _lead(fix, nf, p.fixed_channel, "fixed")
+    affine = _affine(p.affine)
 
-    levels = _ints(q, "levels") or _default_levels(fix, nf)
+    levels = p.levels or _default_levels(fix, nf)
     if any(not 0 <= i < len(fix.levels) for i in levels):
         raise ValueError(f"levels {levels}: the fixed image has levels 0..{len(fix.levels) - 1}")
-    iters = _ints(q, "iterations") or [100]
+    iters = p.iterations
     if len(iters) not in (1, len(levels)) or min(iters) < 0:
         raise ValueError(f"iterations needs 1 or {len(levels)} values >= 0 (one per level)")
-    window = int(q.get("window", 7))
-    if window < 1 or window % 2 == 0:
-        raise ValueError(f"window must be a positive odd number, got {window}")
     settings = Settings(
         iterations=tuple(iters * len(levels) if len(iters) == 1 else iters),
-        smooth=float(q.get("smooth", 1.0)),
-        grid=float(q.get("grid", 4.0)),
-        window=window,
+        smooth=p.smooth,
+        grid=p.grid,
+        window=p.window,
     )
-    if settings.grid <= 0 or settings.smooth < 0:
-        raise ValueError("grid must be > 0 and smooth >= 0")
-    n_frames = int(q["frames"]) if "frames" in q else None
+    n_frames = p.frames
     if n_frames is not None:
-        if n_frames < 1:
-            raise ValueError(f"frames must be at least 1, got {n_frames}")
         if show == "image" and "t" in minfo.axes and (minfo.axes[0] != "t" or minfo.shape[0] != 1):
             raise ValueError(
                 f"{location}: frames need a moving image without a time axis, or with one time"
@@ -258,13 +358,9 @@ def open_register(url: str, *, cache_bytes: int = 0) -> MultiscaleSource:
             )
 
     labels = minfo.dtype.kind == "u" and minfo.dtype.itemsize >= 4
-    interpolation = q.get("interpolation", "nearest" if labels else "linear")
-    if interpolation not in ("linear", "nearest"):
-        raise ValueError(f"interpolation must be linear or nearest, got {interpolation!r}")
+    interpolation = p.interpolation or ("nearest" if labels else "linear")
     order = 0 if interpolation == "nearest" else 1
-    chunk = _ints(q, "chunk")
-    if chunk is not None and (len(chunk) != 3 or min(chunk) < 1):
-        raise ValueError("chunk needs 3 positive sizes (z,y,x)")
+    chunk = p.chunk
 
     # Solve (or recall): moving levels nearest each fixed level's voxel size.
     mvox, fvox = _spatial_vox(mov, nm), _spatial_vox(fix, nf)
@@ -282,14 +378,14 @@ def open_register(url: str, *, cache_bytes: int = 0) -> MultiscaleSource:
     hi = lo + np.asarray(finfo.shape[nf:]) * fvox[0]
 
     def compute() -> list[Grid]:
-        log.info("register: %s onto %s at levels %s", location, q["fixed"], levels)
+        log.info("register: %s onto %s at levels %s", location, p.fixed, levels)
         return solve(
             [_level(fix.levels[i], flead) for i in levels],
             [_level(mov.levels[j], mlead) for j in mlevels],
             affine,
             settings,
             box=(lo, hi),
-            device=q.get("device", "auto"),
+            device=p.device,
             snapshots=n_frames or 1,
         )
 

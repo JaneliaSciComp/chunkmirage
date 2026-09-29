@@ -100,8 +100,10 @@ The whole thing also runs in the browser, with nothing to install:
 reads both images straight from their URLs, solves on your GPU (WebGPU), and shows before
 and after in Neuroglancer, the registered volume computed in the browser as the viewer asks
 for it. Given no affine, it finds one first. It opens with two fly brain templates as they
-are stored and registers them from there. Locally:
-`uv run python examples/browser/serve.py`. `warp://`
+are stored and registers them from there, and shows the matching `chunkmirage serve`
+command. It lives in [`web/`](web/) (TypeScript), with types generated from chunkmirage's
+own models (`chunkmirage schema`); locally: `cd web && npm ci && npm run build && npm run
+preview`. `warp://`
 sources make such swirls, optionally along a time axis that Neuroglancer plays:
 `uv run python examples/swirl_demo.py --animate`. Details:
 [formats](docs/concepts/formats.md#scene-sources-ome-zarr-06-transformations).

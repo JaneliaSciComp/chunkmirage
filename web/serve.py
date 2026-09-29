@@ -1,10 +1,11 @@
-"""Serve the browser pages (register.html) over https, with Neuroglancer on the same origin.
+"""Serve the built browser page (web/dist) over https, with Neuroglancer on the same origin.
 
-    uv run python examples/browser/serve.py [--port N] [--host 0.0.0.0] [PAGE?QUERY]
+    cd web && npm ci && npm run build && cd ..
+    uv run python web/serve.py [--port N] [--host 0.0.0.0] [PAGE?QUERY]
 
 Browsers only allow WebGPU and service workers on secure pages (https, or localhost), so a
-plain ``http://<machine IP>`` link would not work from another computer. This serves this
-directory with chunkmirage's self-signed certificate for the machine's IP and prints a
+plain ``http://<machine IP>`` link would not work from another computer. This serves the
+build with chunkmirage's self-signed certificate for the machine's IP and prints a
 shareable link. Clicking through the certificate warning is enough for WebGPU but not for
 the service worker the viewer needs: each computer trusts the certificate once in its
 system (it is served at ``/certificate.crt``). ``--host 127.0.0.1`` serves plain http
@@ -18,8 +19,10 @@ chrome://flags/#unsafely-treat-insecure-origin-as-secure): no certificate either
 worker answers the viewer's requests for the registered volume, and a service worker
 only sees requests from pages on its own origin. Nothing here computes anything: the
 page reads the images from their own URLs and does all the work in the viewer's browser,
-so any static https host (GitHub Pages, say, with the client copied under ``ng/``) serves
-it just as well.
+so any static https host serves it just as well: the docs site is one, with its own
+Neuroglancer build under ``ng/``. (On one machine, ``npm run preview`` in web/ does the same
+for localhost.) For the fly example, fetch it into web/public/data before building
+(``uv run python web/scripts/fetch_example.py web/public/data``).
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+DIST = HERE / "dist"  # npm run build
 NEUROGLANCER = "https://neuroglancer-demo.appspot.com"
 QUIET = ("/favicon", "/data/example.json")  # asked for and not needed: no example fetched here
 
@@ -107,13 +111,15 @@ def main() -> None:
         "secure (chrome://flags/#unsafely-treat-insecure-origin-as-secure)",
     )
     args = ap.parse_args()
+    if not (DIST / "register.html").exists():
+        raise SystemExit(f"no build in {DIST}: run `npm ci && npm run build` in {HERE} first")
 
     from chunkmirage.netutil import free_port, is_loopback, serving_address
 
     port = args.port or free_port(args.host, 8443)
     https = not (args.no_https or is_loopback(args.host))  # localhost is secure without it
     address, certs = serving_address(args.host, port, https=https)
-    handler = functools.partial(Handler, directory=str(HERE))
+    handler = functools.partial(Handler, directory=str(DIST))
     server = http.server.ThreadingHTTPServer((args.host, port), handler)
     if https:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

@@ -5,6 +5,20 @@
 // coarse to fine. A few hundred thousand voxels are enough, so this runs on the CPU.
 // Images are {norm, shape, voxel, origin} (C order z, y, x, physical units), as the page
 // hands the field solve; the affine maps fixed to moving coordinates, rows [A | t].
+import type { Affine, Volume } from "./types";
+
+interface Grid3 { data: Float32Array; shape: number[]; voxel: number[]; origin: number[] }
+
+export interface Progress { stage: number; stages: number; iteration: number; iterations: number; similarity: number }
+
+export interface FoundAffine {
+  affine: Affine;
+  seconds: number;
+  identity: number;  // correlation with no affine,
+  moments: number;   // after matching the moments,
+  final: number;     // and after the fit
+  distance?: number | null;  // from a reference affine, when the page has one
+}
 
 const MAX_FIT_VOXELS = 300_000;  // finest stage of the fit
 const MIN_FIT_SIZE = 12;         // coarsest stage: at least this many voxels on every axis
@@ -12,25 +26,26 @@ const ITERATIONS = [150, 100];   // per stage, coarse to fine
 const LR_MATRIX = 2e-3;          // Adam steps: matrix entries, and the centre's image in voxels
 const LR_CENTRE = 0.4;
 
-const prod = (a) => a.reduce((x, y) => x * y, 1);
-const pause = () => new Promise((r) => setTimeout(r, 0));  // let the page draw progress
+const prod = (a: number[]) => a.reduce((x, y) => x * y, 1);
+const last = <T>(a: T[]): T => a[a.length - 1];
+const pause = () => new Promise<void>((r) => setTimeout(r, 0));  // let the page draw progress
 
-/** {affine, seconds, identity, moments, final}: the affine as rows [A | t] and the
- * correlation (on the fit's finest copy) with no affine, after the moments, and after the fit. */
-export async function findAffine(fixed, moving, onProgress = () => {}) {
+/** The affine as rows [A | t], and the correlation (on the fit's finest copy) with no
+ * affine, after the moments, and after the fit. */
+export async function findAffine(fixed: Volume, moving: Volume, onProgress: (p: Progress) => void = () => {}): Promise<FoundAffine> {
   const t0 = performance.now();
-  const fs = [{ data: fixed.norm, shape: fixed.shape, voxel: fixed.voxel, origin: fixed.origin }];
-  const ms = [{ data: moving.norm, shape: moving.shape, voxel: moving.voxel, origin: moving.origin }];
+  const fs: Grid3[] = [{ data: fixed.norm, shape: fixed.shape, voxel: fixed.voxel, origin: fixed.origin }];
+  const ms: Grid3[] = [{ data: moving.norm, shape: moving.shape, voxel: moving.voxel, origin: moving.origin }];
   // stages: the finest copy within MAX_FIT_VOXELS, after one coarser if that is big enough
-  while (prod(fs.at(-1).shape) > MAX_FIT_VOXELS) { fs.push(halve(fs.at(-1))); ms.push(halve(ms.at(-1))); }
-  const stages = [fs.length - 1], coarser = halve(fs.at(-1));
-  if (Math.min(...coarser.shape) >= MIN_FIT_SIZE) { fs.push(coarser); ms.push(halve(ms.at(-1))); stages.unshift(fs.length - 1); }
+  while (prod(last(fs).shape) > MAX_FIT_VOXELS) { fs.push(halve(last(fs))); ms.push(halve(last(ms))); }
+  const stages = [fs.length - 1], coarser = halve(last(fs));
+  if (Math.min(...coarser.shape) >= MIN_FIT_SIZE) { fs.push(coarser); ms.push(halve(last(ms))); stages.unshift(fs.length - 1); }
 
-  const F0 = fs[stages[0]], M0 = ms[stages[0]], Ff = fs[stages.at(-1)], Mf = ms[stages.at(-1)];
+  const F0 = fs[stages[0]], M0 = ms[stages[0]], Ff = fs[last(stages)], Mf = ms[last(stages)];
   const identity = [[1, 0, 0], [0, 1, 0], [0, 0, 1]], zero = [0, 0, 0];
   const [cf, Cf] = moments(F0), [cm, Cm] = moments(M0);
   const [ef, Vf] = eigh(Cf), [em, Vm] = eigh(Cm);
-  let best = null;
+  let best: { v: number; A: number[][]; u: number[] } | null = null;
   for (const s of [[1, 1, 1], [1, -1, -1], [-1, 1, -1], [-1, -1, 1], [-1, -1, -1], [-1, 1, 1], [1, -1, 1], [1, 1, -1]]) {
     // A = Vm sqrt(em) S / sqrt(ef) Vf^T: takes the fixed image's second moments to the moving one's
     const D = [0, 1, 2].map((k) => (Math.sqrt(em[k] / ef[k]) * s[k]));
@@ -39,6 +54,7 @@ export async function findAffine(fixed, moving, onProgress = () => {}) {
     const v = ncc(F0, M0, A, cm, cf).value;  // the fixed centre goes to the moving centre
     if (!best || v > best.v) best = { v, A, u: cm };
   }
+  if (!best) throw new Error("no orientation of the principal axes fits");  // four always qualify
   const c = cf, scores = { identity: ncc(Ff, Mf, identity, zero, zero).value, moments: ncc(Ff, Mf, best.A, best.u, c).value };
   let A = best.A, u = best.u, final = best.v;
   for (const [k, s] of stages.entries()) {
@@ -48,7 +64,7 @@ export async function findAffine(fixed, moving, onProgress = () => {}) {
     for (let it = 0; it < iters; it++) {
       const r = ncc(F, M, A, u, c, true);
       final = r.value;
-      const step = adam.step([...r.gA.flat(), ...r.gu]);  // ascent
+      const step = adam.step([...r.gA!.flat(), ...r.gu!]);  // ascent
       A = A.map((row, i) => row.map((a, j) => a + LR_MATRIX * step[3 * i + j]));
       u = u.map((x, i) => x + lrU * step[9 + i]);
       if (it % 5 === 4 || it === iters - 1) {
@@ -67,8 +83,8 @@ export async function findAffine(fixed, moving, onProgress = () => {}) {
 
 /** Mean distance, over the fixed image's tissue (a coarse copy of it), between where two
  * affines put its voxels: how far apart they are, in physical units. */
-export function affineDistance(fixed, a, b) {
-  let F = { data: fixed.norm, shape: fixed.shape, voxel: fixed.voxel, origin: fixed.origin };
+export function affineDistance(fixed: Volume, a: Affine, b: Affine): number {
+  let F: Grid3 = { data: fixed.norm, shape: fixed.shape, voxel: fixed.voxel, origin: fixed.origin };
   while (prod(F.shape) > MAX_FIT_VOXELS) F = halve(F);
   const [nz, ny, nx] = F.shape;
   let sum = 0, n = 0;
@@ -86,7 +102,7 @@ export function affineDistance(fixed, a, b) {
 }
 
 // ------------------------------------------------ pieces
-function halve(img) {  // 2x2x2 means; the grid's origin moves to the first block's centre
+function halve(img: Grid3): Grid3 {  // 2x2x2 means; the grid's origin moves to the first block's centre
   const [nz, ny, nx] = img.shape, s = [nz, ny, nx].map((n) => Math.max(1, n >> 1));
   const out = new Float32Array(prod(s)), d = img.data;
   for (let z = 0, o = 0; z < s[0]; z++) for (let y = 0; y < s[1]; y++) for (let x = 0; x < s[2]; x++, o++) {
@@ -103,9 +119,9 @@ function halve(img) {  // 2x2x2 means; the grid's origin moves to the first bloc
   };
 }
 
-function moments(img) {  // intensity-weighted centre and covariance of the tissue
+function moments(img: Grid3): [number[], number[][]] {  // intensity-weighted centre and covariance of the tissue
   const { data, shape: [nz, ny, nx], voxel, origin } = img;
-  const nonzero = [];
+  const nonzero: number[] = [];
   for (let i = 0; i < data.length; i += Math.max(1, Math.floor(data.length / 200_000))) if (data[i] > 0) nonzero.push(data[i]);
   nonzero.sort((a, b) => a - b);
   const floor = nonzero.length ? nonzero[Math.floor(0.2 * (nonzero.length - 1))] : 0;  // not background
@@ -122,7 +138,7 @@ function moments(img) {  // intensity-weighted centre and covariance of the tiss
   return [c, S.map((row, a) => row.map((s, b) => s / w - c[a] * c[b]))];
 }
 
-function eigh(S) {  // eigenvalues and eigenvectors (columns) of a symmetric 3x3, by Jacobi
+function eigh(S: number[][]): [number[], number[][]] {  // eigenvalues and eigenvectors (columns) of a symmetric 3x3, by Jacobi
   const a = S.map((r) => [...r]), V = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
   for (let sweep = 0; sweep < 50; sweep++) {
     const off = a[0][1] ** 2 + a[0][2] ** 2 + a[1][2] ** 2;
@@ -150,14 +166,14 @@ function eigh(S) {  // eigenvalues and eigenvectors (columns) of a symmetric 3x3
   return [order.map((i) => Math.max(a[i][i], 1e-12)), V.map((row) => order.map((i) => row[i]))];
 }
 
-const det = (A) => A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1])
+const det = (A: number[][]) => A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1])
   - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0]) + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]);
 
 /** Normalized cross-correlation of the fixed image and the moving one sampled at
  * q = A (p - c) + u (trilinear, 0 beyond it), and with `grad` its gradient in A and u. */
-function ncc(F, M, A, u, c, grad = false) {
+function ncc(F: Grid3, M: Grid3, A: number[][], u: number[], c: number[], grad = false): { value: number; gA?: number[][]; gu?: number[] } {
   const [nz, ny, nx] = F.shape, [mz, my, mx] = M.shape, n = F.data.length;
-  const mv = new Float32Array(n), g = grad ? new Float32Array(3 * n) : null;
+  const mv = new Float32Array(n), g = new Float32Array(grad ? 3 * n : 0);
   let sf = 0, sm = 0, sff = 0, smm = 0, sfm = 0;
   for (let z = 0, i = 0; z < nz; z++) {
     const pz = F.origin[0] + z * F.voxel[0] - c[0];
@@ -222,8 +238,9 @@ function ncc(F, M, A, u, c, grad = false) {
 }
 
 class Adam {  // step() returns the update direction for a gradient to climb
-  constructor(n) { this.m = new Float64Array(n); this.v = new Float64Array(n); this.t = 0; }
-  step(g) {
+  m: Float64Array; v: Float64Array; t = 0;
+  constructor(n: number) { this.m = new Float64Array(n); this.v = new Float64Array(n); }
+  step(g: number[]): number[] {
     this.t++;
     const b1 = 0.9, b2 = 0.999, c1 = 1 - b1 ** this.t, c2 = 1 - b2 ** this.t;
     return g.map((x, i) => {
