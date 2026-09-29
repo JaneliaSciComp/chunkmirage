@@ -133,7 +133,8 @@ const MAX_VOXELS = 1 << 22;      // finest automatic level: the whole level sits
 const MIN_SIZE = 16;             // coarsest automatic level: this many voxels on every axis
 const TO_METRES = { micrometer: 1e-6, nanometer: 1e-9, millimeter: 1e-3, meter: 1, angstrom: 1e-10 };
 const TO_SECONDS = { millisecond: 1e-3, second: 1, microsecond: 1e-6 };
-const PAGE = crypto.randomUUID().slice(0, 8);  // this page's share of /virtual/
+// this page's share of /virtual/ (getRandomValues: randomUUID exists on secure pages only)
+const PAGE = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
 
 const $ = (id) => document.getElementById(id);
 const form = $("form");
@@ -149,11 +150,17 @@ if (form.elements.affine.value) {  // one row of the matrix per line
 form.addEventListener("submit", (e) => { e.preventDefault(); run(); });
 $("copy").addEventListener("click", async (e) => {
   e.preventDefault();
+  if (!navigator.clipboard) return window.prompt("Copy this link:", location.href);  // insecure pages
   await navigator.clipboard.writeText(location.href);
   $("copy").textContent = "Copied";
   setTimeout(() => ($("copy").textContent = "Copy link to this run"), 1500);
 });
-if (query.get("run") === "1") run();
+const INSECURE = window.isSecureContext ? null :
+  `${location.origin} is not a secure page to this browser, so it allows neither WebGPU nor the viewer's service worker. `
+  + "Open it over https, or as localhost (a forwarded port), or in Chrome add this address to "
+  + "chrome://flags/#unsafely-treat-insecure-origin-as-secure and relaunch.";
+if (INSECURE) { $("status").hidden = false; $("error").hidden = false; $("error").textContent = INSECURE; }
+else if (query.get("run") === "1") run();
 
 // ------------------------------------------------ chunk workers, and the service worker
 class Pool {
@@ -362,10 +369,7 @@ async function run() {
   history.replaceState(null, "", "?" + new URLSearchParams(f));
   const p = { fixedChannel: Number(f.fixed_channel), movingChannel: Number(f.moving_channel) };
   try {
-    if (!window.isSecureContext) throw new Error(
-      `${location.origin} is not a secure page to this browser, so it allows neither WebGPU nor service workers. `
-      + "Open it over https, or as localhost (a forwarded port), or in Chrome add this address to "
-      + "chrome://flags/#unsafely-treat-insecure-origin-as-secure and relaunch.");
+    if (INSECURE) throw new Error(INSECURE);
     $("gpu").textContent = "Starting the GPU…";
     const g = await gpu();
     $("gpu").textContent = `GPU: ${g.name || "unnamed adapter"}`;
