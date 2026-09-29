@@ -35,9 +35,11 @@ jobs:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-audit --no-fund
           npm run build -- --output="$GITHUB_WORKSPACE/neuroglancer"
           find "$GITHUB_WORKSPACE/neuroglancer" -name '*.map' -delete
-      # The browser page at <site>/browser/register.html, its viewer at browser/ng/.
+      # The browser page at <site>/browser/register.html, its viewer at browser/ng/ and its
+      # example (two fly brain templates, about 10 MB) at browser/data/.
       - run: |
           mkdir site/browser
           cp examples/browser/*.html examples/browser/*.js site/browser/
           cp -r neuroglancer site/browser/ng
+          uv run python examples/browser/fetch_example.py site/browser/data
       - run: uv run ghp-import --no-jekyll --push --force -m "Deployed ${GITHUB_SHA} with the browser page" site

@@ -57,6 +57,8 @@
   .links a { color: var(--accent); text-decoration: none; }
   .legend { display: grid; gap: 4px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
   .legend span { display: flex; align-items: center; gap: 7px; }
+  .example { margin: 0; font-size: 12px; color: var(--faint); }
+  .example a { color: var(--muted); }
   main { position: relative; min-width: 0; background: #000; }
   main iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
   .empty { position: absolute; inset: 0; display: grid; place-content: center; gap: 6px; padding: 24px; text-align: center; color: var(--faint); }
@@ -105,6 +107,7 @@
     </details>
     <button id="go" type="submit">Register</button>
   </form>
+  <p class="example" id="example" hidden></p>
   <section class="status" id="status" hidden>
     <div class="gpu" id="gpu"></div>
     <div id="stages" class="status"></div>
@@ -142,6 +145,7 @@ let session = null;   // images, chunk workers and published views
 let solves = 0;
 
 const query = new URLSearchParams(location.search);
+if (!query.has("fixed") && !query.has("moving")) await loadExample();
 for (const [k, v] of query) if (form.elements[k]) form.elements[k].value = v;
 if (form.elements.affine.value) {  // one row of the matrix per line
   const v = form.elements.affine.value.split(/[\s,;]+/).filter(Boolean);
@@ -161,6 +165,24 @@ const INSECURE = window.isSecureContext ? null :
   + "chrome://flags/#unsafely-treat-insecure-origin-as-secure and relaunch.";
 if (INSECURE) { $("status").hidden = false; $("error").hidden = false; $("error").textContent = INSECURE; }
 else if (query.get("run") === "1") run();
+
+/** The images in data/example.json, if this copy of the page has one (fetch_example.py). */
+async function loadExample() {
+  const url = new URL("data/example.json", location.href);
+  let ex;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return;
+    ex = await r.json();
+  } catch { return; }
+  for (const k of ["fixed", "moving"]) form.elements[k].value = new URL(ex[k], url).href;
+  for (const [k, v] of Object.entries(ex)) if (form.elements[k] && !["fixed", "moving"].includes(k)) form.elements[k].value = v;
+  const note = $("example"), link = document.createElement("a");
+  link.href = ex.source; link.textContent = "source";
+  note.append(`${ex.about} `, link, ". Or enter your own images.");
+  note.hidden = false;
+  $("empty").querySelector("b").textContent = "An example is filled in: press Register.";
+}
 
 // ------------------------------------------------ chunk workers, and the service worker
 class Pool {

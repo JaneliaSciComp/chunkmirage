@@ -36,6 +36,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 NEUROGLANCER = "https://neuroglancer-demo.appspot.com"
+QUIET = ("/favicon", "/data/example.json")  # asked for and not needed: no example fetched here
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -84,7 +85,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
     def log_request(self, code="-", size="-"):  # failures only: the page reports the rest
-        if str(code).isdigit() and int(code) >= 400 and not self.path.startswith("/favicon"):
+        if str(code).isdigit() and int(code) >= 400 and not self.path.startswith(QUIET):
             print(
                 f"{code} {self.command} {self.path[:200]}  (from {self.client_address[0]})",
                 flush=True,

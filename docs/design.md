@@ -212,7 +212,12 @@ Fully client-side is feasible and would make a compelling hosted demo:
   pinned tag (cached, so about 15 s the first time) and publishes it at `browser/ng/`
   next to the page, at
   [browser/register.html](https://yuriyzubov.github.io/chunkmirage/browser/register.html).
-  Nothing of Neuroglancer is kept in this repo.
+  Nothing of Neuroglancer is kept in this repo. With no images in its link the page opens
+  with an example, two fly brain templates (JRC2018F and FCWB) and the affine published
+  between them: `examples/browser/fetch_example.py` copies them at deploy time from the
+  OME-NGFF transformation examples, whose bucket allows no CORS and uses a draft 0.6
+  layout, rewriting only the metadata as 0.5, and the site serves them next to the page.
+  So the example needs no CORS, no VPN and no local network access.
 
 ## Deployment shapes
 

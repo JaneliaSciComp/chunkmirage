@@ -16,6 +16,7 @@ build/
 .uv-cache/
 .claude/settings.local.json
 site/
+examples/browser/data/
 
 # vendored test fixtures are OME-Zarr hierarchies
 !tests/data/**/*.zarr/

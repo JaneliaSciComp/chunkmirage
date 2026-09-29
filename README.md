@@ -2,9 +2,9 @@
 
 **Spoof chunked array formats over HTTP with on-the-fly processing.**
 
-chunkmirage serves *virtual* datasets that look, to any HTTP-capable viewer
-(Neuroglancer, BigDataViewer/Fiji, vizarr, napari, webKnossos, ...), like ordinary
-Zarr v2, Zarr v3, N5, or Neuroglancer Precomputed volumes. Nothing exists on disk.
+chunkmirage serves *virtual* datasets that look, to any HTTP-capable viewer or library
+(Neuroglancer, BigDataViewer/Fiji, vizarr, napari, webKnossos, zarr-python, dask,
+tensorstore, ...), like ordinary Zarr v2, Zarr v3, N5, or Neuroglancer Precomputed volumes. Nothing exists on disk.
 Every chunk is computed when requested: read from a real source (zarr, n5, precomputed,
 HDF5, local or S3/GCS/HTTP) or generated (an image registered on the fly, a procedural
 volume), pushed through a pipeline of ops (threshold, filter, model inference, ...),
@@ -93,12 +93,14 @@ uv sync --extra all --extra gpu        # gpu: PyTorch, about 3 GB
 uv run python examples/register_demo.py FIXED MOVING --affine fixed_to_moving.npy
 ```
 
-With no arguments it registers a synthetic volume onto a swirled copy of itself. The whole
-thing also runs in the browser, at
+With no arguments it registers a synthetic volume onto a swirled copy of itself.
+
+The whole thing also runs in the browser, with nothing to install:
 [browser/register.html](https://yuriyzubov.github.io/chunkmirage/browser/register.html)
-(or locally: `uv run python examples/browser/serve.py` and open the printed link). The page reads both images straight from their URLs, solves on
-the viewer's GPU (WebGPU), and shows before and after in Neuroglancer, the registered volume
-computed in the browser as the viewer asks for it. `warp://`
+reads both images straight from their URLs, solves on your GPU (WebGPU), and shows before
+and after in Neuroglancer, the registered volume computed in the browser as the viewer asks
+for it. It opens with two fly brain templates filled in. Locally:
+`uv run python examples/browser/serve.py`. `warp://`
 sources make such swirls, optionally along a time axis that Neuroglancer plays:
 `uv run python examples/swirl_demo.py --animate`. Details:
 [formats](docs/concepts/formats.md#scene-sources-ome-zarr-06-transformations).
@@ -153,7 +155,8 @@ Early, but working:
 * **Live editing:** per-stage LRU cache, REST edits, a control page, and a
   python-neuroglancer viewer that keeps the camera while layers refetch.
 
-Not yet: GPU ops (only registration uses the GPU), MCP server, browser build. See the [roadmap](docs/roadmap.md).
+Not yet: GPU ops (only registration uses the GPU), MCP server, and in the browser anything
+but registration. See the [roadmap](docs/roadmap.md).
 
 ## License
 
