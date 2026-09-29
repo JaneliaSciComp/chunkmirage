@@ -89,7 +89,7 @@ in seconds from coarse levels, then every level served through it. The demo comp
 before and after in the viewer's own GPU shader, and solves again as you change settings:
 
 ```bash
-uv sync --extra all --extra gpu        # gpu: PyTorch, about 3 GB
+uv sync --extra all --extra gpu        # gpu: PyTorch with CUDA, about 3 GB; or --extra cpu
 uv run python examples/register_demo.py FIXED MOVING --affine fixed_to_moving.npy
 ```
 

@@ -3,7 +3,7 @@
 ## Development
 
 ```bash
-uv sync --all-extras --group dev --group docs
+uv sync --extra all --extra gpu --group dev --group docs   # or --extra cpu without an NVIDIA GPU
 uv run pytest -q
 uv run ruff check src tests examples
 uv run mkdocs serve          # live docs at http://127.0.0.1:8000

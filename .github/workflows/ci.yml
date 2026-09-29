@@ -9,7 +9,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --all-extras --group dev --group docs
+      - run: uv sync --extra all --extra cpu --group dev --group docs  # cpu: no GPU here, so PyTorch's small build
       - run: uv run ruff check src tests examples web
       - run: uv run pytest -q
       - run: uv run mkdocs build --strict
