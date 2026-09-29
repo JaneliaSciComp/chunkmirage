@@ -26,8 +26,10 @@ from pathlib import Path
 SOURCE = "https://ngff-rfc5-coordinate-transformation-examples.s3.amazonaws.com/user_stories/image_registration_3d.zarr"
 FIXED, MOVING = "JRC2018F", "FCWB"
 ABOUT = (
-    "Example: the fly brain templates JRC2018F (Bogovic et al. 2020) and FCWB (Costa et al. 2016), "
-    "from the OME-NGFF transformation examples, starting from the affine published with them."
+    "Example: the fly brain templates JRC2018F (Bogovic et al. 2020) as fixed and FCWB "
+    "(Costa et al. 2016) as moving, from the OME-NGFF transformation examples. The affine is "
+    "the one published with them: FCWB is about half as deep, so the field alone could not "
+    "bridge them."
 )
 
 

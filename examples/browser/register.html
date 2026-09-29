@@ -58,13 +58,14 @@
   .legend { display: grid; gap: 4px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
   .legend span { display: flex; align-items: center; gap: 7px; }
   .example { margin: 0; font-size: 12px; color: var(--faint); }
+  .hint { margin: 0; font-size: 11px; color: var(--faint); }
   .example a { color: var(--muted); }
   main { position: relative; min-width: 0; background: #000; }
   main iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
   .empty { position: absolute; inset: 0; display: grid; place-content: center; gap: 6px; padding: 24px; text-align: center; color: var(--faint); }
   .empty b { color: var(--muted); font-weight: 600; }
   .captions { position: absolute; left: 0; right: 0; bottom: 14px; display: grid; grid-template-columns: 1fr 1fr 1fr; pointer-events: none; }
-  .captions span { justify-self: center; padding: 3px 9px; border-radius: 4px; background: rgba(0, 0, 0, .65); color: #d7dbe0; font-size: 12px; }
+  .captions span { justify-self: center; max-width: 92%; text-align: center; padding: 3px 9px; border-radius: 4px; background: rgba(0, 0, 0, .65); color: #d7dbe0; font-size: 12px; }
   [hidden] { display: none !important; }
   @media (max-width: 820px) {
     body { grid-template-columns: 1fr; grid-template-rows: auto 75vh; }
@@ -76,12 +77,15 @@
 <aside>
   <div>
     <h1>Register in the browser</h1>
-    <p class="lede">A deformable registration fitted on this computer's GPU, read straight from the images' URLs.
-      Nothing is uploaded; the registered volume is computed here, chunk by chunk, as the viewer asks.</p>
+    <p class="lede">Aligns a moving image onto a fixed one in two steps: an affine you give places it roughly
+      (scale, rotation, shift), then this computer's GPU fits a smooth field of local shifts on top.
+      The images are read straight from their URLs and nothing is uploaded; the registered volume is
+      computed here, chunk by chunk, as the viewer asks.</p>
   </div>
   <form id="form">
     <div class="group">
       <div class="title"><span class="swatch" style="background: var(--fixed)"></span>Fixed image</div>
+      <p class="hint">The reference. It stays where it is.</p>
       <div class="pair">
         <label class="field">OME-Zarr URL<input name="fixed" required autocomplete="off" spellcheck="false"></label>
         <label class="field">Channel<input name="fixed_channel" type="number" min="0" value="0"></label>
@@ -89,12 +93,16 @@
     </div>
     <div class="group">
       <div class="title"><span class="swatch" style="background: var(--moving)"></span>Moving image</div>
+      <p class="hint">Warped onto the fixed image's grid.</p>
       <div class="pair">
         <label class="field">OME-Zarr URL<input name="moving" required autocomplete="off" spellcheck="false"></label>
         <label class="field">Channel<input name="moving_channel" type="number" min="0" value="0"></label>
       </div>
     </div>
     <label class="field group"><span class="title">Affine, fixed to moving</span>
+      <span class="hint">The starting placement: a 3×4 matrix (rows z, y, x) taking fixed coordinates to
+        moving ones, in the images' units. The field only corrects local offsets, so this must be
+        roughly right; the left panel shows it alone. Empty: identity, for images that already overlap.</span>
       <textarea name="affine" rows="3" wrap="off" spellcheck="false" placeholder="12 or 16 numbers, row by row, in physical units. Empty: identity."></textarea></label>
     <details>
       <summary>Solver settings</summary>
@@ -117,7 +125,7 @@
   </section>
   <div class="legend">
     <span><span class="swatch" style="background: var(--fixed)"></span>fixed image</span>
-    <span><span class="swatch" style="background: var(--moving)"></span>moving image, registered</span>
+    <span><span class="swatch" style="background: var(--moving)"></span>moving image</span>
     <span>white where they agree</span>
   </div>
 </aside>
@@ -125,7 +133,7 @@
   <div class="empty" id="empty"><b>Enter a fixed and a moving image, then Register.</b>
     <span>Needs WebGPU: Chrome or Edge, or Safari 26. The images must allow CORS.</span></div>
   <iframe id="ng" title="Neuroglancer" hidden></iframe>
-  <div class="captions" id="captions" hidden><span>Before: the affine alone</span><span id="afterCaption">After: solving…</span><span id="fieldCaption">Field: after the solve</span></div>
+  <div class="captions" id="captions" hidden><span>Before: placed by the affine alone</span><span id="afterCaption">After: press Register</span><span id="fieldCaption">Field: press Register</span></div>
 </main>
 <script type="module">
 import { nearestLevel, openImage, percentiles, readLevel } from "./ome.js";
@@ -142,7 +150,8 @@ const PAGE = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toSt
 const $ = (id) => document.getElementById(id);
 const form = $("form");
 let session = null;   // images, chunk workers and published views
-let solves = 0;
+let solves = 0, previews = 0;
+let previewing = Promise.resolve(), previewTimer = null;  // the before view, shown before any solve
 
 const query = new URLSearchParams(location.search);
 if (!query.has("fixed") && !query.has("moving")) await loadExample();
@@ -165,6 +174,8 @@ const INSECURE = window.isSecureContext ? null :
   + "chrome://flags/#unsafely-treat-insecure-origin-as-secure and relaunch.";
 if (INSECURE) { $("status").hidden = false; $("error").hidden = false; $("error").textContent = INSECURE; }
 else if (query.get("run") === "1") run();
+else schedulePreview();
+for (const k of ["fixed", "moving", "fixed_channel", "moving_channel", "affine"]) form.elements[k].addEventListener("change", schedulePreview);
 
 /** The images in data/example.json, if this copy of the page has one (fetch_example.py). */
 async function loadExample() {
@@ -181,7 +192,40 @@ async function loadExample() {
   link.href = ex.source; link.textContent = "source";
   note.append(`${ex.about} `, link, ". Or enter your own images.");
   note.hidden = false;
-  $("empty").querySelector("b").textContent = "An example is filled in: press Register.";
+  $("empty").querySelector("b").textContent = "Loading the example…";
+}
+
+function schedulePreview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => { previewing = previewing.then(preview); }, 300);
+}
+
+/** The images before a solve: the moving image placed by the affine alone, shown once both
+ * URLs are in and again when they, the channels or the affine change. */
+async function preview() {
+  const f = Object.fromEntries(new FormData(form));
+  if (INSECURE || !f.fixed || !f.moving || $("go").disabled) return;
+  const p = { fixedChannel: Number(f.fixed_channel), movingChannel: Number(f.moving_channel) };
+  try {
+    const affine = parseAffine(f.affine);
+    const [fixed, moving] = await Promise.all([openImage(f.fixed), openImage(f.moving)]);
+    await startServing(fixed, moving);
+    const key = `${p.fixedChannel},${p.movingChannel}`;
+    if (session.rangesKey !== key) {  // contrast from the level the solve starts on
+      const i = defaultLevels(fixed)[0], j = nearestLevel(moving, fixed.levels[i].voxel);
+      const [fl, ml] = await Promise.all([readLevel(fixed, i, p.fixedChannel), readLevel(moving, j, p.movingChannel)]);
+      session.ranges = { fixed: contrast(fl.data), moving: contrast(ml.data) };
+      session.rangesKey = key;
+    }
+    const before = publish(`before-${++previews}`, affine, null);  // a new URL: the viewer caches by URL
+    showViewer(viewerState(p, { before }, session.ranges), session.shown);
+    $("afterCaption").textContent = "After: press Register";
+    $("fieldCaption").textContent = "Field: press Register";
+    $("error").hidden = true;
+  } catch (e) {
+    console.error(e);
+    $("status").hidden = false; $("error").hidden = false; $("error").textContent = e.message ?? String(e);
+  }
 }
 
 // ------------------------------------------------ chunk workers, and the service worker
@@ -365,6 +409,7 @@ function viewerState(p, sources, ranges) {
 
 function showViewer(state, keepCamera) {
   const ng = $("ng"), viewer = ng.contentWindow?.viewer;
+  session.shown = true;  // later views of these images keep the camera
   $("empty").hidden = true; ng.hidden = false; $("captions").hidden = false;
   if (keepCamera && viewer) {  // same origin: keep where the user is looking
     const cur = viewer.state.toJSON();
@@ -421,7 +466,9 @@ async function run() {
   const f = Object.fromEntries(new FormData(form));
   history.replaceState(null, "", "?" + new URLSearchParams(f));
   const p = { fixedChannel: Number(f.fixed_channel), movingChannel: Number(f.moving_channel) };
+  clearTimeout(previewTimer);
   try {
+    await previewing;  // one still starting the viewer
     if (INSECURE) throw new Error(INSECURE);
     $("gpu").textContent = "Starting the GPU…";
     const g = await gpu();
@@ -431,7 +478,7 @@ async function run() {
     if (fixed.axes.at(-1).unit !== moving.axes.at(-1).unit) throw new Error(`units differ: ${fixed.axes.at(-1).unit} and ${moving.axes.at(-1).unit}`);
     const affine = parseAffine(f.affine);
     await startServing(fixed, moving);
-    const before = publish("before", affine, null);
+    const before = publish(`before-${++previews}`, affine, null);
 
     const levels = f.levels ? f.levels.split(",").map(Number) : defaultLevels(fixed);
     const pairs = levels.map((i) => [i, nearestLevel(moving, fixed.levels[i].voxel)]);
@@ -440,8 +487,10 @@ async function run() {
     const readSecs = (performance.now() - tRead) / 1000;
     const ranges = { fixed: contrast(data[0][0].data), moving: contrast(data[0][1].data) };
     session.ranges = ranges;
-    showViewer(viewerState(p, { before }, ranges), solves > 0);
+    session.rangesKey = `${p.fixedChannel},${p.movingChannel}`;
+    showViewer(viewerState(p, { before }, ranges), session.shown);
     $("afterCaption").textContent = "After: solving…";
+    $("fieldCaption").textContent = "Field: solving…";
 
     const fr = percentiles(data[0][0].data, [0.5, 99.5]), mr = percentiles(data[0][1].data, [0.5, 99.5]);
     const norm = (d, [lo, hi]) => { const o = new Float32Array(d.length), k = 1 / Math.max(hi - lo, 1e-12); for (let i = 0; i < d.length; i++) o[i] = Math.min(1, Math.max(0, (d[i] - lo) * k)); return o; };
@@ -467,8 +516,8 @@ async function run() {
     for (let i = 0; i < sizes.length; i++) sizes[i] = Math.hypot(res.grid.values[3 * i], res.grid.values[3 * i + 1], res.grid.values[3 * i + 2]);
     ranges.field = Math.max(percentiles(sizes, [99])[0], 1e-6);
     showViewer(viewerState(p, { before, after, field }, ranges), true);
-    $("afterCaption").textContent = "After: affine and solved field";
-    $("fieldCaption").textContent = `Field: how far it moves (up to ${ranges.field.toPrecision(3)} ${fixed.axes.at(-1).unit ?? ""})`;
+    $("afterCaption").textContent = "After: the affine and the solved field";
+    $("fieldCaption").textContent = `Field: how far the solve moved each point (up to ${ranges.field.toPrecision(3)} ${fixed.axes.at(-1).unit ?? ""})`;
     $("summary").textContent = `Solved in ${res.seconds.toFixed(1)} s on the GPU.`;
     const result = { gpu: g.name, levels, stages: res.stages, solveSeconds: res.seconds, grid: { ...res.grid, values: Array.from(res.grid.values) } };
     window.__result = result;
