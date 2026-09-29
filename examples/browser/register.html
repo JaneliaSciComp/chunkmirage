@@ -77,8 +77,9 @@
 <aside>
   <div>
     <h1>Register in the browser</h1>
-    <p class="lede">Aligns a moving image onto a fixed one in two steps: an affine you give places it roughly
-      (scale, rotation, shift), then this computer's GPU fits a smooth field of local shifts on top.
+    <p class="lede">Aligns a moving image onto a fixed one in two steps: an affine places it roughly
+      (scale, rotation, shift), given or found here, then this computer's GPU fits a smooth field of
+      local shifts on top.
       The images are read straight from their URLs and nothing is uploaded; the registered volume is
       computed here, chunk by chunk, as the viewer asks.</p>
   </div>
@@ -102,7 +103,8 @@
     <label class="field group"><span class="title">Affine, fixed to moving</span>
       <span class="hint">The starting placement: a 3×4 matrix (rows z, y, x) taking fixed coordinates to
         moving ones, in the images' units. The field only corrects local offsets, so this must be
-        roughly right; the left panel shows it alone. Empty: identity, for images that already overlap.</span>
+        roughly right; the left panel shows it alone. Empty: Register finds one first, by matching the
+        images' centres and principal axes and then fitting it.</span>
       <textarea name="affine" rows="3" wrap="off" spellcheck="false" placeholder="12 or 16 numbers, row by row, in physical units. Empty: identity."></textarea></label>
     <details>
       <summary>Solver settings</summary>
@@ -134,17 +136,19 @@
   <div class="empty" id="empty"><b>Enter a fixed and a moving image, then Register.</b>
     <span>Needs WebGPU: Chrome or Edge, or Safari 26. The images must allow CORS.</span></div>
   <iframe id="ng" title="Neuroglancer" hidden></iframe>
-  <div class="captions" id="captions" hidden><span>Before: placed by the affine alone</span><span id="afterCaption">After: press Register</span><span id="fieldCaption">Field: press Register</span></div>
+  <div class="captions" id="captions" hidden><span id="beforeCaption">Before: placed by the affine alone</span><span id="afterCaption">After: press Register</span><span id="fieldCaption">Field: press Register</span></div>
 </main>
 <script type="module">
 import { nearestLevel, openImage, percentiles, readLevel } from "./ome.js";
 import { gpu, prod, solve } from "./solver.js";
+import { affineDistance, findAffine } from "./affine.js";
 
 const CHUNK = [16, 128, 128];    // chunks of the registered volume, z, y, x
 const MAX_VOXELS = 1 << 22;      // finest automatic level: the whole level sits on the GPU
 const MIN_SIZE = 16;             // coarsest automatic level: this many voxels on every axis
 const TO_METRES = { micrometer: 1e-6, nanometer: 1e-9, millimeter: 1e-3, meter: 1, angstrom: 1e-10 };
 const TO_SECONDS = { millisecond: 1e-3, second: 1, microsecond: 1e-6 };
+const SHORT = { micrometer: "µm", nanometer: "nm", millimeter: "mm", meter: "m", angstrom: "Å" };
 // this page's share of /virtual/ (getRandomValues: randomUUID exists on secure pages only)
 const PAGE = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
 
@@ -153,6 +157,7 @@ const form = $("form");
 let session = null;   // images, chunk workers and published views
 let solves = 0, previews = 0;
 let previewing = Promise.resolve(), previewTimer = null;  // the before view, shown before any solve
+let exampleRef = null;  // the example's published affine, to say how close a found one comes
 
 const query = new URLSearchParams(location.search);
 if (!query.has("fixed") && !query.has("moving")) await loadExample();
@@ -189,6 +194,7 @@ async function loadExample() {
   } catch { return; }
   for (const k of ["fixed", "moving"]) form.elements[k].value = new URL(ex[k], url).href;
   for (const [k, v] of Object.entries(ex)) if (form.elements[k] && !["fixed", "moving"].includes(k)) form.elements[k].value = v;
+  if (ex.published_affine) exampleRef = { fixed: form.elements.fixed.value, moving: form.elements.moving.value, affine: parseAffine(ex.published_affine) };
   const note = $("example"), link = document.createElement("a");
   link.href = ex.source; link.textContent = "source";
   note.append(`${ex.about} `, link, ". Or enter your own images.");
@@ -220,6 +226,7 @@ async function preview() {
     }
     const before = publish(`before-${++previews}`, affine, null);  // a new URL: the viewer caches by URL
     showViewer(viewerState(p, { before }, session.ranges), session.shown);
+    $("beforeCaption").textContent = beforeCaption(f.affine);
     $("afterCaption").textContent = "After: press Register";
     $("fieldCaption").textContent = "Field: press Register";
     $("error").hidden = true;
@@ -455,6 +462,16 @@ function contrast(data) {  // display limits from the voxels with data, which sk
   return [lo, Math.max(hi, lo + 1)];
 }
 
+function affineRow() {  // above the levels' rows
+  const el = document.createElement("div");
+  el.className = "stage";
+  el.innerHTML = `<div class="row"><span><b>Affine</b> · centres and axes, then a fit</span><span class="t">waiting</span></div><div class="bar"><i></i></div><div class="sim">&nbsp;</div>`;
+  $("stages").prepend(el);
+  return el;
+}
+
+const beforeCaption = (text) => (text.trim() ? "Before: placed by the affine alone" : "Before: as they are, no affine");
+
 function stageRows(levels, shapes) {
   $("stages").innerHTML = "";
   return levels.map((lvl, s) => {
@@ -483,7 +500,8 @@ async function run() {
     $("summary").textContent = "Reading the images…";
     const [fixed, moving] = await Promise.all([openImage(f.fixed), openImage(f.moving)]);
     if (fixed.axes.at(-1).unit !== moving.axes.at(-1).unit) throw new Error(`units differ: ${fixed.axes.at(-1).unit} and ${moving.axes.at(-1).unit}`);
-    const affine = parseAffine(f.affine);
+    let affine = parseAffine(f.affine);
+    const auto = !f.affine.trim();  // find the affine first
     await startServing(fixed, moving);
     const before = publish(`before-${++previews}`, affine, null);
 
@@ -496,6 +514,7 @@ async function run() {
     session.ranges = ranges;
     session.rangesKey = `${p.fixedChannel},${p.movingChannel}`;
     showViewer(viewerState(p, { before }, ranges), session.shown);
+    $("beforeCaption").textContent = beforeCaption(f.affine);
     $("afterCaption").textContent = "After: solving…";
     $("fieldCaption").textContent = "Field: solving…";
 
@@ -505,7 +524,25 @@ async function run() {
     const l0 = fixed.levels[0];
     const lo = l0.origin.map((o, a) => o - l0.voxel[a] / 2), hi = lo.map((v, a) => v + l0.shape[a] * l0.voxel[a]);
     const rows = stageRows(levels, data.map(([fl]) => fl.shape));
-    $("summary").textContent = `Read levels ${levels.join(", ")} in ${readSecs.toFixed(1)} s. Solving…`;
+    const unit = SHORT[fixed.axes.at(-1).unit] ?? fixed.axes.at(-1).unit ?? "";
+    let found = null;
+    if (auto) {  // on the coarsest level; the field is then solved from it
+      const row = affineRow();
+      $("summary").textContent = `Read levels ${levels.join(", ")} in ${readSecs.toFixed(1)} s. Finding the affine…`;
+      found = await findAffine(data[0][0], data[0][1], ({ stage, stages, iteration, iterations, similarity }) => {
+        row.querySelector("i").style.width = `${(100 * (stage + iteration / iterations)) / stages}%`;
+        row.querySelector(".t").textContent = `fit ${stage + 1} / ${stages}`;
+        row.querySelector(".sim").textContent = `similarity ${similarity.toFixed(3)}`;
+      });
+      affine = found.affine;
+      const ref = exampleRef && f.fixed === exampleRef.fixed && f.moving === exampleRef.moving ? exampleRef.affine : null;
+      found.distance = ref ? affineDistance(data[0][0], affine, ref) : null;
+      row.querySelector(".t").textContent = `${found.seconds.toFixed(1)} s`;
+      row.querySelector(".sim").textContent = `similarity ${found.identity.toFixed(3)} → ${found.final.toFixed(3)}`
+        + (found.distance == null ? "" : ` · ${found.distance.toFixed(1)} ${unit} from the published affine`);
+      form.elements.affine.value = affine.map((r) => r.map((v) => +v.toPrecision(6)).join(", ")).join("\n");
+    }
+    $("summary").textContent = `Read levels ${levels.join(", ")} in ${readSecs.toFixed(1)} s. Solving the field…`;
     const settings = { iterations: Number(f.iterations), smooth: Number(f.smooth), grid: Number(f.grid) };
     const res = await solve(g, data, affine, [lo, hi], settings, ({ stage, iteration, iterations, similarity }) => {
       rows[stage].querySelector("i").style.width = `${(100 * iteration) / iterations}%`;
@@ -524,9 +561,11 @@ async function run() {
     ranges.field = Math.max(percentiles(sizes, [99])[0], 1e-6);
     showViewer(viewerState(p, { before, after, field }, ranges), true);
     $("afterCaption").textContent = "After: the affine and the solved field";
-    $("fieldCaption").textContent = `Field: how far the solve moved each point (up to ${ranges.field.toPrecision(3)} ${fixed.axes.at(-1).unit ?? ""})`;
-    $("summary").textContent = `Solved in ${res.seconds.toFixed(1)} s on the GPU.`;
-    const result = { gpu: g.name, levels, stages: res.stages, solveSeconds: res.seconds, grid: { ...res.grid, values: Array.from(res.grid.values) } };
+    $("fieldCaption").textContent = `Field: how far the solve moved each point (up to ${ranges.field.toPrecision(3)} ${unit})`;
+    $("summary").textContent = found
+      ? `Found the affine in ${found.seconds.toFixed(1)} s, then solved the field in ${res.seconds.toFixed(1)} s on the GPU.`
+      : `Solved in ${res.seconds.toFixed(1)} s on the GPU.`;
+    const result = { gpu: g.name, levels, affine, found, stages: res.stages, solveSeconds: res.seconds, grid: { ...res.grid, values: Array.from(res.grid.values) } };
     window.__result = result;
     $("save").href = URL.createObjectURL(new Blob([JSON.stringify(result)], { type: "application/json" }));
     $("links").hidden = false;

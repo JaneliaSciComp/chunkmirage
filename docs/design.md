@@ -213,11 +213,21 @@ Fully client-side is feasible and would make a compelling hosted demo:
   next to the page, at
   [browser/register.html](https://yuriyzubov.github.io/chunkmirage/browser/register.html).
   Nothing of Neuroglancer is kept in this repo. With no images in its link the page opens
-  with an example, two fly brain templates (JRC2018F and FCWB) and the affine published
-  between them: `examples/browser/fetch_example.py` copies them at deploy time from the
-  OME-NGFF transformation examples, whose bucket allows no CORS and uses a draft 0.6
-  layout, rewriting only the metadata as 0.5, and the site serves them next to the page.
-  So the example needs no CORS, no VPN and no local network access.
+  with an example, two fly brain templates (JRC2018F and FCWB) as they are stored:
+  `examples/browser/fetch_example.py` copies them at deploy time from the OME-NGFF
+  transformation examples, whose bucket allows no CORS and uses a draft 0.6 layout,
+  rewriting only the metadata as 0.5, and the site serves them next to the page. So the
+  example needs no CORS, no VPN and no local network access.
+* With the affine left empty the page finds one before the field (`affine.js`, on the CPU:
+  a few hundred thousand voxels are enough). It matches the two images' intensity
+  moments, centre to centre and principal axis to principal axis, which leaves the axes'
+  signs open; of the four orientations that do not mirror the image, the best correlated
+  is kept. Then it fits the 12 numbers by gradient ascent on the normalized
+  cross-correlation, at two resolutions. On the fly templates, which start 58 µm apart
+  (mean distance from where the published affine puts each voxel), that takes the
+  correlation from 0.14 to 0.84 (moments) and 0.87 (fit), and ends 2 µm from the published
+  affine (the voxels are 2.5 µm), in about 5 s. The moments assume both images show the
+  same whole object; a crop of one would need an affine given.
 
 ## Deployment shapes
 

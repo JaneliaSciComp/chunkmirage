@@ -6,7 +6,8 @@ JRC2018F (Bogovic et al. 2020) and FCWB (Costa et al. 2016) come from the OME-NG
 transformation examples, with the transform published between them. That bucket allows
 no CORS and uses a draft OME-Zarr 0.6 layout, so this copies the arrays byte for byte
 and writes 0.5 metadata over them: OUT/fly/JRC2018F, OUT/fly/FCWB, and OUT/example.json,
-which register.html fills its form from when a link names no images. The docs workflow
+which register.html fills its form from when a link names no images (with the affine
+left empty, so the page finds one; the published affine only to say how close it came). The docs workflow
 runs it into the published site; locally, run it into examples/browser/data (ignored by
 git) and serve.py serves it too.
 """
@@ -27,9 +28,10 @@ SOURCE = "https://ngff-rfc5-coordinate-transformation-examples.s3.amazonaws.com/
 FIXED, MOVING = "JRC2018F", "FCWB"
 ABOUT = (
     "Example: the fly brain templates JRC2018F (Bogovic et al. 2020) as fixed and FCWB "
-    "(Costa et al. 2016) as moving, from the OME-NGFF transformation examples. The affine is "
-    "the one published with them: FCWB is about half as deep, so the field alone could not "
-    "bridge them."
+    "(Costa et al. 2016) as moving, from the OME-NGFF transformation examples, as they are "
+    "stored: FCWB is about half as deep and sits elsewhere. With the affine left empty, "
+    "Register finds one, then the field, and says how close its affine comes to the one "
+    "published with them."
 )
 
 
@@ -125,7 +127,7 @@ def main(argv: list[str] | None = None) -> None:
             total += copy_array(f"{SOURCE}/{name}/{d['path']}", dest / d["path"])
     example = {
         "fixed": f"fly/{FIXED}", "moving": f"fly/{MOVING}",  # relative to example.json
-        "affine": ", ".join(repr(v) for row in affine for v in row),
+        "published_affine": ", ".join(repr(v) for row in affine for v in row),  # to compare with
         "about": ABOUT, "source": SOURCE,
     }
     (args.out / "example.json").write_text(json.dumps(example, indent=2))
