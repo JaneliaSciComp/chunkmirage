@@ -9,7 +9,9 @@ shareable link. Clicking through the certificate warning is enough for WebGPU bu
 the service worker the viewer needs: each computer trusts the certificate once in its
 system (it is served at ``/certificate.crt``). ``--host 127.0.0.1`` serves plain http
 instead, for a page opened as ``http://localhost:<port>`` (forward the port if the browser
-runs elsewhere), which needs no certificate.
+runs elsewhere), which needs no certificate. ``--no-https`` serves plain http on the network,
+for browsers told to treat the address as secure (in Chrome, list it under
+chrome://flags/#unsafely-treat-insecure-origin-as-secure): no certificate either.
 
 ``/ng/`` is the standard Neuroglancer client, relayed from neuroglancer-demo.appspot.com
 (fetched once, then kept in memory). It has to be on this origin: the page's service
@@ -90,12 +92,18 @@ def main() -> None:
     ap.add_argument("page", nargs="?", default="register.html", help="page and query to link to")
     ap.add_argument("--host", default="0.0.0.0", help="bind address (default: every interface)")
     ap.add_argument("--port", type=int, help="port (default: 8443 or the next free)")
+    ap.add_argument(
+        "--no-https",
+        action="store_true",
+        help="plain http on the network too, for browsers told to treat this address as "
+        "secure (chrome://flags/#unsafely-treat-insecure-origin-as-secure)",
+    )
     args = ap.parse_args()
 
     from chunkmirage.netutil import free_port, is_loopback, serving_address
 
     port = args.port or free_port(args.host, 8443)
-    https = not is_loopback(args.host)  # localhost is a secure context without it
+    https = not (args.no_https or is_loopback(args.host))  # localhost is secure without it
     address, certs = serving_address(args.host, port, https=https)
     handler = functools.partial(Handler, directory=str(HERE))
     server = http.server.ThreadingHTTPServer((args.host, port), handler)
@@ -113,6 +121,14 @@ def main() -> None:
             "Always Trust).\n"
             "       Or run with --host 127.0.0.1 and open the page through a forwarded port "
             "(localhost needs no certificate).",
+            flush=True,
+        )
+    elif not is_loopback(args.host):
+        print(
+            "http:  browsers allow WebGPU and service workers on plain http only from localhost\n"
+            "       or an address they were told to treat as secure: in Chrome, add\n"
+            f"       {address} to chrome://flags/#unsafely-treat-insecure-origin-as-secure and "
+            "relaunch.",
             flush=True,
         )
     server.serve_forever()

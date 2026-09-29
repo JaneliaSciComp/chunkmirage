@@ -253,7 +253,8 @@ async function startServing(fixed, moving) {
       + "they trust, and clicking through the warning is not enough. Either trust this server's certificate "
       + `(download it from ${location.origin}/certificate.crt; on a Mac, open it in Keychain Access and set it to Always Trust), `
       + "or open the page through localhost: forward this server's port to your computer (VS Code's Ports panel, "
-      + "or ssh -L) and run serve.py with --host 127.0.0.1.");
+      + "or ssh -L) and run serve.py with --host 127.0.0.1. Or skip certificates: run serve.py with --no-https "
+      + "and, in Chrome, add its address to chrome://flags/#unsafely-treat-insecure-origin-as-secure.");
   }
   await navigator.serviceWorker.ready;
   if (session && session.fixed.url === fixed.url && session.moving.url === moving.url) return;
@@ -361,6 +362,10 @@ async function run() {
   history.replaceState(null, "", "?" + new URLSearchParams(f));
   const p = { fixedChannel: Number(f.fixed_channel), movingChannel: Number(f.moving_channel) };
   try {
+    if (!window.isSecureContext) throw new Error(
+      `${location.origin} is not a secure page to this browser, so it allows neither WebGPU nor service workers. `
+      + "Open it over https, or as localhost (a forwarded port), or in Chrome add this address to "
+      + "chrome://flags/#unsafely-treat-insecure-origin-as-secure and relaunch.");
     $("gpu").textContent = "Starting the GPU…";
     const g = await gpu();
     $("gpu").textContent = `GPU: ${g.name || "unnamed adapter"}`;
