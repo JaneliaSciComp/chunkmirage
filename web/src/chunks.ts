@@ -2,7 +2,7 @@
 // the fixed image's grid through the affine and, for a solved view, the field), as
 // chunkmirage's scene:// resampler does on a server. The page hands it Neuroglancer's
 // chunk requests, relayed by the service worker, and passes the bytes back.
-import { fieldAt, leadIndex, nearestLevel, openImage, zarr, type Image, type Numbers } from "./ome";
+import { fieldAt, leadIndex, openImage, zarr, type Image, type Numbers } from "./ome";
 import type { Affine, ControlGrid, FromWorker, LevelGrid, ToWorker, ViewKind } from "./types";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
@@ -11,7 +11,7 @@ const CACHE_BYTES = 256 * 2 ** 20;  // decoded blocks kept per worker
 type TypedCtor = { new (n: number): Numbers & { buffer: ArrayBuffer }; BYTES_PER_ELEMENT: number };
 const TYPED: Record<string, TypedCtor> = { uint8: Uint8Array, uint16: Uint16Array, uint32: Uint32Array, int8: Int8Array, int16: Int16Array, int32: Int32Array, float32: Float32Array, float64: Float64Array };
 
-interface View { kind: ViewKind; affine: Affine; grid: ControlGrid | null }
+interface View { kind: ViewKind; affine: Affine; grid: ControlGrid | null; levels: Map<number, number> }
 interface Block { data: Numbers; shape: number[] }
 let moving: Image, fixedLevels: LevelGrid[], chunkShape: number[], Typed: TypedCtor = Float32Array, blockBytes = 0;
 const views = new Map<string, View>();
@@ -28,7 +28,7 @@ ctx.onmessage = async ({ data: m }: MessageEvent<ToWorker>) => {
       blockBytes = BLOCK ** 3 * Typed.BYTES_PER_ELEMENT;
       post({ type: "ready" });
     } else if (m.type === "view") {
-      views.set(m.id, { kind: m.kind, affine: m.affine, grid: m.grid });
+      views.set(m.id, { kind: m.kind, affine: m.affine, grid: m.grid, levels: new Map() });
     } else if (m.type === "drop") {
       for (const id of m.ids) views.delete(id);
     } else if (m.type === "chunk") {
@@ -97,7 +97,30 @@ function fieldChunk(grid: ControlGrid, fl: LevelGrid, start: number[], size: num
   return out.buffer;
 }
 
-let scratch = { m: new Float32Array(0), inside: new Uint8Array(0) };  // per chunk, reused
+/** The moving level a view reads for output level `fl`: the coarsest still at least as fine as
+ * one output voxel, measured through the view's mapping at the grid's centre, as
+ * chunkmirage's scene._pick_level (a zoomed-out view, or an affine that shrinks, reads a
+ * finer or coarser level than the voxel sizes alone suggest). */
+function pickLevel(view: View, fl: LevelGrid): number {
+  const m0 = moving.levels[0], d = [0, 0, 0];
+  const toLevel0 = (idx: number[]) => {  // output voxel index -> moving level-0 index
+    const x = idx.map((v, a) => fl.origin[a] + v * fl.voxel[a]);
+    if (view.grid) { fieldAt(view.grid, x[0], x[1], x[2], d); for (let a = 0; a < 3; a++) x[a] += d[a]; }
+    return view.affine.map((r, a) => (r[0] * x[0] + r[1] * x[1] + r[2] * x[2] + r[3] - m0.origin[a]) / m0.voxel[a]);
+  };
+  const centre = fl.shape.map((n) => (n - 1) / 2), extent = [0, 0, 0];
+  for (let c = 0; c < 3; c++) {  // one output voxel's span along each moving axis
+    const plus = centre.slice(), minus = centre.slice();
+    plus[c] += 0.5; minus[c] -= 0.5;
+    const a = toLevel0(plus), b = toLevel0(minus);
+    for (let r = 0; r < 3; r++) extent[r] += Math.abs(a[r] - b[r]);
+  }
+  let best = 0;
+  moving.levels.forEach((l, i) => {
+    if (l.voxel.every((v, a) => v / m0.voxel[a] <= Math.max(extent[a], 1) * 1.01)) best = i;
+  });
+  return best;
+}
 
 async function chunk({ id, level, channel, index }: { id: string; level: number; channel: number; index: number[] }): Promise<ArrayBuffer> {
   const view = views.get(id);
@@ -107,12 +130,12 @@ async function chunk({ id, level, channel, index }: { id: string; level: number;
   if (view?.kind === "field" && view.grid) return fieldChunk(view.grid, fl, start, size);
   const out = new Typed(cs[0] * cs[1] * cs[2]);  // a whole chunk: zero past the array's edge
   if (!view || size.some((n) => n === 0)) return out.buffer;
-  const li = nearestLevel(moving, fl.voxel), ml = moving.levels[li];
+  if (!view.levels.has(level)) view.levels.set(level, pickLevel(view, fl));
+  const li = view.levels.get(level)!, ml = moving.levels[li];
   const A = view.affine, d = [0, 0, 0];
   const n = size[0] * size[1] * size[2];
-  if (scratch.inside.length < n) scratch = { m: new Float32Array(3 * n), inside: new Uint8Array(n) };
-  const { m, inside } = scratch;
-  inside.fill(0, 0, n);
+  // per chunk, not shared: a worker has several chunks in flight while their regions load
+  const m = new Float32Array(3 * n), inside = new Uint8Array(n);
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   let p = 0, any = false;
   for (let i = 0; i < size[0]; i++) {
