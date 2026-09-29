@@ -5,11 +5,43 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+env:
+  # The Neuroglancer the browser engine embeds, built from Google's source here rather than
+  # kept in this repo. The page answers the viewer's requests through a service worker,
+  # which only sees requests from pages on its own site, so the viewer has to be served
+  # from here too (an iframe of neuroglancer-demo.appspot.com would miss them).
+  NEUROGLANCER: v2.41.2
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
       - run: uv sync --group docs
-      - run: uv run mkdocs gh-deploy --force --strict
+      - run: uv run mkdocs build --strict
+      # the browser engine (web/), at <site>/browser/register.html
+      - run: npm ci && npm run build
+        working-directory: web
+      - uses: actions/cache@v4
+        id: neuroglancer
+        with:
+          path: neuroglancer
+          key: neuroglancer-${{ env.NEUROGLANCER }}
+      - if: steps.neuroglancer.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$NEUROGLANCER" https://github.com/google/neuroglancer "$RUNNER_TEMP/src"
+          cd "$RUNNER_TEMP/src"
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-audit --no-fund
+          npm run build -- --output="$GITHUB_WORKSPACE/neuroglancer"
+          find "$GITHUB_WORKSPACE/neuroglancer" -name '*.map' -delete
+      # its viewer at browser/ng/ and its example (two fly brain templates, about 10 MB) at browser/data/
+      - run: |
+          cp -r web/dist site/browser
+          cp -r neuroglancer site/browser/ng
+          uv run python web/scripts/fetch_example.py site/browser/data
+      - run: uv run ghp-import --no-jekyll --push --force -m "Deployed ${GITHUB_SHA} with the browser engine" site

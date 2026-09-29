@@ -1,0 +1,23 @@
+{
+  "name": "chunkmirage-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "chunkmirage's browser engine: register:// solved on the viewer's GPU (WebGPU) and served to Neuroglancer by a service worker",
+  "scripts": {
+    "gen": "json2ts -i src/generated/chunkmirage.schema.json -o src/generated/chunkmirage.ts --no-additionalProperties --bannerComment \"/* Generated from chunkmirage's JSON Schema (chunkmirage schema) by npm run gen. Do not edit. */\"",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.worker.json",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "npm run typecheck && npm run build"
+  },
+  "dependencies": {
+    "zarrita": "0.7.5"
+  },
+  "devDependencies": {
+    "@webgpu/types": "0.1.74",
+    "json-schema-to-typescript": "16.0.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.1"
+  }
+}

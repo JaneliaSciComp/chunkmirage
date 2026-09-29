@@ -121,6 +121,18 @@ Inverses are taken only in closed form or from a stored `bijection`, unless the 
 for `inverse=approx`; an estimated inverse of a folding field would silently show wrong
 data, so unconvergent points are left empty instead.
 
+Solving a registration is a source too (`register://`): opening it fits a displacement
+field on a GPU from a few coarse levels, keeps the field in memory and serves every level
+through the same resampler. The split follows the costs. The field is global (any output
+chunk may depend on all of it) but cheap to fit at coarse levels and small to keep, while
+resampling full resolution is expensive and local, which is exactly what chunk-by-chunk
+serving does lazily. So the fit happens once, when the source opens, and nothing of the
+registered volume is ever written. PyTorch supplies autograd and grid sampling, as an
+optional dependency; the objective is local cross-correlation with flat windows left out,
+because damping them with a constant instead rewards warps that add contrast (the tests
+catch that). Adam is written out rather than taken from `torch.optim`, whose import loads
+`torch._dynamo`: about 9 s from a network file system.
+
 ## Language and stack
 
 **Server: Python.** The whole point is that scientists write ops in numpy/torch/scipy;
@@ -180,6 +192,58 @@ Fully client-side is feasible and would make a compelling hosted demo:
 * A shared Rust crate (chunk key parsing, zarr/n5/precomputed codecs) compiled to WASM and
   to a Python extension would keep the two implementations from drifting. Not needed to
   start.
+* It lives in this repo as `web/`, a TypeScript project (Vite) next to the Python package,
+  because the two share one definition: the Pydantic models (`PipelineSpec`, each op's
+  parameters, `RegisterParams`) export a JSON Schema (`chunkmirage schema`), and `web/`
+  generates its TypeScript types and form defaults from the committed copy. A model change
+  and the page it breaks then land in one pull request: `tests/test_schema.py` fails until
+  the copy is regenerated, and the `web` CI job until the types are. The Python package
+  stays standalone all the same, since its wheel holds only `src/chunkmirage`. Demos that
+  span several projects, and plugins with ops for both engines, would be repos of their
+  own, built on the published packages.
+* The first piece is registration: `web/register.html` reads two OME-Zarr
+  images from their URLs with `zarrita.js` (range requests into sharded stores, zstd and
+  blosc through numcodecs) and fits the same field as `register://` in WebGPU compute
+  shaders, with the gradients written out by hand (WGSL has no autograd, and no float
+  atomics, so each control point gathers its voxels' gradients). Fed the same data, its
+  field matches the PyTorch solver's to about 1% (a median 0.25 µm on a gut whose field
+  moves tissue by 21 µm), and so do its scores. It then shows before and after in
+  Neuroglancer hosted on the page's origin: the page's service worker hands the viewer's
+  requests for the registered volume to the page, whose web workers resample the moving
+  image through the field as `scene://` does, reading it from its URL through a cache of
+  decoded blocks. So all of `register://` runs client side. WebGPU and service workers
+  need a secure page, and a service worker will not run on a certificate that was only
+  clicked through: `web/serve.py` serves the build over https with the
+  self-signed certificate (trusted once in the system; it is made to the rules macOS and
+  browsers apply even then, at most 398 days and for server authentication) or over plain
+  http for `localhost`, and relays the standard Neuroglancer client under `/ng/`. The docs
+  site needs neither: the docs workflow builds Neuroglancer from Google's source at a
+  pinned tag (cached, so about 15 s the first time) and publishes it at `browser/ng/`
+  next to the page, at
+  [browser/register.html](https://yuriyzubov.github.io/chunkmirage/browser/register.html).
+  Nothing of Neuroglancer is kept in this repo. With no images in its link the page opens
+  with an example, two fly brain templates (JRC2018F and FCWB) as they are stored:
+  `web/scripts/fetch_example.py` copies them at deploy time from the OME-NGFF
+  transformation examples, whose bucket allows no CORS and uses a draft 0.6 layout,
+  rewriting only the metadata as 0.5, and the site serves them next to the page. So the
+  example needs no CORS, no VPN and no local network access. It can also start from the
+  affine published with them (the affine part of the examples' JRC2018F-to-FCWB transform;
+  `?start=published`).
+* With the affine left empty the page finds one before the field (`affine.ts`, on the CPU:
+  a few hundred thousand voxels are enough). It matches the two images' intensity
+  moments, centre to centre and principal axis to principal axis, which leaves the axes'
+  signs open; of the four orientations that do not mirror the image, the best correlated
+  is kept. Then it fits the 12 numbers by gradient ascent on the normalized
+  cross-correlation, at two resolutions. On the fly templates, which start 58 µm apart
+  (mean distance from where the published affine puts each voxel), that takes the
+  correlation from 0.14 to 0.84 (moments) and 0.87 (fit), and ends 2 µm from the published
+  affine (the voxels are 2.5 µm), in about 5 s. The moments assume both images show the
+  same whole object; a crop of one would need an affine given.
+* The page shows the same registration as a `chunkmirage serve 'register://…'` command,
+  built through the generated `RegisterParams` type, with the found affine and the solved
+  levels filled in after a run. Solved from that command, Python's field matches the
+  page's to 0.01 µm (median; 0.04 µm at the 95th percentile) on the fly templates, whose
+  field moves tissue by 7 µm (median). Python's `register://` has no affine search yet.
 
 ## Deployment shapes
 

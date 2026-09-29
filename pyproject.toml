@@ -24,6 +24,10 @@ ops = ["scipy>=1.12"]
 mcp = ["mcp>=1.0"]
 viewer = ["neuroglancer>=2.40"]
 https = ["cryptography>=42"]
+# register:// solves on a GPU when there is one (CPU otherwise). gpu is PyTorch's CUDA build,
+# ~3 GB of wheels, so not in `all`; cpu is its CPU-only build (CI, laptops). Pick one.
+gpu = ["torch>=2.6", "scipy>=1.12"]
+cpu = ["torch>=2.6", "scipy>=1.12"]
 all = ["chunkmirage[hdf5,ops,mcp,viewer,https]"]
 
 [project.scripts]
@@ -47,6 +51,28 @@ dev = [
     "ruff>=0.5",
     "neuroglancer>=2.40",
 ]
+
+[tool.uv]
+conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]
+
+# torch per extra. gpu: CUDA 12.8, which covers Turing (sm_75) through Blackwell and runs on
+# any driver >= 525, unlike PyPI's default build, which may need a newer driver than a
+# workstation has. cpu: the CPU-only build, a tenth of the size.
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", extra = "cpu" },
+  { index = "pytorch-cu128", extra = "gpu" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]

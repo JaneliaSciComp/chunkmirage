@@ -5,12 +5,14 @@
 ```bash
 git clone https://github.com/yuriyzubov/chunkmirage
 cd chunkmirage
-uv sync --all-extras --group dev        # or: pip install -e ".[all]"
+uv sync --extra all --group dev        # or: pip install -e ".[all]"; add --extra gpu (or cpu) for register://
 ```
 
 Requires Python 3.11+. Core dependencies are tensorstore, numpy, numcodecs, starlette,
 uvicorn, pydantic and typer. Optional extras: `hdf5` (h5py), `ops` (scipy filters),
-`mcp` (planned MCP server).
+`mcp` (planned MCP server), and for `register://` either `gpu` (PyTorch with CUDA, about
+3 GB) or `cpu` (its CPU-only build, for machines without an NVIDIA GPU). Neither is in
+`all`, and they cannot be installed together.
 
 ## Serve something
 

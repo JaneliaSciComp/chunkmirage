@@ -30,7 +30,9 @@ fake responses is a service worker, and a service worker only intercepts fetches
 on **its own origin**. A worker on `chunkmirage.github.io` never sees requests made by
 `neuroglancer-demo.appspot.com`. CORS is unrelated: CORS governs whether a page may *read* a
 response a real server sent, and here there is no server. The fix is to host our own
-Neuroglancer build on the same origin as the service worker; see [Roadmap](roadmap.md).
+Neuroglancer build on the same origin as the service worker, which the docs site does for
+[browser/register.html](https://yuriyzubov.github.io/chunkmirage/browser/register.html)
+(see the [design notes](design.md#client-side-browser-roadmap)).
 
 ## Chunks load slowly. Why?
 

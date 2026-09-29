@@ -219,6 +219,21 @@ def ops():
 
 
 @app.command()
+def schema(
+    out: str = typer.Option(None, "--out", help="write it to this file instead of printing it"),
+):
+    """Print the JSON Schema of pipeline specs, ops and register:// parameters."""
+    from pathlib import Path
+
+    from chunkmirage.schema import dumps
+
+    if out:
+        Path(out).write_text(dumps())
+    else:
+        typer.echo(dumps(), nl=False)
+
+
+@app.command()
 def inspect(source: str):
     """Print what chunkmirage sees when opening SOURCE."""
     from chunkmirage.sources import open_source

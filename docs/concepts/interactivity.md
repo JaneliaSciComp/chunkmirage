@@ -57,7 +57,8 @@ the new URL into the viewer, from least to most convenient:
 layer has on screen, so it goes blank until the new chunks arrive; stepping a parameter
 faster than a screenful computes never shows a finished frame. For a parameter you want
 to sweep, serve the sweep as a `t` axis instead (as
-[`warp://…&frames=N`](formats.md#warp-sources-procedural-deformations) does) and play it
+[`warp://…&frames=N`](formats.md#warp-sources-procedural-deformations) does, and
+`register://…&frames=N` for the steps of a solve) and play it
 with Neuroglancer's playback (click the dimension in the top bar, or set `velocity` in the
 state). Nothing is invalidated: each frame is fetched once, then comes from the browser's
 and the server's caches.
@@ -127,8 +128,14 @@ Two cases, and they belong in different places:
   viewer refetches as above. For a deformation you can change continuously, a
   [`warp://` source](formats.md#warp-sources-procedural-deformations) computes a swirl
   from coordinates, over a `t` axis of frames if you like; `examples/swirl_demo.py` plays
-  it in the python viewer with its displacement field shown as an RGB layer. Landmarks
-  edited live in the viewer are on the [roadmap](../roadmap.md).
+  it in the python viewer with its displacement field shown as an RGB layer. To have the
+  field solved rather than given, a
+  [`register://` source](formats.md#register-sources-deformable-registration-on-a-gpu)
+  fits it on a GPU when it opens, in seconds; `PUT` the URL with another `smooth` or
+  `grid` and the viewer shows the new registration moments later.
+  `examples/register_demo.py` does this from a terminal prompt and compares fixed and
+  registered in a shader on the viewer's GPU, with no refetch. Landmarks edited live in
+  the viewer are on the [roadmap](../roadmap.md).
 
 ## For your own tooling
 

@@ -180,6 +180,75 @@ with `getDataValue(0..2)`). The precomputed frontend makes them one, but holds o
 `(c, z, y, x)`; with frames, serve zarr and rename the channel dimension `c'` to `c^`
 (`Viewer.rename_dimensions`, as the demo does).
 
+### Register sources (deformable registration on a GPU)
+
+```
+register://<moving>?fixed=<fixed>&affine=<matrix.npy>
+register://<moving>?fixed=<fixed>&affine=<matrix.npy>&show=pair
+```
+
+serves `<moving>` registered onto `<fixed>`'s grid, at every level of `<fixed>` and with
+every channel of `<moving>`. Opening the source solves for a smooth displacement field `u`
+in the fixed image's space such that the moving image sampled at `affine(p + u(p))` looks
+like the fixed image at `p`. The solve reads a few coarse levels of both images, fits
+their local normalized cross-correlation with a penalty on the field's gradient, and runs
+Adam from coarse levels to fine ones, on a GPU when there is one (PyTorch:
+`pip install chunkmirage[gpu]`; otherwise the CPU, slowly). Left out of the fit are
+windows with no contrast in either image, and fixed voxels whose window the moving image
+does not cover under the affine (a moving image with a smaller field of view): there is
+nothing to match, and fitting them would drag the moving image's edge over whatever lies
+beyond it, so the field there follows from its smoothness. The field lives on a control grid a few voxels
+apart, so it is small (megabytes for an organ) and stays in memory. Every output chunk is
+then the moving image resampled through it by the scene sources' resampler, so full
+resolution is served without anything being written.
+
+`u` has the convention registration pipelines write to disk (a displacement in fixed
+space, applied before the fixed-to-moving affine, e.g. bigstream's), so it can be
+compared with theirs directly (`show=field`), and the moving image's other channels come
+out registered too. On a 1231×14124×5452 EASI-FISH gut round (an RTX 2080 Ti, the affine
+from a keypoint fit, scored at level 3, finer than the solve): levels 6 and 5 solve in
+2.4 s and beat a bigstream registration on local correlation and on the overlap of bright
+voxels; levels 6 to 4, the default, take 15 s and match a cluster block-matching
+registration's local correlation, 0.02 below it on overlap, its field within a median
+13 µm of theirs.
+
+Solved fields are remembered per process (the last 8), so opening the same URL again (a
+downstream op edit, or another `show`) does not solve again, while changing a solver
+parameter does. The solve runs in whatever opens the source (server start-up, or the
+`PUT` that sets it), plus about 10 s the first time to import PyTorch from a network
+file system.
+
+`show=pair` serves a `(c, z, y, x)` volume whose two channels are the fixed image's
+matched channel and the registered moving image's, so one Neuroglancer shader can compare
+them on the viewer's GPU (overlay, checkerboard, fade, difference) with no refetch.
+`examples/register_demo.py` shows that next to the affine alone (`iterations=0`), and
+re-solves when you type new settings, the viewer keeping its camera.
+
+| parameter | default | meaning |
+| --------- | ------- | ------- |
+| `fixed` | (required) | the fixed image: anything `open_source` reads, with the same spatial units as `<moving>`; percent-encode it if it has a query |
+| `affine` | identity | fixed-to-moving affine in physical units, C order: a `.npy` or text file with a 4×4 or 3×4 matrix, or its 12 or 16 values inline, row by row |
+| `fixed_channel`, `moving_channel` | `0` | the channel each image is matched on, for images with a `c` axis |
+| `levels` | from the coarsest with ≥ 16 voxels on every axis to the finest with ≤ 2²⁵ | fixed-image levels to solve on, coarse to fine, e.g. `6,5,4`; each is matched with the moving level nearest its voxel size |
+| `iterations` | `100` | Adam steps per level, one value or one per level; `0` leaves the affine alone (no GPU needed) |
+| `smooth` | `1` | weight of the penalty on the field's gradient |
+| `grid` | `4` | control-point spacing, voxels of each level |
+| `window` | `7` | correlation window, voxels (odd) |
+| `show` | `image` | `pair` (fixed and registered as two channels) or `field` (`u`, components first, physical units) |
+| `frames` | none | a leading `t` axis of that many snapshots of the solve, from the affine alone to the final field: play `t` to watch it converge. The moving image's own `t` axis must hold one time point, which the frames replace |
+| `chunk` | the fixed image's | output chunk shape of the spatial axes, C order |
+| `interpolation` | `linear`; `nearest` for uint32/uint64 | as for scene sources |
+| `device` | `auto` | `auto` is the GPU with the most free memory, else the CPU; or `cpu`, `cuda:1`, ... |
+
+The parameters follow the last `?`, so the moving image's URL may carry its own query (a
+`warp://` URL, say, which is how the tests check that a known swirl is undone). They are
+one Pydantic model, `RegisterParams`, whose JSON Schema (`chunkmirage schema`) the browser
+engine's types and form defaults are generated from: the
+[browser page](https://yuriyzubov.github.io/chunkmirage/browser/register.html) solves the
+same spec on the viewer's GPU and shows the `chunkmirage serve 'register://…'` command for
+its settings, and fed the same affine and levels the two fields agree to 0.01 µm (median)
+on the fly templates, whose field moves tissue by 7 µm (median).
+
 ### Stored sources
 
 Sources are detected by content, not extension: `zarr.json` → zarr v3, `.zarray` → zarr v2,

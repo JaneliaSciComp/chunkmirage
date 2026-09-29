@@ -60,3 +60,48 @@ def test_serving_address_uses_the_network_ip_and_given_certificate(monkeypatch):
     assert url == "https://10.1.2.3:8005"
     assert ssl == {"ssl_certfile": "c.pem", "ssl_keyfile": "k.pem"}
     assert netutil.is_loopback("127.0.0.1") and not netutil.is_loopback("0.0.0.0")
+
+
+def test_certificate_meets_the_rules_for_trusting_it(tmp_path):
+    x509 = pytest.importorskip("cryptography.x509")
+    from chunkmirage import netutil
+
+    cert_file, _ = netutil.ensure_self_signed_cert(str(tmp_path), hosts=["10.1.2.3"])
+    cert = x509.load_pem_x509_certificate(open(cert_file, "rb").read())
+    usage = cert.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+    assert x509.oid.ExtendedKeyUsageOID.SERVER_AUTH in usage
+    assert (cert.not_valid_after_utc - cert.not_valid_before_utc).days <= 398
+    names = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    assert "localhost" in names.get_values_for_type(x509.DNSName)
+    # reused while it is good; a ten-year certificate from before is made again
+    assert netutil.ensure_self_signed_cert(str(tmp_path))[0] == cert_file
+    mtime = (tmp_path / "chunkmirage.crt").stat().st_mtime_ns
+    assert netutil._cert_usable(cert_file)
+    (tmp_path / "chunkmirage.crt").write_text("not a certificate")
+    netutil.ensure_self_signed_cert(str(tmp_path), hosts=["10.1.2.3"])
+    assert (
+        netutil._cert_usable(cert_file)
+        and (tmp_path / "chunkmirage.crt").stat().st_mtime_ns != mtime
+    )
+
+
+def test_without_cryptography_openssl_applies_the_same_rules(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+    import sys
+
+    if not shutil.which("openssl"):
+        pytest.skip("no openssl")
+    from chunkmirage import netutil
+
+    monkeypatch.setitem(sys.modules, "cryptography", None)  # as without the https extra
+    cert_file, _ = netutil.ensure_self_signed_cert(str(tmp_path), hosts=["10.1.2.3"])
+    assert netutil._cert_usable(cert_file)
+    old = tmp_path / "old.crt"  # what older versions made: ten years, no server usage
+    subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "3650"]
+        + ["-keyout", str(tmp_path / "old.key"), "-out", str(old), "-subj", "/CN=old"],
+        check=True,
+        capture_output=True,
+    )
+    assert not netutil._cert_usable(str(old))

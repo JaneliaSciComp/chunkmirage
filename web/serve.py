@@ -1,0 +1,151 @@
+"""Serve the built browser page (web/dist) over https, with Neuroglancer on the same origin.
+
+    cd web && npm ci && npm run build && cd ..
+    uv run python web/serve.py [--port N] [--host 0.0.0.0] [PAGE?QUERY]
+
+Browsers only allow WebGPU and service workers on secure pages (https, or localhost), so a
+plain ``http://<machine IP>`` link would not work from another computer. This serves the
+build with chunkmirage's self-signed certificate for the machine's IP and prints a
+shareable link. Clicking through the certificate warning is enough for WebGPU but not for
+the service worker the viewer needs: each computer trusts the certificate once in its
+system (it is served at ``/certificate.crt``). ``--host 127.0.0.1`` serves plain http
+instead, for a page opened as ``http://localhost:<port>`` (forward the port if the browser
+runs elsewhere), which needs no certificate. ``--no-https`` serves plain http on the network,
+for browsers told to treat the address as secure (in Chrome, list it under
+chrome://flags/#unsafely-treat-insecure-origin-as-secure): no certificate either.
+
+``/ng/`` is the standard Neuroglancer client, relayed from neuroglancer-demo.appspot.com
+(fetched once, then kept in memory). It has to be on this origin: the page's service
+worker answers the viewer's requests for the registered volume, and a service worker
+only sees requests from pages on its own origin. Nothing here computes anything: the
+page reads the images from their own URLs and does all the work in the viewer's browser,
+so any static https host serves it just as well: the docs site is one, with its own
+Neuroglancer build under ``ng/``. (On one machine, ``npm run preview`` in web/ does the same
+for localhost.) For the fly example, fetch it into web/public/data before building
+(``uv run python web/scripts/fetch_example.py web/public/data``).
+"""
+
+from __future__ import annotations
+
+import argparse
+import functools
+import http.server
+import re
+import ssl
+import threading
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+from chunkmirage.neuroglancer import DEFAULT_VIEWER as NEUROGLANCER
+
+HERE = Path(__file__).resolve().parent
+DIST = HERE / "dist"  # npm run build
+QUIET = ("/favicon", "/data/example.json")  # asked for and not needed: no example fetched here
+
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    client: dict[str, tuple[bytes, str, str | None]] = {}  # the relayed Neuroglancer files
+    lock = threading.Lock()
+    certificate: str | None = None
+
+    def do_GET(self):  # noqa: N802
+        path = self.path.split("?", 1)[0].split("#", 1)[0]
+        if path == "/ng" or path.startswith("/ng/"):
+            return self.neuroglancer(path[len("/ng/") :] or "index.html")
+        if path == "/certificate.crt" and self.certificate:  # the public half, to trust it
+            return self.send(Path(self.certificate).read_bytes(), "application/x-x509-ca-cert")
+        return super().do_GET()
+
+    def send(self, body: bytes, kind: str, encoding: str | None = None) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", kind)
+        if encoding:
+            self.send_header("Content-Encoding", encoding)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def neuroglancer(self, name: str) -> None:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
+            return self.send_error(404)
+        with self.lock:
+            hit = self.client.get(name)
+        if hit is None:
+            try:
+                with urllib.request.urlopen(f"{NEUROGLANCER}/{name}", timeout=60) as r:
+                    hit = (r.read(), r.headers.get("Content-Type", "application/octet-stream"),
+                           r.headers.get("Content-Encoding"))  # fmt: skip
+            except urllib.error.HTTPError as e:
+                return self.send_error(e.code)
+            with self.lock:
+                self.client[name] = hit
+        self.send(*hit)
+
+    def end_headers(self):
+        if not self.path.startswith("/data/"):  # pick up rebuilds of the page and its workers
+            self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+
+    def log_request(self, code="-", size="-"):  # failures only: the page reports the rest
+        if str(code).isdigit() and int(code) >= 400 and not self.path.startswith(QUIET):
+            print(
+                f"{code} {self.command} {self.path[:200]}  (from {self.client_address[0]})",
+                flush=True,
+            )
+
+    def log_message(self, *args):
+        pass
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("page", nargs="?", default="register.html", help="page and query to link to")
+    ap.add_argument("--host", default="0.0.0.0", help="bind address (default: every interface)")
+    ap.add_argument("--port", type=int, help="port (default: 8443 or the next free)")
+    ap.add_argument(
+        "--no-https",
+        action="store_true",
+        help="plain http on the network too, for browsers told to treat this address as "
+        "secure (chrome://flags/#unsafely-treat-insecure-origin-as-secure)",
+    )
+    args = ap.parse_args()
+    if not (DIST / "register.html").exists():
+        raise SystemExit(f"no build in {DIST}: run `npm ci && npm run build` in {HERE} first")
+
+    from chunkmirage.netutil import free_port, is_loopback, serving_address
+
+    port = args.port or free_port(args.host, 8443)
+    https = not (args.no_https or is_loopback(args.host))  # localhost is secure without it
+    address, certs = serving_address(args.host, port, https=https)
+    handler = functools.partial(Handler, directory=str(DIST))
+    server = http.server.ThreadingHTTPServer((args.host, port), handler)
+    if https:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(certs["ssl_certfile"], certs["ssl_keyfile"])
+        server.socket = ctx.wrap_socket(server.socket, server_side=True)
+        Handler.certificate = certs["ssl_certfile"]
+    print(f"page:  {address}/{args.page}", flush=True)
+    if https:
+        print(
+            "https: a self-signed certificate. The viewer's service worker needs it trusted, "
+            "not just clicked through: download\n"
+            f"       {address}/certificate.crt and trust it (on a Mac: Keychain Access, "
+            "Always Trust).\n"
+            "       Or run with --host 127.0.0.1 and open the page through a forwarded port "
+            "(localhost needs no certificate).",
+            flush=True,
+        )
+    elif not is_loopback(args.host):
+        print(
+            "http:  browsers allow WebGPU and service workers on plain http only from localhost\n"
+            "       or an address they were told to treat as secure: in Chrome, add\n"
+            f"       {address} to chrome://flags/#unsafely-treat-insecure-origin-as-secure and "
+            "relaunch.",
+            flush=True,
+        )
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

@@ -7,9 +7,13 @@ consumers, not the purpose. Architecture and rationale: `docs/design.md`.
 
 ## Workflow
 
-- Env: `uv sync --all-extras --group dev --group docs`. In the Claude Code sandbox the
+- Env: `uv sync --extra all --extra gpu --group dev --group docs` (`--extra cpu` on a machine
+  without an NVIDIA GPU; the two conflict, so not `--all-extras`). In the Claude Code sandbox the
   default uv cache is read-only; use `UV_CACHE_DIR=$PWD/.uv-cache` (gitignored).
-- Check: `uv run pytest -q && uv run ruff check src tests examples && uv run mkdocs build --strict`.
+- Check: `uv run pytest -q && uv run ruff check src tests examples web && uv run mkdocs build --strict`.
+- Browser engine (`web/`, TypeScript + Vite): `cd web && npm ci && npm run check`. After
+  changing a Pydantic model it mirrors, regenerate its types:
+  `uv run chunkmirage schema --out web/src/generated/chunkmirage.schema.json && (cd web && npm run gen)`.
 - Do not push or create the GitHub repo unless asked.
 
 ## Documentation policy (non-negotiable)

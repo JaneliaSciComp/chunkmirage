@@ -139,21 +139,19 @@ def _select(cs: CoordinateSystem) -> Affine:
     return Affine(m)
 
 
-def _pick_level(grid: _Grid, to_level0: Transform, src: Image) -> int:
+def _pick_level(shape, to_level0: Transform, voxel_sizes: list[np.ndarray]) -> int:
     """The coarsest source level still at least as fine as one output voxel, measured
-    through the transform at the grid centre (so a zoomed-out view reads a small level)."""
-    n = len(grid.shape)
-    centre = (np.asarray(grid.shape, dtype=float) - 1) / 2
+    through the transform at the centre of a grid of ``shape`` (so a zoomed-out view reads
+    a small level). ``voxel_sizes``: each source level's spatial voxel size."""
+    n = len(shape)
+    centre = (np.asarray(shape, dtype=float) - 1) / 2
     steps = np.vstack([centre + 0.5 * e for e in np.eye(n)] + [centre - 0.5 * e for e in np.eye(n)])
     mapped = to_level0.apply(steps)
     jac = (mapped[:n] - mapped[n:]).T  # (source spatial, output spatial), level-0 voxels
     extent = np.maximum(np.abs(jac).sum(axis=1), 1.0)
-    s = src.cs.spatial
-    base = np.array([src.level_affines[0].linear[a, a] for a in s])
     best = 0
-    for lvl, aff in enumerate(src.level_affines):
-        factor = np.array([aff.linear[a, a] for a in s]) / base
-        if np.all(factor <= extent * 1.01):
+    for lvl, vox in enumerate(voxel_sizes):
+        if np.all(np.asarray(vox) / voxel_sizes[0] <= extent * 1.01):
             best = lvl
     return best
 
@@ -331,6 +329,7 @@ def open_scene(url: str, *, cache_bytes: int = 0) -> MultiscaleSource:
     order = 0 if interpolation == "nearest" else 1
 
     select = _select(s_cs)
+    voxel_sizes = [np.array([a.linear[i, i] for i in s_cs.spatial]) for a in src.level_affines]
     lead_shape = src_levels[0].info.shape[:n_lead]
     lead_chunk = src_levels[0].info.chunk_shape[:n_lead]
     target_label = q.get("target") or t_cs.name
@@ -341,7 +340,7 @@ def open_scene(url: str, *, cache_bytes: int = 0) -> MultiscaleSource:
             to_index = src.level_affines[level].inverse()
             return simplify(Sequence([grid.to_target, chain, to_index, select]))
 
-        lvl = _pick_level(grid, mapping_for(0), src)
+        lvl = _pick_level(grid.shape, mapping_for(0), voxel_sizes)
         mapping = mapping_for(lvl)
         lead = src.level_affines[lvl]  # time and channel pass through with their own scale
         info = ArrayInfo(
