@@ -192,6 +192,14 @@ Fully client-side is feasible and would make a compelling hosted demo:
 * A shared Rust crate (chunk key parsing, zarr/n5/precomputed codecs) compiled to WASM and
   to a Python extension would keep the two implementations from drifting. Not needed to
   start.
+* The first piece is registration: `examples/browser/register.html` reads two OME-Zarr
+  images from their URLs with `zarrita.js` (range requests into sharded stores, zstd and
+  blosc through numcodecs) and fits the same field as `register://` in WebGPU compute
+  shaders, with the gradients written out by hand (WGSL has no autograd, and no float
+  atomics, so each control point gathers its voxels' gradients). Fed the same data, its
+  field matches the PyTorch solver's to about 1% (a median 0.25 µm on a gut whose field
+  moves tissue by 21 µm), and so do its scores. WebGPU needs a secure page:
+  `examples/browser/serve.py` serves it over https with the self-signed certificate.
 
 ## Deployment shapes
 

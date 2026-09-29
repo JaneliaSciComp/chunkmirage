@@ -37,7 +37,11 @@ describe shipped features as future work.
 10. **Own-hosted Neuroglancer with a service worker.** The zero-install browser demo with
    WebGPU ops and ONNX Runtime Web inference, sharing the JSON pipeline spec with the
    Python server. See [FAQ](faq.md#does-this-work-with-neuroglancer-demoappspotcom) for why
-   it cannot target the hosted appspot viewer.
+   it cannot target the hosted appspot viewer. A first piece exists:
+   `examples/browser/register.html` fits `register://`'s deformable registration on the
+   viewer's GPU, reading OME-Zarr straight from its URLs (see the
+   [design notes](design.md#client-side-browser-roadmap)); what remains is serving the
+   registered volume, and ops, to Neuroglancer through the service worker.
 
 ## Untapped potential
 

@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Register in the Browser</title>
+<style>
+  :root { --bg: #fafafa; --fg: #1b1b1b; --muted: #5f6368; --panel: #fff; --line: #d9d9d9; --accent: #1a73e8; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #131417; --fg: #e8e8e8; --muted: #9aa0a6; --panel: #1d1f23; --line: #3a3d42; --accent: #8ab4f8; }
+  }
+  :root[data-theme="dark"] { --bg: #131417; --fg: #e8e8e8; --muted: #9aa0a6; --panel: #1d1f23; --line: #3a3d42; --accent: #8ab4f8; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { color: var(--muted); margin: 0 0 12px; }
+  form { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+  label { display: block; margin: 6px 0; color: var(--muted); font-size: 13px; }
+  input { width: 100%; padding: 5px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); font: inherit; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row label { flex: 1 1 120px; }
+  button { margin-top: 8px; padding: 6px 16px; border: 0; border-radius: 4px; background: var(--accent); color: var(--bg); font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  pre { white-space: pre-wrap; color: var(--muted); font-size: 12px; margin: 12px 0; }
+  #views { display: flex; gap: 12px; flex-wrap: wrap; }
+  figure { margin: 0; flex: 1 1 300px; min-width: 0; }
+  figcaption { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+  canvas { width: 100%; image-rendering: pixelated; background: #000; border-radius: 4px; }
+  #zrow { margin: 8px 0; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+<h1>Register in the browser</h1>
+<p>Fits a deformable registration of the moving image onto the fixed one on this computer's GPU
+(WebGPU), reading both straight from their URLs (OME-Zarr, CORS-enabled). Nothing is uploaded.
+Magenta is the fixed image, green the moving one; white where they agree.</p>
+<form id="form">
+  <label>Fixed image, an OME-Zarr multiscale URL <input name="fixed" required></label>
+  <label>Moving image, an OME-Zarr multiscale URL <input name="moving" required></label>
+  <div class="row">
+    <label>Fixed channel <input name="fixed_channel" type="number" min="0" value="0"></label>
+    <label>Moving channel <input name="moving_channel" type="number" min="0" value="0"></label>
+    <label>Levels, coarse to fine <input name="levels" placeholder="automatic"></label>
+    <label>Iterations per level <input name="iterations" type="number" min="0" value="100"></label>
+    <label>Smoothness <input name="smooth" type="number" min="0" step="any" value="1"></label>
+    <label>Grid spacing, voxels <input name="grid" type="number" min="1" step="any" value="4"></label>
+  </div>
+  <label>Affine, fixed to moving, physical units, row by row: 12 or 16 numbers (empty: identity)
+    <input name="affine"></label>
+  <button id="go" type="submit">Register</button>
+</form>
+<pre id="log"></pre>
+<div id="zrow" hidden><label>Plane <input id="z" type="range" min="0" value="0"></label></div>
+<div id="views" hidden>
+  <figure><figcaption>Before: the affine alone</figcaption><canvas id="before"></canvas></figure>
+  <figure><figcaption>After: affine and solved field</figcaption><canvas id="after"></canvas></figure>
+</div>
+<p id="download" hidden><a id="save" download="field.json">Download the field (JSON)</a></p>
+</main>
+<script type="module">
+import * as zarr from "https://cdn.jsdelivr.net/npm/zarrita@0.7.5/+esm";
+
+// Same method and defaults as chunkmirage.registration (the PyTorch solver behind
+// register://), so the two can be checked against each other.
+const WG = 256;
+const FLAT = 1e-4;            // windows with less variance than this carry no signal
+const WINDOW = 7;             // correlation window, voxels
+const STEP = 0.5;             // Adam learning rate, voxels of each level
+const MAX_VOXELS = 1 << 22;   // finest automatic level (the whole level sits on the GPU)
+const MIN_SIZE = 16;          // coarsest automatic level: this many voxels on every axis
+
+const form = document.getElementById("form");
+const logEl = document.getElementById("log");
+const log = (msg) => { console.log(msg); logEl.textContent += msg + "\n"; };
+
+const query = new URLSearchParams(location.search);
+for (const [k, v] of query) if (form.elements[k]) form.elements[k].value = v;
+form.addEventListener("submit", (e) => { e.preventDefault(); run(); });
+if (query.get("run") === "1") run();
+
+// ---------------------------------------------------------------- OME-Zarr reading
+async function openImage(url) {
+  const store = new zarr.FetchStore(url.replace(/\/+$/, ""));
+  const root = zarr.root(store);
+  const group = await zarr.open(root, { kind: "group" });
+  const ms = (group.attrs.ome?.multiscales ?? group.attrs.multiscales)?.[0];
+  if (!ms) throw new Error(`${url}: no OME-Zarr multiscales metadata`);
+  const names = ms.axes.map((a) => (typeof a === "string" ? a : a.name));
+  const spatial = names.flatMap((n, i) => (["z", "y", "x"].includes(n) ? [i] : []));
+  if (spatial.map((i) => names[i]).join("") !== "zyx" || spatial[2] !== names.length - 1)
+    throw new Error(`${url}: axes ${names} must end in z, y, x`);
+  const levels = await Promise.all(ms.datasets.map(async (d) => {
+    let scale = names.map(() => 1), shift = names.map(() => 0);
+    for (const t of d.coordinateTransformations ?? []) {  // composed in order
+      if (t.type === "scale") { scale = scale.map((s, i) => s * t.scale[i]); shift = shift.map((v, i) => v * t.scale[i]); }
+      if (t.type === "translation") shift = shift.map((v, i) => v + t.translation[i]);
+    }
+    const arr = await zarr.open(root.resolve(d.path), { kind: "array" });
+    return { arr, shape: spatial.map((i) => arr.shape[i]), voxel: spatial.map((i) => scale[i]), origin: spatial.map((i) => shift[i]) };
+  }));
+  const units = spatial.map((i) => ms.axes[i].unit ?? "");
+  return { url, names, levels, units };
+}
+
+async function readLevel(img, i, channel) {
+  const lvl = img.levels[i];
+  const sel = img.names.map((n, k) => (k >= img.names.length - 3 ? null : n === "c" ? channel : 0));
+  const r = await zarr.get(lvl.arr, sel);
+  return { data: r.data, shape: lvl.shape, voxel: lvl.voxel, origin: lvl.origin };
+}
+
+// numpy's percentile (linear), on every step-th value as chunkmirage.registration does
+function percentiles(data, ps) {
+  const step = Math.max(1, Math.floor(data.length / 1e6));
+  const s = new Float32Array(Math.ceil(data.length / step));
+  for (let i = 0, j = 0; i < data.length; i += step) s[j++] = data[i];
+  s.sort();
+  const q = (p) => { const x = (p / 100) * (s.length - 1), lo = Math.floor(x); return s[lo] + (s[Math.min(lo + 1, s.length - 1)] - s[lo]) * (x - lo); };
+  return ps.map(q);
+}
+const range = (data) => percentiles(data, [0.5, 99.5]);
+
+function normalize(data, [lo, hi]) {
+  const out = new Float32Array(data.length), k = 1 / Math.max(hi - lo, 1e-12);
+  for (let i = 0; i < data.length; i++) out[i] = Math.min(1, Math.max(0, (data[i] - lo) * k));
+  return out;
+}
+
+// ---------------------------------------------------------------- WebGPU kernels
+const COMMON = /* wgsl */ `
+struct Params {
+  fshape: vec4<u32>, mshape: vec4<u32>, gshape: vec4<u32>,   // (z, y, x, count)
+  vf: vec4<f32>, tf: vec4<f32>, vm: vec4<f32>, tm: vec4<f32>,  // voxel sizes and origins
+  lo: vec4<f32>, sp: vec4<f32>,                                // control grid origin, spacing
+  a0: vec4<f32>, a1: vec4<f32>, a2: vec4<f32>,                 // affine rows [A | t]
+  misc: vec4<f32>,  // flat, 1/N, lambda, window half-width
+  reg: vec4<f32>,   // 2 / (differences_a * spacing_a^2), per axis
+  adam: vec4<f32>,  // lr, 1/(1-b1^t), 1/(1-b2^t)
+};
+@group(0) @binding(0) var<uniform> P: Params;
+fn voxel(p: u32) -> vec3<u32> {
+  let W = P.fshape.z; let H = P.fshape.y;
+  return vec3<u32>(p / (W * H), (p / W) % H, p % W);
+}
+fn phys(v: vec3<u32>) -> vec3<f32> { return P.tf.xyz + vec3<f32>(v) * P.vf.xyz; }
+fn to_moving(q: vec3<f32>) -> vec3<f32> {
+  let m = vec3<f32>(dot(P.a0.xyz, q) + P.a0.w, dot(P.a1.xyz, q) + P.a1.w, dot(P.a2.xyz, q) + P.a2.w);
+  return (m - P.tm.xyz) / P.vm.xyz;
+}
+fn window_count(p: u32) -> f32 {
+  let h = i32(P.misc.w);
+  let c = vec3<i32>(voxel(p)); let n = vec3<i32>(P.fshape.xyz);
+  let e = min(c + vec3<i32>(h), n - vec3<i32>(1)) - max(c - vec3<i32>(h), vec3<i32>(0)) + vec3<i32>(1);
+  return f32(e.x * e.y * e.z);
+}
+`;
+const ENTRY = (body) => `
+@compute @workgroup_size(${WG})
+fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>,
+        @builtin(local_invocation_index) li: u32) {
+  let p = (wid.y * nwg.x + wid.x) * ${WG}u + li;
+  ${body}
+}`;
+
+const KERNELS = {
+  // Moving image at affine(p + u(p)) (0 beyond it), and dJ/du's per-voxel factor.
+  warp: COMMON + /* wgsl */ `
+@group(0) @binding(1) var<storage, read> U: array<f32>;
+@group(0) @binding(2) var<storage, read> M: array<f32>;
+@group(0) @binding(3) var<storage, read_write> J: array<f32>;
+@group(0) @binding(4) var<storage, read_write> C: array<f32>;
+fn at_u(q: vec3<u32>) -> vec3<f32> {
+  let i = ((q.x * P.gshape.y + q.y) * P.gshape.z + q.z) * 3u;
+  return vec3<f32>(U[i], U[i + 1u], U[i + 2u]);
+}
+fn field(g: vec3<f32>) -> vec3<f32> {
+  let top = vec3<f32>(P.gshape.xyz) - 1.0;
+  let g0 = min(floor(g), max(top - 1.0, vec3<f32>(0.0)));
+  let f = g - g0; let i = vec3<u32>(g0);
+  var d = vec3<f32>(0.0);
+  for (var c = 0u; c < 8u; c++) {
+    let o = vec3<u32>(c & 1u, (c >> 1u) & 1u, (c >> 2u) & 1u);
+    let w = select(1.0 - f.x, f.x, o.x == 1u) * select(1.0 - f.y, f.y, o.y == 1u) * select(1.0 - f.z, f.z, o.z == 1u);
+    d += w * at_u(min(i + o, P.gshape.xyz - vec3<u32>(1u)));
+  }
+  return d;
+}
+fn mov(q: vec3<i32>) -> f32 {
+  let n = vec3<i32>(P.mshape.xyz);
+  if (any(q < vec3<i32>(0)) || any(q >= n)) { return 0.0; }
+  return M[(u32(q.x) * P.mshape.y + u32(q.y)) * P.mshape.z + u32(q.z)];
+}` + ENTRY(/* wgsl */ `
+  if (p >= P.fshape.w) { return; }
+  let x = phys(voxel(p));
+  let g = clamp((x - P.lo.xyz) / P.sp.xyz, vec3<f32>(0.0), vec3<f32>(P.gshape.xyz) - 1.0);
+  let m = to_moving(x + field(g));
+  let m0 = floor(m); let f = m - m0; let i0 = vec3<i32>(m0);
+  var val = 0.0; var gr = vec3<f32>(0.0);
+  for (var c = 0u; c < 8u; c++) {
+    let o = vec3<u32>(c & 1u, (c >> 1u) & 1u, (c >> 2u) & 1u);
+    let s = mov(i0 + vec3<i32>(o));
+    let w = vec3<f32>(select(1.0 - f.x, f.x, o.x == 1u), select(1.0 - f.y, f.y, o.y == 1u), select(1.0 - f.z, f.z, o.z == 1u));
+    let sg = vec3<f32>(select(-1.0, 1.0, o.x == 1u), select(-1.0, 1.0, o.y == 1u), select(-1.0, 1.0, o.z == 1u));
+    val += w.x * w.y * w.z * s;
+    gr += s * vec3<f32>(sg.x * w.y * w.z, w.x * sg.y * w.z, w.x * w.y * sg.z);
+  }
+  J[p] = val;
+  let gm = gr / P.vm.xyz;  // dJ/d(moving index) -> dJ/d(displacement): A^T gm
+  C[3u * p] = P.a0.x * gm.x + P.a1.x * gm.y + P.a2.x * gm.z;
+  C[3u * p + 1u] = P.a0.y * gm.x + P.a1.y * gm.y + P.a2.y * gm.z;
+  C[3u * p + 2u] = P.a0.z * gm.x + P.a1.z * gm.y + P.a2.z * gm.z;`),
+
+  // Per level, before fitting: fixed image, its square, and "not covered by the moving
+  // image under the affine" (1) as three channels, to be box-summed.
+  prep: COMMON + /* wgsl */ `
+@group(0) @binding(1) var<storage, read> F: array<f32>;
+@group(0) @binding(2) var<storage, read_write> S: array<f32>;` + ENTRY(/* wgsl */ `
+  let N = P.fshape.w;
+  if (p >= N) { return; }
+  let m = to_moving(phys(voxel(p)));
+  let top = max(vec3<f32>(P.mshape.xyz) - 1.0, vec3<f32>(1.0));
+  let covered = all(m >= vec3<f32>(0.0)) && all(m <= top);
+  S[p] = F[p]; S[N + p] = F[p] * F[p]; S[2u * N + p] = select(1.0, 0.0, covered);`),
+
+  statics: COMMON + /* wgsl */ `
+@group(0) @binding(1) var<storage, read> S: array<f32>;
+@group(0) @binding(2) var<storage, read_write> STAT: array<f32>;` + ENTRY(/* wgsl */ `
+  let N = P.fshape.w;
+  if (p >= N) { return; }
+  let n = window_count(p);
+  let mi = S[p] / n;
+  STAT[p] = mi;
+  STAT[N + p] = S[N + p] / n - mi * mi;
+  STAT[2u * N + p] = select(0.0, 1.0, S[2u * N + p] < 0.5);  // whole window covered`),
+
+  products: COMMON + /* wgsl */ `
+@group(0) @binding(1) var<storage, read> F: array<f32>;
+@group(0) @binding(2) var<storage, read> J: array<f32>;
+@group(0) @binding(3) var<storage, read_write> S: array<f32>;` + ENTRY(/* wgsl */ `
+  let N = P.fshape.w;
+  if (p >= N) { return; }
+  let j = J[p];
+  S[p] = j; S[N + p] = j * j; S[2u * N + p] = F[p] * j;`),
+
+  // Box sum of three channels along one axis, the window clipped at the volume's faces.
+  box: COMMON + /* wgsl */ `
+struct Box { axis: u32, pad0: u32, pad1: u32, pad2: u32 };
+@group(0) @binding(1) var<uniform> B: Box;
+@group(0) @binding(2) var<storage, read> IN: array<f32>;
+@group(0) @binding(3) var<storage, read_write> OUT: array<f32>;` + ENTRY(/* wgsl */ `
+  let N = P.fshape.w;
+  if (p >= N) { return; }
+  let v = voxel(p);
+  let h = i32(P.misc.w);
+  var c = i32(v.z); var n = i32(P.fshape.z); var stride = 1;
+  if (B.axis == 0u) { c = i32(v.x); n = i32(P.fshape.x); stride = i32(P.fshape.y * P.fshape.z); }
+  if (B.axis == 1u) { c = i32(v.y); n = i32(P.fshape.y); stride = i32(P.fshape.z); }
+  let lo = max(c - h, 0) - c; let hi = min(c + h, n - 1) - c;
+  for (var ch = 0u; ch < 3u; ch++) {
+    var s = 0.0;
+    for (var t = lo; t <= hi; t++) { s += IN[ch * N + u32(i32(p) + t * stride)]; }
+    OUT[ch * N + p] = s;
+  }`),
+
+  // Squared local correlation and the per-window factors of its gradient.
+  cc: COMMON + /* wgsl */ `
+@group(0) @binding(1) var<storage, read> S: array<f32>;
+@group(0) @binding(2) var<storage, read> STAT: array<f32>;
+@group(0) @binding(3) var<storage, read_write> AB: array<f32>;
+@group(0) @binding(4) var<storage, read_write> CC: array<f32>;` + ENTRY(/* wgsl */ `
+  let N = P.fshape.w;
+  if (p >= N) { return; }
+  let n = window_count(p);
+  let mj = S[p] / n; let vj = S[N + p] / n - mj * mj; let ij = S[2u * N + p] / n;
+  let mi = STAT[p]; let vi = STAT[N + p];
+  let cov = ij - mi * mj;
+  var a = 0.0; var b = 0.0; var cc = 0.0;
+  if (vi > P.misc.x && vj > P.misc.x && STAT[2u * N + p] > 0.5) {
+    let r = cov / (vi * vj);
+    cc = cov * r; a = 2.0 * r / n; b = 2.0 * cov * r / (vj * n);
+  }
+  AB[p] = a; AB[N + p] = b; AB[2u * N + p] = a * mi - b * mj;
+  CC[p] = cc;`),
+
+  // d(loss)/d(displacement) at every voxel: the windows through it, then the chain rule.
+  grad: COMMON + /* wgsl */ `
+@group(0) @binding(1) var<storage, read> F: array<f32>;
+@group(0) @binding(2) var<storage, read> J: array<f32>;
+@group(0) @binding(3) var<storage, read> S: array<f32>;
+@group(0) @binding(4) var<storage, read> C: array<f32>;
+@group(0) @binding(5) var<storage, read_write> GD: array<f32>;` + ENTRY(/* wgsl */ `
+  let N = P.fshape.w;
+  if (p >= N) { return; }
+  let dj = -(F[p] * S[p] - J[p] * S[N + p] - S[2u * N + p]) * P.misc.y;
+  GD[3u * p] = dj * C[3u * p]; GD[3u * p + 1u] = dj * C[3u * p + 1u]; GD[3u * p + 2u] = dj * C[3u * p + 2u];`),
+
+  // Gradient at each control point: its voxels' gradients weighted by their trilinear
+  // weights (gathered, since WGSL has no float atomics), plus the smoothness term.
+  gather: COMMON + /* wgsl */ `
+@group(0) @binding(1) var<storage, read> GD: array<f32>;
+@group(0) @binding(2) var<storage, read> U: array<f32>;
+@group(0) @binding(3) var<storage, read_write> GU: array<f32>;
+fn u_at(q: vec3<u32>, k: u32) -> f32 { return U[((q.x * P.gshape.y + q.y) * P.gshape.z + q.z) * 3u + k]; }` + ENTRY(/* wgsl */ `
+  if (p >= P.gshape.w) { return; }
+  let Gx = P.gshape.z; let Gy = P.gshape.y;
+  let c = vec3<u32>(p / (Gx * Gy), (p / Gx) % Gy, p % Gx);
+  let cf = vec3<f32>(c);
+  let xc = P.lo.xyz + cf * P.sp.xyz;
+  let top = vec3<f32>(P.gshape.xyz) - 1.0;
+  let lo = vec3<i32>(max(ceil((xc - P.sp.xyz - P.tf.xyz) / P.vf.xyz), vec3<f32>(0.0)));
+  let hi = vec3<i32>(min(floor((xc + P.sp.xyz - P.tf.xyz) / P.vf.xyz), vec3<f32>(P.fshape.xyz) - 1.0));
+  var acc = vec3<f32>(0.0);
+  for (var i = lo.x; i <= hi.x; i++) {
+    for (var j = lo.y; j <= hi.y; j++) {
+      for (var k = lo.z; k <= hi.z; k++) {
+        let v = vec3<u32>(u32(i), u32(j), u32(k));
+        let g = clamp((phys(v) - P.lo.xyz) / P.sp.xyz, vec3<f32>(0.0), top);
+        let d = abs(g - cf);
+        if (all(d < vec3<f32>(1.0))) {
+          let w = (1.0 - d.x) * (1.0 - d.y) * (1.0 - d.z);
+          let q = (v.x * P.fshape.y + v.y) * P.fshape.z + v.z;
+          acc += w * vec3<f32>(GD[3u * q], GD[3u * q + 1u], GD[3u * q + 2u]);
+        }
+      }
+    }
+  }
+  for (var k = 0u; k < 3u; k++) {
+    var r = 0.0;
+    let u0 = u_at(c, k);
+    for (var a = 0u; a < 3u; a++) {
+      var e = vec3<u32>(0u); e[a] = 1u;
+      if (c[a] > 0u) { r += P.reg[a] * (u0 - u_at(c - e, k)); }
+      if (c[a] + 1u < P.gshape[a]) { r -= P.reg[a] * (u_at(c + e, k) - u0); }
+    }
+    GU[3u * p + k] = acc[k] + P.misc.z * r;
+  }`),
+
+  adam: COMMON + /* wgsl */ `
+@group(0) @binding(1) var<storage, read> GU: array<f32>;
+@group(0) @binding(2) var<storage, read_write> U: array<f32>;
+@group(0) @binding(3) var<storage, read_write> MOM: array<f32>;
+@group(0) @binding(4) var<storage, read_write> VEL: array<f32>;` + ENTRY(/* wgsl */ `
+  if (p >= 3u * P.gshape.w) { return; }
+  let g = GU[p];
+  let m = 0.9 * MOM[p] + 0.1 * g; let v = 0.999 * VEL[p] + 0.001 * g * g;
+  MOM[p] = m; VEL[p] = v;
+  U[p] -= P.adam.x * (m * P.adam.y) / (sqrt(v * P.adam.z) + 1e-8);`),
+};
+
+async function gpu() {
+  if (!navigator.gpu) throw new Error("this browser has no WebGPU (chrome://gpu shows why; on Linux Chrome may need chrome://flags/#enable-unsafe-webgpu)");
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+  if (!adapter) throw new Error("no WebGPU adapter");
+  const device = await adapter.requestDevice({
+    requiredLimits: { maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxBufferSize: adapter.limits.maxBufferSize },
+  });
+  const pipelines = {};
+  for (const [name, code] of Object.entries(KERNELS)) {
+    const module = device.createShaderModule({ code });
+    const info = await module.getCompilationInfo();
+    for (const m of info.messages) if (m.type === "error") throw new Error(`${name}: ${m.message} (line ${m.lineNum})`);
+    pipelines[name] = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "main" } });
+  }
+  const info = adapter.info ?? {};
+  return { device, pipelines, name: [info.vendor, info.architecture, info.description].filter(Boolean).join(" ") };
+}
+
+// ---------------------------------------------------------------- the solve
+const prod = (a) => a.reduce((x, y) => x * y, 1);
+
+function controlShape(lo, hi, voxel, grid) {
+  return lo.map((l, a) => Math.max(2, Math.ceil((hi[a] - l) / (grid * voxel[a])) + 1));
+}
+
+function refine(u, from, to) {  // trilinear, both grids spanning the same box
+  const out = new Float32Array(3 * prod(to));
+  const at = (z, y, x, k) => u[((z * from[1] + y) * from[2] + x) * 3 + k];
+  const coord = (i, a) => { const c = to[a] > 1 ? (i * (from[a] - 1)) / (to[a] - 1) : 0; const i0 = Math.min(Math.floor(c), from[a] - 2); return [Math.max(i0, 0), c - Math.max(i0, 0)]; };
+  for (let z = 0; z < to[0]; z++) for (let y = 0; y < to[1]; y++) for (let x = 0; x < to[2]; x++) {
+    const [z0, fz] = coord(z, 0), [y0, fy] = coord(y, 1), [x0, fx] = coord(x, 2);
+    for (let k = 0; k < 3; k++) {
+      let v = 0;
+      for (let c = 0; c < 8; c++) {
+        const oz = c & 1, oy = (c >> 1) & 1, ox = (c >> 2) & 1;
+        const w = (oz ? fz : 1 - fz) * (oy ? fy : 1 - fy) * (ox ? fx : 1 - fx);
+        if (w) v += w * at(Math.min(z0 + oz, from[0] - 1), Math.min(y0 + oy, from[1] - 1), Math.min(x0 + ox, from[2] - 1), k);
+      }
+      out[((z * to[1] + y) * to[2] + x) * 3 + k] = v;
+    }
+  }
+  return out;
+}
+
+class Level {
+  constructor(g, fixed, moving, affine, box, gshape, settings) {
+    const { device } = g;
+    this.g = g; this.fixed = fixed; this.moving = moving; this.gshape = gshape;
+    const N = prod(fixed.shape), G = prod(gshape);
+    this.N = N; this.G = G;
+    const lo = box[0], hi = box[1];
+    this.spacing = lo.map((l, a) => (hi[a] - l) / (gshape[a] - 1));
+    const buf = (n, usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST) =>
+      device.createBuffer({ size: Math.max(16, n * 4), usage });
+    this.buffers = {
+      P: device.createBuffer({ size: 16 * 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
+      F: buf(N), M: buf(prod(moving.shape)), U: buf(3 * G), J: buf(N), C: buf(3 * N),
+      S: buf(3 * N), T: buf(3 * N), AB: buf(3 * N), STAT: buf(3 * N), CC: buf(N), GD: buf(3 * N),
+      GU: buf(3 * G), MOM: buf(3 * G), VEL: buf(3 * G),
+    };
+    this.axes = [0, 1, 2].map((a) => {
+      const b = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      device.queue.writeBuffer(b, 0, new Uint32Array([a, 0, 0, 0]));
+      return b;
+    });
+    const B = this.buffers;
+    device.queue.writeBuffer(B.F, 0, fixed.norm);
+    device.queue.writeBuffer(B.M, 0, moving.norm);
+    // Params
+    const p = new ArrayBuffer(16 * 16), u32 = new Uint32Array(p), f32 = new Float32Array(p);
+    u32.set([...fixed.shape, N], 0); u32.set([...moving.shape, prod(moving.shape)], 4); u32.set([...gshape, G], 8);
+    f32.set(fixed.voxel, 12); f32.set(fixed.origin, 16); f32.set(moving.voxel, 20); f32.set(moving.origin, 24);
+    f32.set(lo, 28); f32.set(this.spacing, 32);
+    f32.set(affine[0], 36); f32.set(affine[1], 40); f32.set(affine[2], 44);
+    f32.set([FLAT, 1 / N, settings.smooth, Math.floor(WINDOW / 2)], 48);
+    const diffs = [0, 1, 2].map((a) => 3 * (gshape[a] - 1) * prod(gshape.filter((_, b) => b !== a)));
+    f32.set([0, 1, 2].map((a) => (diffs[a] ? 2 / (diffs[a] * this.spacing[a] ** 2) : 0)), 52);
+    this.params = p;
+    this.lr = STEP * (fixed.voxel.reduce((x, y) => x + y) / 3);
+    device.queue.writeBuffer(B.P, 0, p);
+    const bind = (name, ...names) => device.createBindGroup({
+      layout: g.pipelines[name].getBindGroupLayout(0),
+      entries: names.map((n, i) => ({ binding: i, resource: { buffer: typeof n === "string" ? B[n] : n } })),
+    });
+    const boxes = (a, b, c, d) => [bind("box", "P", this.axes[0], a, b), bind("box", "P", this.axes[1], b, c), bind("box", "P", this.axes[2], c, d)];
+    this.groups = {
+      prep: bind("prep", "P", "F", "S"), statics: bind("statics", "P", "T", "STAT"),
+      boxPrep: boxes(B.S, B.T, B.S, B.T),
+      warp: bind("warp", "P", "U", "M", "J", "C"), products: bind("products", "P", "F", "J", "S"),
+      boxJ: boxes(B.S, B.T, B.S, B.T), cc: bind("cc", "P", "T", "STAT", "AB", "CC"),
+      boxAB: boxes(B.AB, B.S, B.T, B.S), grad: bind("grad", "P", "F", "J", "S", "C", "GD"),
+      gather: bind("gather", "P", "GD", "U", "GU"), adam: bind("adam", "P", "GU", "U", "MOM", "VEL"),
+    };
+    const enc = device.createCommandEncoder(), pass = enc.beginComputePass();
+    this.dispatch(pass, "prep", N); this.boxes(pass, "boxPrep"); this.dispatch(pass, "statics", N);
+    pass.end(); device.queue.submit([enc.finish()]);
+  }
+
+  dispatch(pass, name, n, group = this.groups[name]) {
+    const blocks = Math.ceil(n / WG), x = Math.min(blocks, 65535);
+    pass.setPipeline(this.g.pipelines[name]); pass.setBindGroup(0, group);
+    pass.dispatchWorkgroups(x, Math.ceil(blocks / x));
+  }
+
+  boxes(pass, key) { for (const grp of this.groups[key]) this.dispatch(pass, "box", this.N, grp); }
+
+  setField(u) { this.g.device.queue.writeBuffer(this.buffers.U, 0, u); }
+
+  step(t) {  // one Adam iteration
+    const f32 = new Float32Array(this.params);
+    f32.set([this.lr, 1 / (1 - 0.9 ** t), 1 / (1 - 0.999 ** t), 0], 56);
+    this.g.device.queue.writeBuffer(this.buffers.P, 0, this.params);
+    const enc = this.g.device.createCommandEncoder(), pass = enc.beginComputePass();
+    this.dispatch(pass, "warp", this.N); this.dispatch(pass, "products", this.N); this.boxes(pass, "boxJ");
+    this.dispatch(pass, "cc", this.N); this.boxes(pass, "boxAB"); this.dispatch(pass, "grad", this.N);
+    this.dispatch(pass, "gather", this.G); this.dispatch(pass, "adam", 3 * this.G);
+    pass.end(); this.g.device.queue.submit([enc.finish()]);
+  }
+
+  async read(name, n) {
+    const { device } = this.g;
+    const staging = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = device.createCommandEncoder();
+    enc.copyBufferToBuffer(this.buffers[name], 0, staging, 0, n * 4);
+    device.queue.submit([enc.finish()]);
+    await staging.mapAsync(GPUMapMode.READ);
+    const out = new Float32Array(staging.getMappedRange().slice(0));
+    staging.destroy();
+    return out;
+  }
+
+  async similarity() { const cc = await this.read("CC", this.N); let s = 0; for (const v of cc) s += v; return s / this.N; }
+
+  async warped(u) {  // the moving image through field u, on this level's grid
+    this.setField(u);
+    const enc = this.g.device.createCommandEncoder(), pass = enc.beginComputePass();
+    this.dispatch(pass, "warp", this.N); pass.end(); this.g.device.queue.submit([enc.finish()]);
+    return this.read("J", this.N);
+  }
+
+  destroy() { for (const b of [...Object.values(this.buffers), ...this.axes]) b.destroy(); }
+}
+
+function defaultLevels(img) {
+  const shapes = img.levels.map((l) => l.shape);
+  const fits = shapes.flatMap((s, i) => (prod(s) <= MAX_VOXELS ? [i] : []));
+  const finest = fits.length ? fits[0] : shapes.length - 1;
+  const coarse = shapes.flatMap((s, i) => (Math.min(...s) >= MIN_SIZE ? [i] : []));
+  const coarsest = Math.max(coarse.length ? Math.max(...coarse) : finest, finest);
+  const out = []; for (let i = coarsest; i >= finest; i--) out.push(i);
+  return out;
+}
+
+function parseAffine(text) {
+  const v = (text || "").split(/[\s,]+/).filter(Boolean).map(Number);
+  if (!v.length) return [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]];
+  if ((v.length !== 12 && v.length !== 16) || v.some(Number.isNaN)) throw new Error("the affine needs 12 or 16 numbers");
+  return [v.slice(0, 4), v.slice(4, 8), v.slice(8, 12)];
+}
+
+async function run() {
+  const go = document.getElementById("go");
+  go.disabled = true; logEl.textContent = ""; window.__done = false;
+  const f = Object.fromEntries(new FormData(form));
+  history.replaceState(null, "", "?" + new URLSearchParams(f));
+  try {
+    const t0 = performance.now();
+    const g = await gpu();
+    log(`GPU: ${g.name || "unknown adapter"}`);
+    const [fixed, moving] = await Promise.all([openImage(f.fixed), openImage(f.moving)]);
+    if (fixed.units.join() !== moving.units.join()) throw new Error(`units differ: ${fixed.units} vs ${moving.units}`);
+    const affine = parseAffine(f.affine);
+    const levels = f.levels ? f.levels.split(",").map(Number) : defaultLevels(fixed);
+    const iterations = Number(f.iterations), settings = { smooth: Number(f.smooth), grid: Number(f.grid) };
+    const near = (vox) => moving.levels.map((l) => l.voxel.reduce((s, v, a) => s + Math.abs(Math.log(v / vox[a])), 0)).reduce((b, d, i, a) => (d < a[b] ? i : b), 0);
+    const pairs = levels.map((i) => [i, near(fixed.levels[i].voxel)]);
+    const tRead = performance.now();
+    const data = await Promise.all(pairs.map(([i, j]) => Promise.all([readLevel(fixed, i, Number(f.fixed_channel)), readLevel(moving, j, Number(f.moving_channel))])));
+    log(`read levels ${levels.join(", ")} of both images in ${((performance.now() - tRead) / 1000).toFixed(1)} s`);
+    const fr = range(data[0][0].data), mr = range(data[0][1].data);
+    for (const [fl, ml] of data) { fl.norm = normalize(fl.data, fr); ml.norm = normalize(ml.data, mr); }
+    const l0 = fixed.levels[0];
+    const lo = l0.origin.map((o, a) => o - l0.voxel[a] / 2), hi = lo.map((l, a) => l + l0.shape[a] * l0.voxel[a]);
+
+    const tSolve = performance.now();
+    let gshape = controlShape(lo, hi, data[0][0].voxel, settings.grid), u = new Float32Array(3 * prod(gshape));
+    const stages = [];
+    let last;
+    for (const [s, [fl, ml]] of data.entries()) {
+      const shape = controlShape(lo, hi, fl.voxel, settings.grid);
+      if (shape.join() !== gshape.join()) { u = refine(u, gshape, shape); gshape = shape; }
+      last?.destroy();
+      const lvl = new Level(g, fl, ml, affine, [lo, hi], gshape, settings);
+      lvl.setField(u);
+      const ts = performance.now();
+      let first = null;
+      for (let t = 1; t <= iterations; t++) {
+        lvl.step(t);
+        if (t === 1) first = await lvl.similarity();
+      }
+      const final = iterations ? await lvl.similarity() : 0;
+      u = await lvl.read("U", 3 * lvl.G);
+      const secs = (performance.now() - ts) / 1000;
+      stages.push({ level: levels[s], shape: fl.shape, grid: gshape, seconds: secs, first, final });
+      log(`stage ${s + 1}/${data.length}: level ${levels[s]}, ${fl.shape.join("x")} voxels, grid ${gshape.join("x")}, ${iterations} iterations in ${secs.toFixed(1)} s: similarity ${first?.toFixed(4)} -> ${final.toFixed(4)}`);
+      last = lvl;
+    }
+    const solveSecs = (performance.now() - tSolve) / 1000;
+    log(`solved in ${solveSecs.toFixed(1)} s on the GPU (${((performance.now() - t0) / 1000).toFixed(1)} s in all)`);
+
+    const fl = data.at(-1)[0];
+    const before = await last.warped(new Float32Array(3 * prod(gshape)));
+    const after = await last.warped(u);
+    last.destroy();
+    show(fl, before, after);
+    const spacing = lo.map((l, a) => (hi[a] - l) / (gshape[a] - 1));
+    const result = { gpu: g.name, levels, stages, solveSeconds: solveSecs, grid: { shape: gshape, origin: lo, spacing, values: Array.from(u) } };
+    window.__result = result;
+    const save = document.getElementById("save");
+    save.href = URL.createObjectURL(new Blob([JSON.stringify(result)], { type: "application/json" }));
+    document.getElementById("download").hidden = false;
+  } catch (e) {
+    log(`error: ${e.message ?? e}`);
+    console.error(e);
+  } finally {
+    go.disabled = false; window.__done = true;
+  }
+}
+
+// ---------------------------------------------------------------- display
+function show(fl, before, after) {
+  const [D, H, W] = fl.shape;
+  const zInput = document.getElementById("z");
+  let best = 0, bestSum = -1;  // the plane with the most fixed signal
+  for (let z = 0; z < D; z++) { let s = 0; for (let i = z * H * W; i < (z + 1) * H * W; i++) s += fl.norm[i]; if (s > bestSum) { bestSum = s; best = z; } }
+  zInput.max = D - 1; zInput.value = best;
+  // Contrast from the voxels with data (beyond the moving image the warped one is 0),
+  // from the 5th percentile: in sparse tissue that is background, which then shows dark.
+  const limits = (a) => {
+    const v = a.filter((x) => x > 0);
+    if (!v.length) return [0, 1];
+    const [lo, hi] = percentiles(v, [5, 99.8]);
+    return [lo, Math.max(hi, lo + 1e-6)];
+  };
+  const [f0, f1] = limits(fl.norm), [m0, m1] = limits(after);
+  const scale = (x, lo, hi) => Math.min(1, Math.max(0, (x - lo) / (hi - lo))) * 255;
+  const draw = () => {
+    const z = Number(zInput.value);
+    for (const [id, img] of [["before", before], ["after", after]]) {
+      const canvas = document.getElementById(id);
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext("2d"), px = ctx.createImageData(W, H);
+      for (let i = 0; i < H * W; i++) {
+        const f = scale(fl.norm[z * H * W + i], f0, f1), m = scale(img[z * H * W + i], m0, m1);
+        px.data.set([f, m, f, 255], 4 * i);
+      }
+      ctx.putImageData(px, 0, 0);
+    }
+  };
+  zInput.oninput = draw;
+  document.getElementById("zrow").hidden = false;
+  document.getElementById("views").hidden = false;
+  draw();
+}
+</script>
+</body>
+</html>
