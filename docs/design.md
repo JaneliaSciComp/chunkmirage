@@ -205,13 +205,23 @@ Fully client-side is feasible and would make a compelling hosted demo:
   images from their URLs with `zarrita.js` (range requests into sharded stores, zstd and
   blosc through numcodecs) and fits the same field as `register://` in WebGPU compute
   shaders, with the gradients written out by hand (WGSL has no autograd, and no float
-  atomics, so each control point gathers its voxels' gradients). Fed the same data, its
+  atomics, so each control point gathers its voxels' gradients). The local correlation's
+  window sums are running sums along each axis in the shaders (one thread per line), so
+  a wider window costs nothing extra and the solve is about twice as fast as with a
+  per-voxel box filter. PyTorch keeps cuDNN's separable box filter: a prefix-sum version
+  measured 4x slower at the default window (68 vs 17 ms per pooling on a 2^25-voxel
+  level) and only wins past windows of about 60. Fed the same data, its
   field matches the PyTorch solver's to about 1% (a median 0.25 µm on a gut whose field
   moves tissue by 21 µm), and so do its scores. It then shows before and after in
   Neuroglancer hosted on the page's origin: the page's service worker hands the viewer's
   requests for the registered volume to the page, whose web workers resample the moving
   image through the field as `scene://` does, reading it from its URL through a cache of
-  decoded blocks. So all of `register://` runs client side. WebGPU and service workers
+  decoded blocks. Caching is the viewer's job, not the page's: the page only raises the
+  viewer's memory limits to twice their defaults, since a chunk the viewer drops and asks
+  for again costs a read of the moving image and a resample. Its 3D maximum projections
+  are a checkbox, off by default above 2^27 voxels: volume rendering asks for chunks
+  across the whole visible volume, which on a whole-organ image keeps the workers busy
+  and the viewer dropping chunks. So all of `register://` runs client side. WebGPU and service workers
   need a secure page, and a service worker will not run on a certificate that was only
   clicked through: `web/serve.py` serves the build over https with the
   self-signed certificate (trusted once in the system; it is made to the rules macOS and
