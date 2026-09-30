@@ -21,8 +21,11 @@ const PAGE = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toSt
 type FieldName = "fixed" | "moving" | "fixed_channel" | "moving_channel" | "affine" | "levels" | "iterations" | "smooth" | "grid";
 type Form = Record<FieldName, string>;
 interface Ranges { fixed: number[]; moving: number[]; field?: number }
+interface Sources { before?: string; after?: string; field?: string }
 interface Session {
   fixed: Image; moving: Image; pool: Pool; views: Map<string, ViewKind>;
+  before?: { id: string; key: string; url: string };  // the moving image placed by the affine alone
+  sources?: Sources;  // what the viewer shows
   ranges?: Ranges; rangesKey?: string; shown?: boolean;
 }
 interface Channels { fixedChannel: number; movingChannel: number }
@@ -147,9 +150,8 @@ async function preview() {
       s.ranges = { fixed: contrast(fl.data), moving: contrast(ml.data) };
       s.rangesKey = key;
     }
-    const id = `before-${++previews}`;  // a new URL each time: the viewer caches by URL
-    const before = publish(s, id, affine, null);
-    retain(s, [id]);
+    const before = beforeView(s, affine);
+    retain(s, [s.before!.id]);
     showViewer(s, viewerState(s, p, { before }));
     $("beforeCaption").textContent = beforeCaption(f.affine);
     $("afterCaption").textContent = "After: press Register";
@@ -208,23 +210,6 @@ navigator.serviceWorker?.addEventListener("message", async (e: MessageEvent<{ pa
 
 const asJson = (o: object): Reply => ({ status: 200, body: JSON.stringify(o), type: "application/json" });
 
-// Computed chunks, kept so that the viewer's re-requests (it drops chunks to stay within its
-// memory limits, then asks again as they come back into view) cost a copy, not a read of
-// the moving image and a resample.
-const CHUNK_CACHE_BYTES = 512 * 2 ** 20;
-const chunkCache = new Map<string, ArrayBuffer>();  // path -> bytes, in use order
-let chunkCacheBytes = 0;
-function remember(path: string, body: ArrayBuffer) {
-  chunkCache.set(path, body); chunkCacheBytes += body.byteLength;
-  for (const [k, v] of chunkCache) {
-    if (chunkCacheBytes <= CHUNK_CACHE_BYTES) break;
-    chunkCache.delete(k); chunkCacheBytes -= v.byteLength;
-  }
-}
-function forget(test: (path: string) => boolean) {
-  for (const [k, v] of chunkCache) if (test(k)) { chunkCache.delete(k); chunkCacheBytes -= v.byteLength; }
-}
-
 async function answer(path: string): Promise<Reply> {  // a request under /virtual/<page>/<view>/..., or null if not ours
   const parts = path.split("/virtual/")[1]?.split("/");
   const s = session;
@@ -236,18 +221,12 @@ async function answer(path: string): Promise<Reply> {  // a request under /virtu
   if (rest.length === 1 && rest[0] === "zarr.json") return asJson(groupMetadata(s, view, kind));
   if (rest.length === 2 && rest[1] === "zarr.json") return asJson(arrayMetadata(s, Number(rest[0]), kind));
   if (rest[1] === "c") {
-    const hit = chunkCache.get(path);
-    if (hit) {  // a copy goes out: the reply's buffer is handed over to the service worker
-      chunkCache.delete(path); chunkCache.set(path, hit);
-      return { status: 200, body: hit.slice(0), type: "application/octet-stream" };
-    }
     const level = Number(rest[0]), idx = rest.slice(2).map(Number);
     const n = kind === "field" ? 1 : s.moving.lead, c = s.moving.names.indexOf("c");
     const channel = kind === "field" || c < 0 ? 0 : idx[c], index = idx.slice(n);
     const key = ((((level * 7 + channel) * 131 + (index[0] >> 2)) * 131 + index[1]) * 131 + index[2]) >>> 0;
     const body = await s.pool.chunk({ type: "chunk", id: view, level, channel, index }, key);
-    remember(path, body);
-    return { status: 200, body: body.slice(0), type: "application/octet-stream" };
+    return { status: 200, body, type: "application/octet-stream" };
   }
   return notFound;
 }
@@ -307,6 +286,7 @@ async function startServing(fixed: Image, moving: Image): Promise<Session> {
     fixedLevels: fixed.levels.map((l) => ({ shape: l.shape, voxel: l.voxel, origin: l.origin })),
   });
   session = { fixed, moving, pool, views: new Map() };
+  if (!view3dChosen) view3d.checked = prod(fixed.levels[0].shape) <= BIG_VOLUME;
   return session;
 }
 
@@ -316,11 +296,22 @@ function publish(s: Session, id: string, affine: Affine, grid: ControlGrid | nul
   return `zarr3://${new URL(`virtual/${PAGE}/${id}/`, location.href).href}`;
 }
 
+/** The moving image placed by `affine` alone, published once per affine: a fresh URL for
+ * the same view would have the viewer reload the whole panel for nothing. */
+function beforeView(s: Session, affine: Affine): string {
+  const key = JSON.stringify(affine);
+  if (s.before?.key !== key) {
+    const id = `before-${++previews}`;
+    s.before = { id, key, url: publish(s, id, affine, null) };
+  }
+  return s.before.url;
+}
+
 /** Forget the views the viewer no longer shows, here and in the chunk workers. */
 function retain(s: Session, keep: string[]) {
   const ids = [...s.views.keys()].filter((id) => !keep.includes(id));
   for (const id of ids) s.views.delete(id);
-  if (ids.length) { s.pool.broadcast({ type: "drop", ids }); forget((path) => ids.some((id) => path.includes(`/${id}/`))); }
+  if (ids.length) s.pool.broadcast({ type: "drop", ids });
 }
 
 /** The two images, reused while the form names the same ones. */
@@ -336,6 +327,12 @@ async function images(f: Form): Promise<[Image, Image]> {
 // In 3D the brightest point along each ray is the one that moved furthest (emitIntensity; the
 // image layers get theirs from their invlerp).
 const MAX = { volumeRendering: "max", volumeRenderingDepthSamples: 128 };  // 3D: maximum intensity
+// Volume rendering asks for chunks across the whole visible volume, each computed here, so on
+// a large image it keeps the workers busy and the viewer dropping chunks: above this many
+// voxels at full resolution the 3D views start off, unless the link or the visitor says.
+const BIG_VOLUME = 1 << 27;
+const view3d = $<HTMLInputElement>("view3d");
+let view3dChosen = false;
 const FIELD_SHADER = (scale: number) => `#uicontrol float scale slider(min=${(scale / 20).toPrecision(2)}, max=${(scale * 4).toPrecision(2)}, default=${scale.toPrecision(3)})
 #uicontrol bool direction checkbox(default=false)
 void main() {
@@ -353,8 +350,9 @@ interface NgLayer { name: string; shaderControls?: unknown; [k: string]: unknown
 interface NgState { layers: NgLayer[]; [k: string]: unknown }
 interface NgViewer { state: { toJSON(): NgState; restoreState(s: NgState): void } }
 
-function viewerState(s: Session, p: Channels, sources: { before?: string; after?: string; field?: string }): NgState {
-  const { fixed, moving } = s, l0 = fixed.levels[0], ranges = s.ranges!;
+function viewerState(s: Session, p: Channels, sources: Sources): NgState {
+  const { fixed, moving } = s, l0 = fixed.levels[0], ranges = s.ranges!, three = view3d.checked;
+  s.sources = sources;
   const toM = TO_METRES[fixed.axes[fixed.axes.length - 1].unit ?? ""] ?? 1;
   const dims: Record<string, [number, string]> = { x: [l0.voxel[2] * toM, "m"], y: [l0.voxel[1] * toM, "m"], z: [l0.voxel[0] * toM, "m"] };
   const position = [l0.shape[2] / 2, l0.shape[1] / 2, l0.shape[0] / 2];
@@ -362,7 +360,7 @@ function viewerState(s: Session, p: Channels, sources: { before?: string; after?
   if (t >= 0) { dims.t = [l0.scale[t] * (TO_SECONDS[fixed.axes[t].unit ?? ""] ?? 1), "s"]; position.push(0.5); }
   const shader = (colour: string) => `#uicontrol invlerp normalized\n#uicontrol vec3 colour color(default="${colour}")\nvoid main() { emitRGB(colour * normalized()); }\n`;
   const layer = (name: string, source: string, colour: string, range: number[], channel: number, img: Image): NgLayer => ({
-    type: "image", name, source, blend: "additive", shader: shader(colour), shaderControls: { normalized: { range } }, ...MAX,
+    type: "image", name, source, blend: "additive", shader: shader(colour), shaderControls: { normalized: { range } }, ...(three ? MAX : {}),
     ...(img.names.includes("c") ? { localPosition: [channel] } : {}),
   });
   const layers = [layer("fixed", `zarr3://${fixed.url}/`, "#ff4fd8", ranges.fixed, p.fixedChannel, fixed)];
@@ -371,14 +369,14 @@ function viewerState(s: Session, p: Channels, sources: { before?: string; after?
     if (src) layers.push(layer(name, src, "#45f07a", ranges.moving, p.movingChannel, moving));
   }
   if (sources.field) layers.push({
-    type: "image", name: "field", shader: FIELD_SHADER(ranges.field ?? 1), ...MAX,
+    type: "image", name: "field", shader: FIELD_SHADER(ranges.field ?? 1), ...(three ? MAX : {}),
     // its components are the shader's channels (getDataValue(0..2)): rename c' to c^
     source: { url: sources.field, transform: { outputDimensions: { "c^": [1, ""], z: dims.z, y: dims.y, x: dims.x } } },
   });
-  // three columns (before, after, field), each a slice above and a 3D view below, fitted to
-  // the whole x-y extent; the 3D views share one camera, tilted to show depth
+  // three columns (before, after, field), each a slice fitted to the whole x-y extent, with a
+  // 3D view below when asked; the 3D views share one camera, tilted to show depth
   const main = document.querySelector("main")!;
-  const w = (main.clientWidth || 1200) / 3 - 20, h = ((main.clientHeight || 800) - 90) / 2;
+  const w = (main.clientWidth || 1200) / 3 - 20, h = ((main.clientHeight || 800) - 90) / (three ? 2 : 1);
   const columns = [["fixed", "before"], sources.after ? ["fixed", "after"] : ["fixed"], sources.field ? ["field"] : ["fixed"]];
   const row = (layout: string) => ({ type: "row", children: columns.map((names) => ({ type: "viewer", layers: names, layout })) });
   return {
@@ -389,7 +387,7 @@ function viewerState(s: Session, p: Channels, sources: { before?: string; after?
     crossSectionBackgroundColor: "#000000", projectionBackgroundColor: "#000000", showSlices: false, layers,
     // twice Neuroglancer's defaults: each chunk it drops costs a resample to get back
     gpuMemoryLimit: 2e9, systemMemoryLimit: 4e9,
-    layout: { type: "column", children: [row("xy"), row("3d")] },
+    layout: three ? { type: "column", children: [row("xy"), row("3d")] } : row("xy"),
     selectedLayer: { layer: sources.after ? "after" : "before", visible: false },
   };
 }
@@ -455,8 +453,9 @@ async function run() {
   const go = $<HTMLButtonElement>("go");
   go.disabled = true;
   $("status").hidden = false; $("error").hidden = true; $("links").hidden = true; $("summary").textContent = "";
-  const f = values();
-  history.replaceState(null, "", "?" + new URLSearchParams(f));
+  const f = values(), params = new URLSearchParams(f);
+  if (view3dChosen) params.set("3d", view3d.checked ? "1" : "0");
+  history.replaceState(null, "", "?" + params);
   const p = channels(f);
   clearTimeout(previewTimer);
   try {
@@ -479,8 +478,8 @@ async function run() {
       Promise.all(pairs.map(([i, j]) => Promise.all([readLevel(fixed, i, p.fixedChannel), readLevel(moving, j, p.movingChannel)]))),
     ]);
     const readSecs = (performance.now() - tRead) / 1000;
-    const beforeId = `before-${++previews}`, before = publish(s, beforeId, affine, null);
-    retain(s, [beforeId]);
+    const before = beforeView(s, affine);
+    retain(s, [s.before!.id]);
     const ranges: Ranges = { fixed: contrast(read[0][0].data), moving: contrast(read[0][1].data) };
     s.ranges = ranges;
     s.rangesKey = `${p.fixedChannel},${p.movingChannel}`;
@@ -535,7 +534,7 @@ async function run() {
     });
     const afterId = `after-${++solves}`, fieldId = `field-${solves}`;
     const after = publish(s, afterId, affine, res.grid), field = publish(s, fieldId, affine, res.grid, "field");
-    retain(s, [beforeId, afterId, fieldId]);
+    retain(s, [s.before!.id, afterId, fieldId]);
     const sizes = new Float32Array(res.grid.values.length / 3);
     for (let i = 0; i < sizes.length; i++) sizes[i] = Math.hypot(res.grid.values[3 * i], res.grid.values[3 * i + 1], res.grid.values[3 * i + 2]);
     ranges.field = Math.max(percentiles(sizes, [99])[0], 1e-6);
@@ -585,3 +584,8 @@ if (INSECURE) { $("status").hidden = false; $("error").hidden = false; $("error"
 else if (query.get("run") === "1") void run();
 else schedulePreview();
 for (const k of ["fixed", "moving", "fixed_channel", "moving_channel", "affine"] as const) input(k).addEventListener("change", schedulePreview);
+if (query.has("3d")) { view3d.checked = query.get("3d") === "1"; view3dChosen = true; }
+view3d.addEventListener("change", () => {
+  view3dChosen = true;
+  if (session?.sources) showViewer(session, viewerState(session, channels(values()), session.sources));
+});

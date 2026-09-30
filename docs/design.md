@@ -216,9 +216,12 @@ Fully client-side is feasible and would make a compelling hosted demo:
   Neuroglancer hosted on the page's origin: the page's service worker hands the viewer's
   requests for the registered volume to the page, whose web workers resample the moving
   image through the field as `scene://` does, reading it from its URL through a cache of
-  decoded blocks. The page also keeps the chunks it computed (512 MB, least recently
-  used) and raises the viewer's memory limits to twice their defaults: a chunk the viewer
-  drops and asks for again would otherwise cost a read of the moving image and a resample. So all of `register://` runs client side. WebGPU and service workers
+  decoded blocks. Caching is the viewer's job, not the page's: the page only raises the
+  viewer's memory limits to twice their defaults, since a chunk the viewer drops and asks
+  for again costs a read of the moving image and a resample. Its 3D maximum projections
+  are a checkbox, off by default above 2^27 voxels: volume rendering asks for chunks
+  across the whole visible volume, which on a whole-organ image keeps the workers busy
+  and the viewer dropping chunks. So all of `register://` runs client side. WebGPU and service workers
   need a secure page, and a service worker will not run on a certificate that was only
   clicked through: `web/serve.py` serves the build over https with the
   self-signed certificate (trusted once in the system; it is made to the rules macOS and
