@@ -285,7 +285,11 @@ class _Warp:
 
 
 def _box_mean(x, window: int):
-    """Mean over each voxel's window (clipped at the volume's faces), per channel."""
+    """Mean over each voxel's window (clipped at the volume's faces), per channel: a
+    separable box filter. A prefix-sum version, whose cost would not grow with the window,
+    measured 4x slower at the default window (68 vs 17 ms on a 2^25-voxel level, RTX 2080
+    Ti; cuDNN's pooling is that fast) and only wins past windows of about 60, so the
+    browser engine's running sum is not mirrored here."""
     import torch.nn.functional as F
 
     h = window // 2

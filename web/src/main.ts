@@ -208,6 +208,23 @@ navigator.serviceWorker?.addEventListener("message", async (e: MessageEvent<{ pa
 
 const asJson = (o: object): Reply => ({ status: 200, body: JSON.stringify(o), type: "application/json" });
 
+// Computed chunks, kept so that the viewer's re-requests (it drops chunks to stay within its
+// memory limits, then asks again as they come back into view) cost a copy, not a read of
+// the moving image and a resample.
+const CHUNK_CACHE_BYTES = 512 * 2 ** 20;
+const chunkCache = new Map<string, ArrayBuffer>();  // path -> bytes, in use order
+let chunkCacheBytes = 0;
+function remember(path: string, body: ArrayBuffer) {
+  chunkCache.set(path, body); chunkCacheBytes += body.byteLength;
+  for (const [k, v] of chunkCache) {
+    if (chunkCacheBytes <= CHUNK_CACHE_BYTES) break;
+    chunkCache.delete(k); chunkCacheBytes -= v.byteLength;
+  }
+}
+function forget(test: (path: string) => boolean) {
+  for (const [k, v] of chunkCache) if (test(k)) { chunkCache.delete(k); chunkCacheBytes -= v.byteLength; }
+}
+
 async function answer(path: string): Promise<Reply> {  // a request under /virtual/<page>/<view>/..., or null if not ours
   const parts = path.split("/virtual/")[1]?.split("/");
   const s = session;
@@ -219,12 +236,18 @@ async function answer(path: string): Promise<Reply> {  // a request under /virtu
   if (rest.length === 1 && rest[0] === "zarr.json") return asJson(groupMetadata(s, view, kind));
   if (rest.length === 2 && rest[1] === "zarr.json") return asJson(arrayMetadata(s, Number(rest[0]), kind));
   if (rest[1] === "c") {
+    const hit = chunkCache.get(path);
+    if (hit) {  // a copy goes out: the reply's buffer is handed over to the service worker
+      chunkCache.delete(path); chunkCache.set(path, hit);
+      return { status: 200, body: hit.slice(0), type: "application/octet-stream" };
+    }
     const level = Number(rest[0]), idx = rest.slice(2).map(Number);
     const n = kind === "field" ? 1 : s.moving.lead, c = s.moving.names.indexOf("c");
     const channel = kind === "field" || c < 0 ? 0 : idx[c], index = idx.slice(n);
     const key = ((((level * 7 + channel) * 131 + (index[0] >> 2)) * 131 + index[1]) * 131 + index[2]) >>> 0;
     const body = await s.pool.chunk({ type: "chunk", id: view, level, channel, index }, key);
-    return { status: 200, body, type: "application/octet-stream" };
+    remember(path, body);
+    return { status: 200, body: body.slice(0), type: "application/octet-stream" };
   }
   return notFound;
 }
@@ -297,7 +320,7 @@ function publish(s: Session, id: string, affine: Affine, grid: ControlGrid | nul
 function retain(s: Session, keep: string[]) {
   const ids = [...s.views.keys()].filter((id) => !keep.includes(id));
   for (const id of ids) s.views.delete(id);
-  if (ids.length) s.pool.broadcast({ type: "drop", ids });
+  if (ids.length) { s.pool.broadcast({ type: "drop", ids }); forget((path) => ids.some((id) => path.includes(`/${id}/`))); }
 }
 
 /** The two images, reused while the form names the same ones. */
@@ -364,6 +387,8 @@ function viewerState(s: Session, p: Channels, sources: { before?: string; after?
     projectionScale: Math.max((l0.shape[2] * h) / w, l0.shape[1]) * 1.3,
     projectionOrientation: [-0.2164, 0, 0, 0.9763],  // 25 degrees about x
     crossSectionBackgroundColor: "#000000", projectionBackgroundColor: "#000000", showSlices: false, layers,
+    // twice Neuroglancer's defaults: each chunk it drops costs a resample to get back
+    gpuMemoryLimit: 2e9, systemMemoryLimit: 4e9,
     layout: { type: "column", children: [row("xy"), row("3d")] },
     selectedLayer: { layer: sources.after ? "after" : "before", visible: false },
   };

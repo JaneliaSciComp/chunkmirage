@@ -137,24 +137,28 @@ fn mov(q: vec3<i32>) -> f32 {
   let j = J[p];
   S[p] = j; S[N + p] = j * j; S[2u * N + p] = F[p] * j;`),
 
-  // Box sum of three channels along one axis, the window clipped at the volume's faces.
+  // Box sum of three channels along one axis, the window clipped at the volume's faces: one
+  // thread per line, keeping a running sum (the voxel entering the window added, the one
+  // leaving it subtracted), so the cost does not grow with the window.
   box: COMMON + /* wgsl */ `
 struct Box { axis: u32, pad0: u32, pad1: u32, pad2: u32 };
 @group(0) @binding(1) var<uniform> B: Box;
 @group(0) @binding(2) var<storage, read> IN: array<f32>;
-@group(0) @binding(3) var<storage, read_write> OUT: array<f32>;` + ENTRY(/* wgsl */ `
-  let N = P.fshape.w;
-  if (p >= N) { return; }
-  let v = voxel(p);
-  let h = i32(P.misc.w);
-  var c = i32(v.z); var n = i32(P.fshape.z); var stride = 1;
-  if (B.axis == 0u) { c = i32(v.x); n = i32(P.fshape.x); stride = i32(P.fshape.y * P.fshape.z); }
-  if (B.axis == 1u) { c = i32(v.y); n = i32(P.fshape.y); stride = i32(P.fshape.z); }
-  let lo = max(c - h, 0) - c; let hi = min(c + h, n - 1) - c;
-  for (var ch = 0u; ch < 3u; ch++) {
-    var s = 0.0;
-    for (var t = lo; t <= hi; t++) { s += IN[ch * N + u32(i32(p) + t * stride)]; }
-    OUT[ch * N + p] = s;
+@group(0) @binding(3) var<storage, read_write> OUT: array<f32>;
+fn at(q: u32) -> vec3<f32> { let N = P.fshape.w; return vec3<f32>(IN[q], IN[N + q], IN[2u * N + q]); }` + ENTRY(/* wgsl */ `
+  let N = P.fshape.w; let Z = P.fshape.x; let Y = P.fshape.y; let X = P.fshape.z;
+  var n = X; var lines = Z * Y; var stride = 1u; var start = p * X;       // along x: line (z, y)
+  if (B.axis == 0u) { n = Z; lines = Y * X; stride = Y * X; start = p; }  // along z: line (y, x)
+  if (B.axis == 1u) { n = Y; lines = Z * X; stride = X; start = (p / X) * (Y * X) + (p % X); }  // along y
+  if (p >= lines) { return; }
+  let h = u32(P.misc.w);
+  var s = vec3<f32>(0.0);
+  for (var t = 0u; t <= min(h, n - 1u); t++) { s += at(start + t * stride); }
+  for (var i = 0u; i < n; i++) {
+    let q = start + i * stride;
+    OUT[q] = s.x; OUT[N + q] = s.y; OUT[2u * N + q] = s.z;
+    if (i + h + 1u < n) { s += at(start + (i + h + 1u) * stride); }
+    if (i >= h) { s -= at(start + (i - h) * stride); }
   }`),
 
   // Squared local correlation and the per-window factors of its gradient.
@@ -290,7 +294,7 @@ function refine(u: Float32Array, from: number[], to: number[], lo: number[], hi:
 type Buffers = Record<"P" | "F" | "M" | "U" | "J" | "C" | "S" | "T" | "AB" | "STAT" | "CC" | "GD" | "GU" | "MOM" | "VEL", GPUBuffer>;
 
 class Level {
-  g: Gpu; N: number; G: number; spacing: number[]; buffers: Buffers; axes: GPUBuffer[];
+  g: Gpu; N: number; G: number; lines: number[]; spacing: number[]; buffers: Buffers; axes: GPUBuffer[];
   params: ArrayBuffer; lr: number;
   groups: Record<"prep" | "statics" | "warp" | "products" | "cc" | "grad" | "gather" | "adam", GPUBindGroup>
     & Record<"boxS" | "boxAB", GPUBindGroup[]>;
@@ -298,8 +302,9 @@ class Level {
   constructor(g: Gpu, fixed: Volume, moving: Volume, affine: Affine, box: number[][], gshape: number[], settings: Settings) {
     const { device } = g;
     this.g = g;
-    const N = prod(fixed.shape), G = prod(gshape);
+    const N = prod(fixed.shape), G = prod(gshape), [Z, Y, X] = fixed.shape;
     this.N = N; this.G = G;
+    this.lines = [Y * X, Z * X, Z * Y];  // lines along z, y, x: the box kernel's threads
     const lo = box[0], hi = box[1];
     this.spacing = lo.map((l, a) => (hi[a] - l) / (gshape[a] - 1));
     const buf = (n: number, usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST) =>
@@ -354,7 +359,7 @@ class Level {
     pass.dispatchWorkgroups(x, Math.ceil(blocks / x));
   }
 
-  boxes(pass: GPUComputePassEncoder, key: "boxS" | "boxAB") { for (const grp of this.groups[key]) this.dispatch(pass, "box", this.N, grp); }
+  boxes(pass: GPUComputePassEncoder, key: "boxS" | "boxAB") { this.groups[key].forEach((grp, a) => this.dispatch(pass, "box", this.lines[a], grp)); }
 
   setField(u: Float32Array) { this.g.device.queue.writeBuffer(this.buffers.U, 0, u as Float32Array<ArrayBuffer>); }
 
