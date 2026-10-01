@@ -3,7 +3,7 @@
 // would serve them. Each chunk's input region is read by the page's one reader (reader.ts)
 // and computed by a Pyodide worker (pyworker.ts) running chunkmirage's own ops; chunks the
 // viewer gives up on before their turn are dropped.
-import { CARDS, type CardLayer, type PipelineCard } from "./cards";
+import { CARDS, type CardLayer, type PipelineCard, type Timeline } from "./cards";
 import { Cancelled, Claim, Queue } from "./demand";
 import type { Answer, Later, Reply, SourceInfo, ToPyWorker, ToReader, ViewAxis, ViewInfo } from "./types";
 
@@ -188,12 +188,37 @@ async function viewerState(card: PipelineCard) {
     dimensions: dims, position: order.map((a) => card.position[a] + 0.5 + l0.origin[a] / l0.voxel[a]),
     displayDimensions: names, crossSectionScale: card.zoom,
     ...(card.orientation ? { crossSectionOrientation: card.orientation } : {}),
+    ...(card.playback ? { velocity: { [card.playback.axis]: { velocity: card.playback.velocity, atBoundary: "stop", paused: true } } } : {}),
     crossSectionBackgroundColor: "#000000", showAxisLines: false, layers,
     layout: card.panels.length === 1
       ? { type: "viewer", layers: card.panels[0], layout: "xy" }
       : { type: "row", children: card.panels.map((names) => ({ type: "viewer", layers: names, layout: "xy" })) },
     selectedLayer: { visible: false }, size: [main.clientWidth, main.clientHeight],
   };
+}
+
+/** The date at the viewer's position on a timeline axis, and what happened that day, kept
+ * up to date as the viewer moves or plays (the viewer itself shows time only in seconds). */
+function showDates(ng: HTMLIFrameElement, t: Timeline, names: string[]) {
+  const axis = names.indexOf(t.axis), start = Date.parse(`${t.start}T00:00:00Z`);
+  const fmt = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+  let last = "";
+  const update = (position: Float32Array) => {
+    const day = new Date(start + Math.floor(position[axis]) * 86400e3), iso = day.toISOString().slice(0, 10);
+    if (iso === last) return;
+    last = iso;
+    $("date").textContent = fmt.format(day);
+    $("event").textContent = t.events.find((e) => e.from <= iso && iso <= (e.to ?? e.from))?.text ?? "";
+  };
+  $("when").hidden = false;
+  const attach = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const viewer = (ng.contentWindow as any)?.viewer;
+    if (!viewer?.position) return void setTimeout(attach, 200);
+    viewer.position.changed.add(() => update(viewer.position.value));
+    update(viewer.position.value);
+  };
+  attach();
 }
 
 async function start() {
@@ -226,8 +251,10 @@ async function start() {
   chunks = new Queue<ArrayBuffer>(n);
   status(`Python ready in ${((performance.now() - t0) / 1000).toFixed(1)} s. Chunks are computed as the viewer asks for them.`);
   const ng = $<HTMLIFrameElement>("ng");
-  ng.src = `ng/index.html#!${encodeURIComponent(JSON.stringify(await viewerState(card)))}`;
+  const state = await viewerState(card);
+  ng.src = `ng/index.html#!${encodeURIComponent(JSON.stringify(state))}`;
   ng.hidden = false;
+  if (card.timeline) showDates(ng, card.timeline, state.displayDimensions);
   $("empty").hidden = true;
   showCounts();
 }

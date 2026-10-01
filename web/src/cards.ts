@@ -27,9 +27,15 @@ export interface PipelineCard extends Card {
   position: number[];        // full-resolution voxels of the first view, along its axes
   zoom: number;              // full-resolution voxels per screen pixel
   orientation?: number[];    // the slices' rotation (a quaternion), e.g. north up for a map
+  timeline?: Timeline;       // the date on screen, for an axis of days
+  playback?: { axis: string; velocity: number };  // the viewer's play button: steps per second
 }
+/** Dates along an axis whose coordinate counts days from `start`, and what happened on some. */
+export interface Timeline { axis: string; start: string; events: { from: string; to?: string; text: string }[] }
 export interface LinkCard extends Card { kind: "link"; href: string }
-export type DemoCard = PipelineCard | LinkCard;
+/** A demo that runs from Python only (its data cannot be read from a browser page). */
+export interface PythonCard extends Card { kind: "python"; why: string }
+export type DemoCard = PipelineCard | LinkCard | PythonCard;
 
 const COSEM = "https://janelia-cosem-datasets.s3.amazonaws.com/jrc_hela-2";
 const PRED = `${COSEM}/jrc_hela-2.n5/labels`;
@@ -111,9 +117,38 @@ export const CARDS: DemoCard[] = [
       { name: "change", view: "change", type: "image", shader: CHANGE },
     ],
     panels: [["temperature"], ["change"]],
-    position: [1185, 11500, 9100], zoom: 2,
+    // Katrina's track across the Gulf, inside one of MUR's 18 x 36 degree tiles, so a new
+    // 5-day stretch is one download
+    position: [1185, 11699, 9249], zoom: 1.2,
     orientation: [1, 0, 0, 0],  // latitude increases northward: turn the map north up
+    playback: { axis: "time", velocity: 1 },  // a day a second
+    timeline: {
+      axis: "time", start: "2002-06-01",
+      events: [
+        { from: "2005-08-23", to: "2005-08-24", text: "A tropical depression over the Bahamas becomes Katrina." },
+        { from: "2005-08-25", text: "Katrina crosses southern Florida, a category 1 hurricane, into the Gulf." },
+        { from: "2005-08-26", to: "2005-08-27", text: "Katrina strengthens over the Gulf's warm water." },
+        { from: "2005-08-28", text: "Katrina reaches category 5 in the central Gulf." },
+        { from: "2005-08-29", text: "Katrina makes landfall in Louisiana, a category 3 hurricane. Behind it, the cold water it stirred up from below." },
+        { from: "2005-08-30", to: "2005-09-17", text: "Katrina's cold wake warms again." },
+        { from: "2005-09-18", to: "2005-09-19", text: "Rita forms near the Turks and Caicos." },
+        { from: "2005-09-20", text: "Rita passes the Florida Keys into the Gulf." },
+        { from: "2005-09-21", to: "2005-09-22", text: "Rita reaches category 5 in the central Gulf." },
+        { from: "2005-09-23", text: "Rita heads for the Texas-Louisiana border." },
+        { from: "2005-09-24", text: "Rita makes landfall at the Texas-Louisiana border, a category 3 hurricane." },
+        { from: "2005-10-21", to: "2005-10-22", text: "Wilma crosses the Yucatán Peninsula into the Gulf." },
+        { from: "2005-10-23", to: "2005-10-24", text: "Wilma crosses the Gulf and makes landfall in southwest Florida (24 October)." },
+      ],
+    },
     command: `chunkmirage serve '${MUR}' --op diff:axis=0,lag=1 --chunk 1,256,256 --python-viewer`,
+  },
+  {
+    kind: "python", id: "solar", image: "cards/solar.jpg",
+    title: "A solar flare in the running difference",
+    blurb: "NASA's Solar Dynamics Observatory images the sun every 6 minutes: 73 thousand 512 x 512 frames for 2014 in one array of its public machine-learning dataset. Each frame minus the one before, the running difference solar physicists watch for what changes, is computed as the viewer asks: on 10 September 2014 an X1.6 flare erupts from the centre of the disk. Left, the sun at 171 Å; right, its change in 6 minutes.",
+    data: "SDO machine-learning dataset v2, AIA 171 Å, 2014 (NASA FDL; NASA's open data bucket)",
+    why: "NASA's bucket does not let a browser page read it (no CORS), so this one runs from Python.",
+    command: "uv run python examples/solar_flares.py",
   },
   {
     kind: "link", id: "register-fly", image: "cards/register-fly.jpg",
