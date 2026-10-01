@@ -81,7 +81,11 @@ export interface ViewInfo extends SourceInfo { halo: number[]; lead: number; out
 
 /** A mesh made from a view's voxels: a legacy fragment, part of the coarsest level's mask
  * (for the multi-resolution octree), or a multi-resolution node's fragment. */
-export type MeshCall = NonNullable<PipelineView["mesh"]> & { mode: "legacy" | "mask" | "node"; levels?: ViewLevel[]; size?: number; bits?: number };
+export type MeshCall = NonNullable<PipelineView["mesh"]> & {
+  mode: "legacy" | "mask" | "node"; levels?: ViewLevel[]; size?: number; bits?: number;
+  core_lo?: number[]; core_hi?: number[];  // mask: the part's core within the box asked for
+  raw?: boolean;                           // node: the data is the coarsest level's mask, no ops to run
+};
 /** What the page asks the reader, which opens the views' sources once for the page. */
 export type ToReader =
   | { type: "open"; reqId: number; views: Record<string, PipelineView> }
@@ -93,8 +97,8 @@ export type ToPyWorker =
   | { type: "plan"; reqId: number; packages?: string[]; views: Record<string, { ops: Record<string, unknown>[]; shape: number[]; dtype: string; chunk: number[]; voxel: number[]; source?: string }> }
   // data: the input region read by the reader, or null for a source the worker computes
   | { type: "compute"; reqId: number; view: string; level: number; data: ArrayBuffer | null; readShape: number[]; inLo: number[]; inHi: number[]; outLo: number[]; outHi: number[]; full: number[]; voxel: number[]; origin: number[]; unit?: string; mesh?: MeshCall }
-  // a multi-resolution mesh's octree and index, from its coarsest level's mask (`mesh.levels` the view's)
-  | { type: "octree"; reqId: number; mask: ArrayBuffer; shape: number[]; mesh: MeshCall; chunk: number[]; unit: string }
+  // a multi-resolution mesh's octree and index, from its coarsest level's surface band (`mesh.levels` the view's)
+  | { type: "octree"; reqId: number; band: ArrayBuffer; shape: number[]; mesh: MeshCall; chunk: number[]; unit: string }
   // a step of chunkmirage.stitching (the stitch page): JSON arguments, arrays as raw bytes
   | { type: "stitch"; reqId: number; fn: string; args: string; arrays?: ArrayBuffer[] };
 /** Either's answer to request `reqId`. */

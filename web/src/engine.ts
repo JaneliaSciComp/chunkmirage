@@ -30,7 +30,8 @@ type Answered = null | { status: number; body: string | ArrayBuffer; type: strin
   | { status: number; type: string; pending: Promise<ArrayBuffer>; claim: Claim; range?: string };
 /** A multi-resolution mesh's octree: its nodes (level, z, y, x each, in the data file's
  * order), each fragment's size, the quantization and the index file. */
-type Octree = { nodes: Int32Array; size: number; bits: number; index: ArrayBuffer };
+type Octree = { nodes: Int32Array; size: number; bits: number; index: ArrayBuffer; mask: Uint8Array; level: number };
+const BAND = 2;  // chunkmirage.meshes.BAND: the border a part of the coarsest level is masked with
 type Plan = { dtype: string; lead: number; halo: number[] };
 
 /** A worker answering requests by reqId. */
@@ -92,7 +93,10 @@ export class Engine {
     this.pool = Array.from({ length: n }, () => new Rpc<ToPyWorker>(new Worker(new URL("./pyworker.ts", import.meta.url), { type: "module" })));
     this.chunks = new Queue<ArrayBuffer>(n);
     // load Python now, with what the views' ops import (each op's schema says)
-    const needed = [...new Set([...packages, ...Object.values(views).flatMap((v) => (v.ops ?? []).flatMap((o) => OP_PACKAGES[String(o.op)] ?? []))])];
+    const needed = [...new Set([...packages, ...Object.values(views).flatMap((v) => [
+      ...(v.ops ?? []).flatMap((o) => OP_PACKAGES[String(o.op)] ?? []),
+      ...(v.mesh && v.mesh.kind !== "terrain" ? ["scikit-image"] : []),  // marching cubes (and scipy, for a multi-resolution index)
+    ])])];
     status(`Opening the data, and loading Python (Pyodide, ${["numpy", ...needed].join(", ")}) and chunkmirage's ops in ${n} worker${n > 1 ? "s" : ""}…`);
     const warm = Promise.all(this.pool.map((w) => w.call({ type: "plan", views: {}, packages: needed })));
     await this.open(views);
@@ -235,6 +239,10 @@ export class Engine {
   private async compute(view: string, level: number, index: number[], mesh?: MeshCall, box?: [number[], number[]]): Promise<ArrayBuffer> {
     const produce = this.producers.get(view);
     if (produce) return produce(level, index);
+    if (mesh?.mode === "node") {  // a coarsest node: cut from the mask the octree was made from
+      const o = await this.octrees.get(view);
+      if (o && o.level === level) return this.fromMask(view, o, index, mesh);
+    }
     const v = this.infos[view], l = v.levels[level], C = this.views[view].chunk, halo = v.halo, more = mesh ? 1 : 0;
     const outLo = box ? box[0] : index.map((i, a) => i * C[a]);
     const outHi = box ? box[1] : outLo.map((o, a) => Math.min(o + C[a] + more, l.shape[a]));
@@ -248,6 +256,21 @@ export class Engine {
       inLo, inHi, outLo, outHi, full: [...lead, ...l.shape], voxel: l.voxel, origin: l.origin,
       unit: v.axes[v.axes.length - 1].unit, ...(mesh ? { mesh } : {}),
     }, data ? [data] : []);
+  }
+
+  private fromMask(view: string, o: Octree, index: number[], mesh: MeshCall): Promise<ArrayBuffer> {
+    const v = this.infos[view], l = v.levels[o.level], C = this.views[view].chunk, shape = l.shape;
+    const lo = index.map((i, a) => i * C[a]), hi = lo.map((x, a) => Math.min(x + C[a] + 1, shape[a])), d = hi.map((h, a) => h - lo[a]);
+    const block = new Uint8Array(d[0] * d[1] * d[2]);
+    for (let z = 0; z < d[0]; z++) for (let y = 0; y < d[1]; y++) {
+      const from = ((z + lo[0]) * shape[1] + y + lo[1]) * shape[2] + lo[2];
+      block.set(o.mask.subarray(from, from + d[2]), (z * d[1] + y) * d[2]);
+    }
+    const worker = this.pool[this.turn++ % this.pool.length];
+    return worker.call<ArrayBuffer>({
+      type: "compute", view, level: o.level, data: block.buffer, readShape: d, inLo: lo, inHi: hi, outLo: lo, outHi: hi,
+      full: shape, voxel: l.voxel, origin: l.origin, unit: v.axes[v.axes.length - 1].unit, mesh: { ...mesh, raw: true, threshold: 1 },
+    }, [block.buffer]);
   }
 
   private keep(key: string, body: ArrayBuffer) {
@@ -324,31 +347,39 @@ export class Engine {
   private octrees = new Map<string, Promise<Octree>>();
 
   /** A view's multi-resolution octree, made once from its whole coarsest level: its eighths
-   * masked by the workers at once, joined here, and the nodes and index made by one. */
+   * masked by the workers at once (each with a border, for its surface band), joined here,
+   * and the nodes and index made by one. The mask is kept: the coarsest nodes are cut from it. */
   private octree(view: string): Promise<Octree> {
     let o = this.octrees.get(view);
     if (!o) {
       const spec = this.views[view].mesh!, v = this.infos[view], level = this.meshLevel(view), shape = v.levels[level].shape;
-      const call: MeshCall = { kind: "surface", ...spec, mode: "mask" };
       const parts = [...Array(8).keys()].map((k) => {
         const lo = shape.map((n, a) => ((k >> a) & 1 ? n >> 1 : 0)), hi = shape.map((n, a) => ((k >> a) & 1 ? n : n >> 1));
-        return { lo, hi };
+        const glo = lo.map((x) => Math.max(x - BAND, 0)), ghi = hi.map((x, a) => Math.min(x + BAND, shape[a]));
+        return { lo, hi, glo, ghi };
       }).filter((p) => p.hi.every((h, a) => h > p.lo[a]));
-      o = Promise.all(parts.map((p) => this.compute(view, level, [], call, [p.lo, p.hi]))).then(async (masks) => {
-        const all = new Uint8Array(shape[0] * shape[1] * shape[2]);
-        masks.forEach((m, i) => {  // each part's rows into the whole level's
-          const { lo, hi } = parts[i], d = hi.map((h, a) => h - lo[a]), src = new Uint8Array(m);
+      o = Promise.all(parts.map((p) => this.compute(view, level, [], {
+        kind: "surface", ...spec, mode: "mask", core_lo: p.lo.map((x, a) => x - p.glo[a]), core_hi: p.hi.map((x, a) => x - p.glo[a]),
+      }, [p.glo, p.ghi]))).then(async (got) => {
+        const n = shape[0] * shape[1] * shape[2], mask = new Uint8Array(n), band = new Uint8Array(n);
+        got.forEach((g, i) => {  // each part's rows into the whole level's: its mask, then its band
+          const { lo, hi } = parts[i], d = hi.map((h, a) => h - lo[a]), size = d[0] * d[1] * d[2];
+          const m = new Uint8Array(g, 0, size), b = new Uint8Array(g, size, size);
           for (let z = 0; z < d[0]; z++) for (let y = 0; y < d[1]; y++) {
             const from = (z * d[1] + y) * d[2], to = ((z + lo[0]) * shape[1] + y + lo[1]) * shape[2] + lo[2];
-            all.set(src.subarray(from, from + d[2]), to);
+            mask.set(m.subarray(from, from + d[2]), to);
+            band.set(b.subarray(from, from + d[2]), to);
           }
         });
         const b = await this.pool[this.turn++ % this.pool.length].call<ArrayBuffer>({
-          type: "octree", mask: all.buffer, shape, chunk: this.views[view].chunk, unit: v.axes[v.axes.length - 1].unit,
+          type: "octree", band: band.buffer, shape, chunk: this.views[view].chunk, unit: v.axes[v.axes.length - 1].unit,
           mesh: { kind: "surface", ...spec, mode: "mask", levels: v.levels },
-        }, [all.buffer]);
-        const head = new DataView(b, 0, 12), n = head.getUint32(0, true);
-        return { nodes: new Int32Array(b.slice(12, 12 + 16 * n)), size: head.getUint32(4, true), bits: head.getUint32(8, true), index: b.slice(12 + 16 * n) };
+        }, [band.buffer]);
+        const head = new DataView(b, 0, 12), count = head.getUint32(0, true);
+        return {
+          nodes: new Int32Array(b.slice(12, 12 + 16 * count)), size: head.getUint32(4, true), bits: head.getUint32(8, true),
+          index: b.slice(12 + 16 * count), mask, level,
+        };
       });
       o.catch(() => this.octrees.delete(view));
       this.octrees.set(view, o);

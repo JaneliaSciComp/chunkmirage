@@ -116,7 +116,16 @@ def test_multiresolution_meshes_list_nodes_near_the_surface_and_serve_them_by_ra
     # nodes only near the surface: the finest level's fewer than its grid's 8³, and every one's
     # parent listed
     assert 0 < counts[2] <= 8 and counts[0] < 8**3
-    nodes = meshes.multires_nodes(spec, p.read(2, Box((0, 0, 0), infos[2].shape)), infos, (16, 16, 16))
+    mask = p.read(2, Box((0, 0, 0), infos[2].shape)) >= 255
+    nodes = meshes.multires_nodes(spec, meshes.surface_band(mask), infos, (16, 16, 16))
+    # the band done in parts, each with a border, joins to the whole level's
+    parts = np.zeros(mask.shape, bool)
+    for lo in np.ndindex(2, 2, 2):
+        a = np.array(lo) * 16
+        b = np.maximum(a - meshes.BAND, 0), np.minimum(a + 16 + meshes.BAND, 32)
+        core = Box(tuple(a - b[0]), tuple(a - b[0] + 16))
+        parts[tuple(slice(x, x + 16) for x in a)] = meshes.surface_band(mask[tuple(slice(*x) for x in zip(*b))], core)
+    assert np.array_equal(parts, meshes.surface_band(mask))
     parents = {tuple(n) for n in nodes[1]}
     assert all(tuple(c // 2) in parents for c in nodes[0])
     # a node's fragment: integers across the node, no triangle across its octants, padded

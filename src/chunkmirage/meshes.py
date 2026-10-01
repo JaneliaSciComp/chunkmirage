@@ -171,17 +171,25 @@ def _morton(xyz: np.ndarray) -> np.ndarray:
     return key
 
 
-def multires_nodes(spec: MeshSpec, coarse: np.ndarray, infos: list[ArrayInfo], chunk) -> list[np.ndarray]:
-    """Per level of detail (finest first), its nodes, (n, 3) chunk positions ``z, y, x`` of its
-    level in Z-curve order: those within ``BAND`` voxels of the surface of ``coarse`` (the
-    whole coarsest level). A finer level's surface lies near the coarser one's, and a node
-    listed but empty only costs its fetch."""
+def surface_band(mask: np.ndarray, core: Box | None = None) -> np.ndarray:
+    """The voxels within ``BAND`` of the surface of ``mask`` (inside or not; beyond its edges
+    is outside), cropped to ``core`` (where ``mask`` is a block with a ``BAND`` border, so the
+    parts of a level can be done apart and joined)."""
     from scipy.ndimage import maximum_filter, minimum_filter
 
-    levels = lod_levels(infos, spec)
-    mask = (np.asarray(coarse) >= spec.threshold).view(np.uint8)
+    m = np.asarray(mask).astype(np.uint8)
     size = 2 * BAND + 1  # separable passes: a cube's dilation and erosion
-    band = (maximum_filter(mask, size) > minimum_filter(mask, size, mode="constant", cval=0))
+    band = maximum_filter(m, size, mode="constant", cval=0) > minimum_filter(m, size, mode="constant", cval=0)
+    return band if core is None else band[core.slices()]
+
+
+def multires_nodes(spec: MeshSpec, band: np.ndarray, infos: list[ArrayInfo], chunk) -> list[np.ndarray]:
+    """Per level of detail (finest first), its nodes, (n, 3) chunk positions ``z, y, x`` of its
+    level in Z-curve order: those that meet ``band``, the voxels of the coarsest level near its
+    surface (``surface_band``). A finer level's surface lies near the coarser one's, and a node
+    listed but empty only costs its fetch."""
+    levels = lod_levels(infos, spec)
+    band = np.asarray(band, bool)
     chunk = np.asarray(chunk)
     out = []
     for i, level in enumerate(levels):

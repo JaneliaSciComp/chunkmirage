@@ -47,17 +47,17 @@ class MeshFrontend(Frontend):
                 levels = meshes.lod_levels(infos, spec)
                 top = infos[levels[-1]]
                 chunk = top.chunk_shape[-3:]
-                coarse = pipeline.read(levels[-1], Box((0,) * top.ndim, top.shape))
-                nodes = meshes.multires_nodes(spec, coarse, infos, chunk)
+                mask = pipeline.read(levels[-1], Box((0,) * top.ndim, top.shape)) >= spec.threshold
+                nodes = meshes.multires_nodes(spec, meshes.surface_band(mask), infos, chunk)
                 flat = [(lv, tuple(int(v) for v in n)) for lv, ns in zip(levels, nodes) for n in ns]
-                got = (spec, levels, chunk, flat, meshes.multires_index(nodes, infos, levels, chunk))
+                got = (spec, levels, chunk, flat, meshes.multires_index(nodes, infos, levels, chunk), mask)
                 self._octrees[pipeline] = got
             return got
 
     def resolve_range(self, pipeline: Pipeline, path: str, start: int, stop: int) -> ChunkRequest | None:
         if path.strip("/") != "1" or _spec(pipeline).lods == 1:
             return None
-        _, _, _, flat, _ = self._octree(pipeline)
+        flat = self._octree(pipeline)[3]
         total = len(flat) * meshes.FRAGMENT_BYTES
         if not 0 <= start < stop <= total:
             raise ValueError(f"bytes {start}-{stop} of a {total}-byte mesh")
@@ -90,19 +90,27 @@ class MeshFrontend(Frontend):
 
     def compute(self, pipeline: Pipeline, req: ChunkRequest) -> bytes:
         if req.part is not None:  # bytes of the multi-resolution fragments, each padded
-            spec, _, chunk, flat, _ = self._octree(pipeline)
+            spec, levels, chunk, flat, _, mask = self._octree(pipeline)
             size = meshes.FRAGMENT_BYTES
             first, last = req.part[0] // size, (req.part[1] - 1) // size
-            body = b"".join(self._fragment(pipeline, spec, chunk, *flat[k]) for k in range(first, last + 1))
+            body = b"".join(
+                self._fragment(pipeline, spec, chunk, *flat[k], mask if flat[k][0] == levels[-1] else None)
+                for k in range(first, last + 1)
+            )
             return body[req.part[0] - first * size : req.part[1] - first * size]
         info = pipeline.info(req.level)
         box = meshes.fragment_box(info, req.index)
         return meshes.fragment(_spec(pipeline), pipeline.read(req.level, box), box, info)
 
-    def _fragment(self, pipeline: Pipeline, spec, chunk, level: int, node) -> bytes:
+    def _fragment(self, pipeline: Pipeline, spec, chunk, level: int, node, mask=None) -> bytes:
+        """A node's fragment; on the coarsest level, from its mask (read for the index)."""
         info = pipeline.info(level)
         box = meshes.node_box(info, node, chunk)
-        verts, faces = meshes.multires_fragment(spec, pipeline.read(level, box), box, info, chunk)
+        if mask is not None:
+            block, spec = mask[box.slices()], spec.model_copy(update={"threshold": 1})
+        else:
+            block = pipeline.read(level, box)
+        verts, faces = meshes.multires_fragment(spec, block, box, info, chunk)
         return meshes.encode_draco(verts, faces)
 
     def encode(self, info: ArrayInfo, index: tuple[int, ...], block: np.ndarray) -> bytes:

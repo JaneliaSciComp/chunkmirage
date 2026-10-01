@@ -73,19 +73,26 @@ def _mesh(m, result, box, shape, dtype, chunk, voxel, origin, unit):
     import struct
     from chunkmirage import meshes
     mode, levels = m.pop("mode", "legacy"), m.pop("levels", None)
-    spec = meshes.MeshSpec(**m)
+    m.pop("raw", None)
+    spec = meshes.MeshSpec(**{k: v for k, v in m.items() if k not in ("core_lo", "core_hi")})
     info = _info(list(shape), dtype, chunk, list(voxel), list(origin), unit)
-    if mode == "mask":  # part of the coarsest level, inside or not (the page joins the parts)
-        return np.ascontiguousarray(np.asarray(result) >= spec.threshold, np.uint8).tobytes()
+    if mode == "mask":  # part of the coarsest level: inside or not, and the surface band, on
+        # the part's core (the box the page asked for has a border of meshes.BAND around it)
+        core = Box(tuple(m.pop("core_lo")), tuple(m.pop("core_hi")))
+        grown = [min(a, meshes.BAND) for a in core.start]
+        if any(g < meshes.BAND and b + g != a for g, a, b in zip(grown, core.start, box.start)):
+            raise ValueError("a mask part needs a border of meshes.BAND voxels")
+        inside = np.asarray(result) >= spec.threshold
+        return np.ascontiguousarray(inside[core.slices()], np.uint8).tobytes() + meshes.surface_band(inside, core).astype(np.uint8).tobytes()
     if mode == "node":
         v, f = meshes.multires_fragment(spec, result, box, info, chunk)
         return struct.pack("<II", len(v), len(f)) + v.astype("<u4").tobytes() + f.astype("<u4").tobytes()
     return meshes.fragment(spec, result, box, info)
 
-def octree(mask, shape, mesh, chunk, unit):
+def octree(band, shape, mesh, chunk, unit):
     """A multi-resolution mesh's nodes (level, z, y, x each; header: their count, the
     fragments' size and the quantization bits) and index, from the whole coarsest level's
-    mask (uint8, 1 inside)."""
+    surface band (uint8, 1 near the surface; meshes.surface_band)."""
     import struct
     from chunkmirage import meshes
     m = json.loads(mesh)
@@ -93,7 +100,7 @@ def octree(mask, shape, mesh, chunk, unit):
     levels = m.pop("levels")
     spec = meshes.MeshSpec(**{**m, "threshold": 1})  # the mask is inside or not
     infos = [_info(l["shape"], "uint8", list(chunk), l["voxel"], l["origin"], unit) for l in levels]
-    block = np.frombuffer(mask.to_py(), np.uint8).reshape(tuple(shape))
+    block = np.frombuffer(band.to_py(), np.uint8).reshape(tuple(shape))
     lods = meshes.lod_levels(infos, spec)
     nodes = meshes.multires_nodes(spec, block, infos, list(chunk))
     flat = np.array([[lv, *n] for lv, ns in zip(lods, nodes) for n in ns], "<i4").reshape(-1, 4)
@@ -105,6 +112,9 @@ def compute(view, level, data, read_shape, in_lo, in_hi, out_lo, out_hi, full_sh
     full = tuple(full_shape)
     lead = len(full) - 3
     in_box = Box((0,) * lead + tuple(in_lo), full[:lead] + tuple(in_hi))
+    if mesh is not None and json.loads(mesh).get("raw"):  # the page's own mask: no ops to run
+        result = np.frombuffer(data.to_py(), np.uint8).reshape(tuple(read_shape))
+        return _mesh(json.loads(mesh), result, Box(tuple(out_lo), tuple(out_hi)), full[lead:], "uint8", chunk, voxel, origin, unit)
     if data is None:  # a source computed here: the padded block, as a server stage reads it
         block = SOURCES[source][level].read_padded(in_box, edge=True)
     else:
@@ -273,7 +283,7 @@ ctx.onmessage = async ({ data: m }: MessageEvent<ToPyWorker>) => {
     if (m.type === "describe") { if (!py) await (loaded ??= load()); ctx.postMessage({ reqId: m.reqId, value: JSON.parse(py.globals.get("describe")(m.source)) } satisfies Answer); }
     else if (m.type === "plan") ctx.postMessage({ reqId: m.reqId, value: await plan(m.views, m.packages) } satisfies Answer);
     else if (m.type === "octree") {
-      const out = await withPackages(() => py.globals.get("octree")(new Uint8Array(m.mask), m.shape, JSON.stringify(m.mesh), m.chunk, m.unit));
+      const out = await withPackages(() => py.globals.get("octree")(new Uint8Array(m.band), m.shape, JSON.stringify(m.mesh), m.chunk, m.unit));
       const bytes = out.toJs() as Uint8Array;
       out.destroy();
       const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;

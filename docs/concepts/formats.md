@@ -110,7 +110,11 @@ corner left out (one resolution only). `level` picks the level, the coarsest wit
 (default: the finest whose longest side is at most 512 voxels), and `lods` the levels of
 detail. The browser engine serves the same at `virtual/<page>/<view>/mesh`, its workers
 running the same module (`chunkmirage.meshes`); for the multi-resolution index it masks the
-coarsest level's eighths in its workers at once.
+coarsest level's eighths in its workers at once (each with a border, for its surface band),
+and cuts the coarsest nodes' fragments from that mask (the Python server does the same), so
+the coarsest level is computed once. The index has to be made from the whole coarsest level
+before Neuroglancer can ask for any fragment: the Mandelbulb's appears after about 16 s in a
+browser, against 8 s for its single-resolution mesh.
 
 ```bash
 chunkmirage serve 'synthetic://mandelbulb?shape=268435456,268435456,268435456&voxel_size=1&unit=nm' \
