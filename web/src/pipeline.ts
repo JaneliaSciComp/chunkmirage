@@ -42,7 +42,10 @@ async function viewerState(card: PipelineCard) {
   const layers = await Promise.all(card.layers.map(async (l) => {
     const source = l.view ? url(l.view) : l.url!;
     if (l.type === "mesh") {  // the view's surface: chunkmirage's mesh layout, segment 1
-      return { type: "segmentation", name: l.name, source: `precomputed://${engine.url(l.view!)}mesh`, segments: ["1"], ...(l.colour ? { segmentDefaultColor: l.colour } : {}) };
+      return {
+        type: "segmentation", name: l.name, source: `precomputed://${engine.url(l.view!)}mesh`, segments: ["1"],
+        ...(l.colour ? { segmentDefaultColor: l.colour } : {}), ...(l.detail ? { meshRenderScale: l.detail } : {}),
+      };
     }
     if (l.type === "segmentation") {
       return { type: "segmentation", name: l.name, source, selectedAlpha: l.alpha ?? 0.9, ...(l.colour ? { segmentDefaultColor: l.colour } : {}) };
@@ -55,6 +58,8 @@ async function viewerState(card: PipelineCard) {
       ...(glsl ? { shader: glsl } : {}),
       ...(l.additive ? { blend: "additive" } : {}),
       ...(l.volume ? { volumeRendering: "on" } : {}),
+      ...(l.samples ? { volumeRenderingDepthSamples: l.samples } : {}),
+      ...(l.gain !== undefined ? { volumeRenderingGain: l.gain } : {}),
     };
   }));
   const main = document.querySelector("main")!;
@@ -68,6 +73,8 @@ async function viewerState(card: PipelineCard) {
     ...(card.layouts?.includes("3d") ? { projectionScale: zoom * 900, ...(card.turn ? { projectionOrientation: card.turn } : {}) } : {}),  // the 3-D panel's height, the same voxels
     ...(card.orientation ? { crossSectionOrientation: card.orientation } : {}),
     ...(card.playback ? { velocity: { [card.playback.axis]: { velocity: card.playback.velocity, atBoundary: "stop", paused: true } } } : {}),
+    ...(card.depth ? { projectionDepth: -card.depth } : {}),  // negative: in view heights
+    ...(card.boxes === false ? { showDefaultAnnotations: false } : {}),
     crossSectionBackgroundColor: "#000000", showAxisLines: false, layers,
     layout: card.panels.length === 1
       ? { type: "viewer", layers: card.panels[0], layout: card.layouts?.[0] ?? "xy" }

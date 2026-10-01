@@ -9,7 +9,7 @@
 // and spatial: attributes on the group.
 import { Cancelled, Claim, Queue } from "./demand";
 import schema from "./generated/chunkmirage.schema.json";
-import type { Answer, Later, PipelineView, Reply, SourceInfo, ToPyWorker, ToReader, ViewAxis, ViewInfo } from "./types";
+import type { Answer, Later, MeshCall, PipelineView, Reply, SourceInfo, ToPyWorker, ToReader, ViewAxis, ViewInfo } from "./types";
 
 export const TO_SECONDS: Record<string, number> = { s: 1, second: 1, millisecond: 1e-3, ms: 1e-3, minute: 60, hour: 3600, day: 86400 };
 const OME_UNIT: Record<string, string> = { nm: "nanometer", um: "micrometer", m: "meter", s: "second" };
@@ -26,8 +26,11 @@ const OP_PACKAGES: Record<string, string[]> = Object.fromEntries(Object.values(s
 const computedSource = (url: string) => url.startsWith("synthetic://");
 
 type Request<R> = R extends unknown ? Omit<R, "reqId"> : never;
-type Answered = null | { status: number; body: string | ArrayBuffer; type: string }
-  | { status: number; type: string; pending: Promise<ArrayBuffer>; claim: Claim };
+type Answered = null | { status: number; body: string | ArrayBuffer; type: string; range?: string }
+  | { status: number; type: string; pending: Promise<ArrayBuffer>; claim: Claim; range?: string };
+/** A multi-resolution mesh's octree: its nodes (level, z, y, x each, in the data file's
+ * order), each fragment's size, the quantization and the index file. */
+type Octree = { nodes: Int32Array; size: number; bits: number; index: ArrayBuffer };
 type Plan = { dtype: string; lead: number; halo: number[] };
 
 /** A worker answering requests by reqId. */
@@ -227,12 +230,14 @@ export class Engine {
 
   /** Chunk `index` of a view's level: its input region from the reader (clipped to the
    * level; the worker pads it at the edges as a server stage does), computed by a worker.
-   * With `mesh`, the chunk's mesh fragment instead: one voxel more on its high sides. */
-  private async compute(view: string, level: number, index: number[], mesh = false): Promise<ArrayBuffer> {
+   * With `mesh`, a mesh of the chunk instead, one voxel more on its high sides; or with
+   * `box`, of those voxels of the level. */
+  private async compute(view: string, level: number, index: number[], mesh?: MeshCall, box?: [number[], number[]]): Promise<ArrayBuffer> {
     const produce = this.producers.get(view);
     if (produce) return produce(level, index);
     const v = this.infos[view], l = v.levels[level], C = this.views[view].chunk, halo = v.halo, more = mesh ? 1 : 0;
-    const outLo = index.map((i, a) => i * C[a]), outHi = outLo.map((o, a) => Math.min(o + C[a] + more, l.shape[a]));
+    const outLo = box ? box[0] : index.map((i, a) => i * C[a]);
+    const outHi = box ? box[1] : outLo.map((o, a) => Math.min(o + C[a] + more, l.shape[a]));
     const inLo = outLo.map((o, a) => o - halo[a]), inHi = outHi.map((o, a) => o + halo[a]);
     const lo = inLo.map((o) => Math.max(o, 0)), hi = inHi.map((o, a) => Math.min(o, l.shape[a]));
     const data = computedSource(this.views[view].source) ? null : await this.reader!.call<ArrayBuffer>({ type: "read", view, level, lo, hi });
@@ -241,7 +246,7 @@ export class Engine {
     return worker.call<ArrayBuffer>({
       type: "compute", view, level, data, readShape: [...lead, ...hi.map((h, a) => h - lo[a])],
       inLo, inHi, outLo, outHi, full: [...lead, ...l.shape], voxel: l.voxel, origin: l.origin,
-      unit: v.axes[v.axes.length - 1].unit, ...(mesh ? { mesh: { kind: "surface", ...this.views[view].mesh } } : {}),
+      unit: v.axes[v.axes.length - 1].unit, ...(mesh ? { mesh } : {}),
     }, data ? [data] : []);
   }
 
@@ -255,8 +260,8 @@ export class Engine {
     }
   }
 
-  private chunk(view: string, level: number, index: number[], mesh = false): Answered {
-    const key = `${view}/${mesh ? "mesh" : level}/${index.join(".")}`, done = this.kept.get(key);
+  private chunk(view: string, level: number, index: number[], mesh?: MeshCall): Answered {
+    const key = `${view}/${mesh ? `mesh${level}` : level}/${index.join(".")}`, done = this.kept.get(key);
     if (done) {
       this.kept.delete(key); this.kept.set(key, done);
       return { status: 200, body: done.slice(0), type: "application/octet-stream" };
@@ -283,7 +288,7 @@ export class Engine {
   /** Projection codes of the GeoZarr groups, by view (set by the map page). */
   proj: Record<string, string> = {};
 
-  private async answer(path: string): Promise<Answered> {
+  private async answer(path: string, range?: string | null): Promise<Answered> {
     const parts = path.split("/virtual/")[1]?.split("/");
     if (!parts || parts[0] !== this.page) return null;
     if (!this.chunks) return notFound;
@@ -307,7 +312,7 @@ export class Engine {
       rest = rest.slice(1);
       if (!this.infos[view]) return notFound;
       if (rest.length === 1 && rest[0] === "zarr.json") return asJson(this.omeGroup(view));
-      if (rest[0] === "mesh" && this.views[view].mesh) return this.mesh(view, rest.slice(1).join("/"));
+      if (rest[0] === "mesh" && this.views[view].mesh) return this.mesh(view, rest.slice(1).join("/"), range);
     }
     const level = Number(rest[0]);
     if (!this.infos[view].levels[level]) return notFound;
@@ -316,9 +321,48 @@ export class Engine {
     return this.chunk(view, level, rest.slice(2).map(Number));
   }
 
-  /** A view's mesh, as chunkmirage's mesh frontend serves it: info, the manifest (every
-   * chunk of the mesh level a fragment), and fragments, each meshed when fetched. */
-  private mesh(view: string, path: string): Answered {
+  private octrees = new Map<string, Promise<Octree>>();
+
+  /** A view's multi-resolution octree, made once from its whole coarsest level: its eighths
+   * masked by the workers at once, joined here, and the nodes and index made by one. */
+  private octree(view: string): Promise<Octree> {
+    let o = this.octrees.get(view);
+    if (!o) {
+      const spec = this.views[view].mesh!, v = this.infos[view], level = this.meshLevel(view), shape = v.levels[level].shape;
+      const call: MeshCall = { kind: "surface", ...spec, mode: "mask" };
+      const parts = [...Array(8).keys()].map((k) => {
+        const lo = shape.map((n, a) => ((k >> a) & 1 ? n >> 1 : 0)), hi = shape.map((n, a) => ((k >> a) & 1 ? n : n >> 1));
+        return { lo, hi };
+      }).filter((p) => p.hi.every((h, a) => h > p.lo[a]));
+      o = Promise.all(parts.map((p) => this.compute(view, level, [], call, [p.lo, p.hi]))).then(async (masks) => {
+        const all = new Uint8Array(shape[0] * shape[1] * shape[2]);
+        masks.forEach((m, i) => {  // each part's rows into the whole level's
+          const { lo, hi } = parts[i], d = hi.map((h, a) => h - lo[a]), src = new Uint8Array(m);
+          for (let z = 0; z < d[0]; z++) for (let y = 0; y < d[1]; y++) {
+            const from = (z * d[1] + y) * d[2], to = ((z + lo[0]) * shape[1] + y + lo[1]) * shape[2] + lo[2];
+            all.set(src.subarray(from, from + d[2]), to);
+          }
+        });
+        const b = await this.pool[this.turn++ % this.pool.length].call<ArrayBuffer>({
+          type: "octree", mask: all.buffer, shape, chunk: this.views[view].chunk, unit: v.axes[v.axes.length - 1].unit,
+          mesh: { kind: "surface", ...spec, mode: "mask", levels: v.levels },
+        }, [all.buffer]);
+        const head = new DataView(b, 0, 12), n = head.getUint32(0, true);
+        return { nodes: new Int32Array(b.slice(12, 12 + 16 * n)), size: head.getUint32(4, true), bits: head.getUint32(8, true), index: b.slice(12 + 16 * n) };
+      });
+      o.catch(() => this.octrees.delete(view));
+      this.octrees.set(view, o);
+    }
+    return o;
+  }
+
+  /** A view's mesh, as chunkmirage's mesh frontend serves it. Single resolution: info, the
+   * manifest (every chunk of the mesh level a fragment), and fragments, each meshed when
+   * fetched. Multi-resolution (`lods` > 1): info, the index, and the fragments' file, read
+   * by range, each node meshed when its bytes are asked for. */
+  private mesh(view: string, path: string, range?: string | null): Answered {
+    const spec = this.views[view].mesh!;
+    if ((spec.lods ?? 1) > 1) return this.multires(view, path, range);
     const level = this.meshLevel(view), l = this.infos[view].levels[level], C = this.views[view].chunk;
     if (path === "info") return asJson({ "@type": "neuroglancer_legacy_mesh" });
     const grid = l.shape.map((n, a) => Math.ceil(n / C[a]));
@@ -335,19 +379,47 @@ export class Engine {
     if (!m) return notFound;
     const index = m[1].split("_").map(Number);
     if (index.length !== grid.length || index.some((i, a) => i >= grid[a])) return notFound;
-    return this.chunk(view, level, index, true);
+    return this.chunk(view, level, index, { kind: "surface", ...spec, mode: "legacy" });
+  }
+
+  private multires(view: string, path: string, range?: string | null): Answered {
+    const later = (p: Promise<ArrayBuffer>, type = "application/octet-stream", extra: { status?: number; range?: string } = {}): Answered =>
+      ({ status: extra.status ?? 200, type, pending: p, claim: new Claim(), ...(extra.range ? { range: extra.range } : {}) });
+    const json = (o: unknown) => new TextEncoder().encode(JSON.stringify(o)).buffer as ArrayBuffer;
+    if (path === "info") {
+      return later(this.octree(view).then((o) => json({
+        "@type": "neuroglancer_multilod_draco", vertex_quantization_bits: o.bits,
+        transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0], lod_scale_multiplier: 1,
+      })), "application/json");
+    }
+    if (path === "1.index") return later(this.octree(view).then((o) => o.index.slice(0)));
+    const m = /^bytes=(\d+)-(\d+)$/.exec(range ?? "");
+    if (path !== "1" || !m) return notFound;
+    const start = Number(m[1]), stop = Number(m[2]) + 1, spec = this.views[view].mesh!;
+    const claim = new Claim();
+    const pending = this.octree(view).then(async (o) => {
+      const k = Math.floor(start / o.size);
+      if (stop > (k + 1) * o.size || k * 4 >= o.nodes.length) throw new Error(`bytes ${start}-${stop}: one fragment at a time`);
+      const [level, ...node] = o.nodes.slice(4 * k, 4 * k + 4);
+      const a = this.chunk(view, level, [...node], { kind: "surface", ...spec, mode: "node", size: o.size, bits: o.bits });
+      if (!a || !("pending" in a)) return (a?.body as ArrayBuffer).slice(start - k * o.size, stop - k * o.size);
+      claim.onCancel(() => a.claim.cancel());
+      return (await a.pending).slice(start - k * o.size, stop - k * o.size);
+    });
+    pending.catch(() => {});
+    return { status: 206, type: "application/octet-stream", pending, claim, range: `bytes ${start}-${stop - 1}/*` };
   }
 
   private listen() {
-    navigator.serviceWorker.addEventListener("message", async (e: MessageEvent<{ path: string }>) => {
+    navigator.serviceWorker.addEventListener("message", async (e: MessageEvent<{ path: string; range?: string | null }>) => {
       const port = e.ports[0];
       if (!port) return;
       let a: Answered;
-      try { a = await this.answer(e.data.path); } catch (err) { a = { status: 500, body: String(err), type: "text/plain" }; }
+      try { a = await this.answer(e.data.path, e.data.range); } catch (err) { a = { status: 500, body: String(err), type: "text/plain" }; }
       if (!a || !("pending" in a)) return port.postMessage(a, a && a.body instanceof ArrayBuffer ? [a.body] : []);
       // a chunk: the head now, the body once computed; the client may give up in between
       port.onmessage = (m: MessageEvent<{ cancel?: boolean }>) => { if (m.data?.cancel) a.claim.cancel(); };
-      port.postMessage({ status: a.status, type: a.type, stream: true } satisfies Reply);
+      port.postMessage({ status: a.status, type: a.type, stream: true, ...(a.range ? { range: a.range } : {}) } satisfies Reply);
       a.pending.then(
         (body) => port.postMessage({ body } satisfies Later, [body]),
         (err) => port.postMessage({ error: String((err as Error)?.message ?? err) } satisfies Later),

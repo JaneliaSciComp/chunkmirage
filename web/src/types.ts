@@ -59,7 +59,7 @@ export interface StoreStats { requests: number; hits: number; fetches: number; f
  * A chunk's answer comes in two parts: its head at once ({stream: true}), its body later as a
  * Later, so the service worker can stream it and tell the page ({cancel: true}) if the client
  * gives up first. */
-export type Reply = { status: number; body: string | ArrayBuffer; type: string } | { status: number; type: string; stream: true } | null;
+export type Reply = { status: number; body: string | ArrayBuffer; type: string; range?: string } | { status: number; type: string; stream: true; range?: string } | null;
 export type Later = { body: ArrayBuffer } | { error: string };
 
 // ------------------------------------------------ the pipeline page, its reader and its Pyodide workers
@@ -69,7 +69,7 @@ export interface PipelineView {
   select?: Record<string, number>;   // pin non-spatial axes, e.g. {c: 1, t: 0}
   ops?: Record<string, unknown>[];   // op specs, as the CLI and REST API take them
   chunk: number[];                   // output chunks, one per axis
-  mesh?: { kind?: "surface" | "terrain"; level?: number; threshold?: number; exaggeration?: number };  // served at <view>/mesh
+  mesh?: { kind?: "surface" | "terrain"; level?: number; threshold?: number; exaggeration?: number; lods?: number };  // served at <view>/mesh
 }
 /** An axis of a view: its name (z, or time, lat, ...) and the unit of its voxel size. */
 export interface ViewAxis { name: string; unit: string }
@@ -79,6 +79,9 @@ export interface SourceInfo { dtype: string; channels: number; axes: ViewAxis[];
 /** A view as served: its source's axes and levels, and what its ops make of them. */
 export interface ViewInfo extends SourceInfo { halo: number[]; lead: number; out: string }
 
+/** A mesh made from a view's voxels: a legacy fragment, part of the coarsest level's mask
+ * (for the multi-resolution octree), or a multi-resolution node's fragment. */
+export type MeshCall = NonNullable<PipelineView["mesh"]> & { mode: "legacy" | "mask" | "node"; levels?: ViewLevel[]; size?: number; bits?: number };
 /** What the page asks the reader, which opens the views' sources once for the page. */
 export type ToReader =
   | { type: "open"; reqId: number; views: Record<string, PipelineView> }
@@ -89,7 +92,9 @@ export type ToPyWorker =
   | { type: "describe"; reqId: number; source: string }  // a source computed in the worker (synthetic://)
   | { type: "plan"; reqId: number; packages?: string[]; views: Record<string, { ops: Record<string, unknown>[]; shape: number[]; dtype: string; chunk: number[]; voxel: number[]; source?: string }> }
   // data: the input region read by the reader, or null for a source the worker computes
-  | { type: "compute"; reqId: number; view: string; level: number; data: ArrayBuffer | null; readShape: number[]; inLo: number[]; inHi: number[]; outLo: number[]; outHi: number[]; full: number[]; voxel: number[]; origin: number[]; unit?: string; mesh?: PipelineView["mesh"] }
+  | { type: "compute"; reqId: number; view: string; level: number; data: ArrayBuffer | null; readShape: number[]; inLo: number[]; inHi: number[]; outLo: number[]; outHi: number[]; full: number[]; voxel: number[]; origin: number[]; unit?: string; mesh?: MeshCall }
+  // a multi-resolution mesh's octree and index, from its coarsest level's mask (`mesh.levels` the view's)
+  | { type: "octree"; reqId: number; mask: ArrayBuffer; shape: number[]; mesh: MeshCall; chunk: number[]; unit: string }
   // a step of chunkmirage.stitching (the stitch page): JSON arguments, arrays as raw bytes
   | { type: "stitch"; reqId: number; fn: string; args: string; arrays?: ArrayBuffer[] };
 /** Either's answer to request `reqId`. */

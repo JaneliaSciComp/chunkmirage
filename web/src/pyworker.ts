@@ -65,6 +65,41 @@ def plan(view, ops, shape, dtype, chunk, voxel, source=None):
     VIEWS[view] = (ops, dtype, list(chunk), source)
     return json.dumps({"dtype": out.dtype.name, "lead": lead, "halo": list(halo), "ndim": out.ndim})
 
+def _mesh(m, result, box, shape, dtype, chunk, voxel, origin, unit):
+    """legacy: a fragment (Neuroglancer's encoding). octree: from the whole coarsest level,
+    the multi-resolution nodes (level, z, y, x each), header (count, fragment bytes,
+    quantization bits) first, then the index. node: a node's mesh, header (vertices,
+    triangles) then both as uint32, for the page to encode with Draco."""
+    import struct
+    from chunkmirage import meshes
+    mode, levels = m.pop("mode", "legacy"), m.pop("levels", None)
+    spec = meshes.MeshSpec(**m)
+    info = _info(list(shape), dtype, chunk, list(voxel), list(origin), unit)
+    if mode == "mask":  # part of the coarsest level, inside or not (the page joins the parts)
+        return np.ascontiguousarray(np.asarray(result) >= spec.threshold, np.uint8).tobytes()
+    if mode == "node":
+        v, f = meshes.multires_fragment(spec, result, box, info, chunk)
+        return struct.pack("<II", len(v), len(f)) + v.astype("<u4").tobytes() + f.astype("<u4").tobytes()
+    return meshes.fragment(spec, result, box, info)
+
+def octree(mask, shape, mesh, chunk, unit):
+    """A multi-resolution mesh's nodes (level, z, y, x each; header: their count, the
+    fragments' size and the quantization bits) and index, from the whole coarsest level's
+    mask (uint8, 1 inside)."""
+    import struct
+    from chunkmirage import meshes
+    m = json.loads(mesh)
+    m.pop("mode", None)
+    levels = m.pop("levels")
+    spec = meshes.MeshSpec(**{**m, "threshold": 1})  # the mask is inside or not
+    infos = [_info(l["shape"], "uint8", list(chunk), l["voxel"], l["origin"], unit) for l in levels]
+    block = np.frombuffer(mask.to_py(), np.uint8).reshape(tuple(shape))
+    lods = meshes.lod_levels(infos, spec)
+    nodes = meshes.multires_nodes(spec, block, infos, list(chunk))
+    flat = np.array([[lv, *n] for lv, ns in zip(lods, nodes) for n in ns], "<i4").reshape(-1, 4)
+    head = struct.pack("<III", len(flat), meshes.FRAGMENT_BYTES, meshes.BITS)
+    return head + flat.tobytes() + meshes.multires_index(nodes, infos, lods, list(chunk))
+
 def compute(view, level, data, read_shape, in_lo, in_hi, out_lo, out_hi, full_shape, voxel, origin=None, mesh=None, unit=""):
     ops, dtype, chunk, source = VIEWS[view]
     full = tuple(full_shape)
@@ -77,10 +112,8 @@ def compute(view, level, data, read_shape, in_lo, in_hi, out_lo, out_hi, full_sh
         block = fused.pad_edge(block, in_box, full)
     out = fused.plan(_info(full, dtype, chunk, list(voxel)), ops)[0]  # the level's voxels: for_level
     result = fused.run(ops, block, in_box, Box(tuple(out_lo), tuple(out_hi)), out)
-    if mesh is not None:  # a mesh fragment of these voxels, not a chunk
-        from chunkmirage import meshes
-        info = _info(full[lead:], out.dtype.name, chunk, list(voxel), list(origin), unit)
-        return meshes.fragment(meshes.MeshSpec(**json.loads(mesh)), result, Box(tuple(out_lo), tuple(out_hi)), info)
+    if mesh is not None:  # a mesh of these voxels, not a chunk
+        return _mesh(json.loads(mesh), result, Box(tuple(out_lo), tuple(out_hi)), full[lead:], out.dtype.name, chunk, voxel, origin, unit)
     # a zarr chunk is always whole: one at the edge of the array is padded with the fill value
     result = np.pad(result, [(0, c - n) for c, n in zip(chunk, result.shape)])
     return np.ascontiguousarray(result).astype(result.dtype.newbyteorder("<"), copy=False).tobytes()
@@ -188,13 +221,50 @@ async function withPackages<T>(call: () => T): Promise<T> {
   }
 }
 
+// Draco's own encoder, compiled for the web: a multi-resolution mesh's fragments are Draco
+const DRACO = "https://cdn.jsdelivr.net/gh/google/draco@1.5.7/javascript/";
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let draco: Promise<any> | null = null;
+function loadDraco() {
+  return draco ??= (async () => {
+    const text = await (await fetch(`${DRACO}draco_encoder.js`)).text();
+    const factory = new Function(`${text}\nreturn DracoEncoderModule;`)();
+    return factory({ locateFile: (f: string) => DRACO + f });
+  })();
+}
+
+/** A node's mesh (header, then uint32 vertices and triangles, from chunkmirage.meshes) as a
+ * Draco fragment, its integer positions kept as they are, padded to `size` bytes. */
+async function encodeNode(raw: Uint8Array, size: number, bits: number): Promise<ArrayBuffer> {
+  const head = new DataView(raw.buffer, raw.byteOffset, 8), nv = head.getUint32(0, true), nf = head.getUint32(4, true);
+  const out = new Uint8Array(size);
+  if (!nf) return out.buffer;
+  const M = await loadDraco();
+  const verts = new Uint32Array(raw.slice(8, 8 + nv * 12).buffer), faces = new Uint32Array(raw.slice(8 + nv * 12).buffer);
+  const encoder = new M.Encoder(), builder = new M.MeshBuilder(), mesh = new M.Mesh(), data = new M.DracoInt8Array();
+  try {
+    builder.AddFacesToMesh(mesh, nf, faces);
+    builder.AddFloatAttributeToMesh(mesh, M.POSITION, nv, 3, new Float32Array(verts));
+    encoder.SetAttributeExplicitQuantization(M.POSITION, bits, 3, [0, 0, 0], 2 ** bits - 1);  // the integers as they are
+    encoder.SetSpeedOptions(3, 3);
+    const n = encoder.EncodeMeshToDracoBuffer(mesh, data);
+    if (n > size) throw new Error(`a mesh fragment took ${n} bytes, over ${size}`);
+    for (let i = 0; i < n; i++) out[i] = data.GetValue(i);
+  } finally {
+    M.destroy(data); M.destroy(mesh); M.destroy(builder); M.destroy(encoder);
+  }
+  return out.buffer;
+}
+
 /** A chunk, as zarr v3 bytes (little endian, C order), from its input region; or with
- * `mesh`, a mesh fragment of the region (Neuroglancer's legacy encoding). */
+ * `mesh`, a mesh of the region (chunkmirage.meshes; a multi-resolution node's encoded and
+ * padded to `mesh.size` bytes). */
 async function compute(m: Extract<ToPyWorker, { type: "compute" }>): Promise<ArrayBuffer> {
-  const mesh = m.mesh ? JSON.stringify(m.mesh) : undefined;
+  const mesh = m.mesh ? JSON.stringify({ ...m.mesh, size: undefined, bits: undefined }) : undefined;  // the encoding's, not Python's
   const bytes = await withPackages(() => py.globals.get("compute")(m.view, m.level, m.data ? new Uint8Array(m.data) : undefined, m.readShape, m.inLo, m.inHi, m.outLo, m.outHi, m.full, m.voxel, m.origin, mesh, m.unit ?? ""));
   const out = bytes.toJs() as Uint8Array;
   bytes.destroy();
+  if (m.mesh?.mode === "node") return encodeNode(out, m.mesh.size!, m.mesh.bits!);
   return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer;
 }
 
@@ -202,6 +272,13 @@ ctx.onmessage = async ({ data: m }: MessageEvent<ToPyWorker>) => {
   try {
     if (m.type === "describe") { if (!py) await (loaded ??= load()); ctx.postMessage({ reqId: m.reqId, value: JSON.parse(py.globals.get("describe")(m.source)) } satisfies Answer); }
     else if (m.type === "plan") ctx.postMessage({ reqId: m.reqId, value: await plan(m.views, m.packages) } satisfies Answer);
+    else if (m.type === "octree") {
+      const out = await withPackages(() => py.globals.get("octree")(new Uint8Array(m.mask), m.shape, JSON.stringify(m.mesh), m.chunk, m.unit));
+      const bytes = out.toJs() as Uint8Array;
+      out.destroy();
+      const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      ctx.postMessage({ reqId: m.reqId, value: body } satisfies Answer, [body]);
+    }
     else if (m.type === "stitch") { const v = await stitch(m); ctx.postMessage({ reqId: m.reqId, value: v } satisfies Answer, v instanceof ArrayBuffer ? [v] : []); }
     else if (m.type === "compute") { const body = await compute(m); ctx.postMessage({ reqId: m.reqId, value: body } satisfies Answer, [body]); }
   } catch (e) {

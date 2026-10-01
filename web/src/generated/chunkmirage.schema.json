@@ -281,6 +281,13 @@
           "description": "terrain: the elevation's scale",
           "exclusiveMinimum": 0,
           "type": "number"
+        },
+        "lods": {
+          "default": 1,
+          "description": "surface: levels of detail. 1 is one mesh of `level`; more serve Neuroglancer's multi-resolution format, `level` the coarsest and each further one a pyramid level finer, meshed where the viewer zooms in",
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer"
         }
       },
       "title": "MeshSpec",

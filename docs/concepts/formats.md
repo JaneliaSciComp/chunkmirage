@@ -9,7 +9,7 @@ Every dataset is served through every frontend simultaneously. Given a dataset n
 | `zarr`        | `zarr2://http://localhost:8000/em/zarr`                | Zarr v2 + OME-NGFF 0.4 `multiscales`; consolidated `.zmetadata` too |
 | `zarr3`       | `zarr3://http://localhost:8000/em/zarr3`               | Zarr v3 + OME-NGFF 0.5 in group attributes       |
 | `precomputed` | `precomputed://http://localhost:8000/em/precomputed`   | `raw` encoding, 3-D or 4-D (c,z,y,x) only; HTTP gzip when accepted |
-| `mesh`        | `precomputed://http://localhost:8000/em/mesh`          | a surface of the dataset as Neuroglancer (legacy) meshes, segment `1`, each fragment meshed when fetched; see [Meshes](#meshes-computed-when-fetched) |
+| `mesh`        | `precomputed://http://localhost:8000/em/mesh`          | a surface of the dataset as Neuroglancer meshes, segment `1`, each fragment meshed when fetched, at one resolution or several (finer where you zoom); see [Meshes](#meshes-computed-when-fetched) |
 
 A cache-busting token may be inserted after the name: `/em/@{digest}/zarr3`. The API always
 hands out this form; the plain form always serves the current pipeline.
@@ -69,24 +69,53 @@ layout asks. The Python server has no GeoZarr frontend yet.
 
 ## Meshes, computed when fetched
 
-The `mesh` frontend serves a dataset's surface in Neuroglancer's precomputed (legacy) mesh
-format, for a segmentation layer whose source is `precomputed://.../<name>/mesh`: `info`
+The `mesh` frontend serves a dataset's surface in Neuroglancer's precomputed mesh formats,
+for a segmentation layer whose source is `precomputed://.../<name>/mesh`, segment `1`.
+
+**One resolution** (the default): the legacy format. `info`
 (`{"@type": "neuroglancer_legacy_mesh"}`), the manifest `1:0` listing one fragment per chunk
 of one level, and each fragment `1:0:i_j_k`, meshed when it is fetched (`uint32` vertex
-count, `float32` x, y, z per vertex in nanometres, `uint32` triangle corners). The legacy
-format suits computing on demand: its manifest names fragments without their sizes, while
-the multi-resolution format needs every fragment's byte offsets before any is fetched. A
-fragment is its chunk plus one voxel on its high sides, so neighbouring fragments meet
-exactly (the surface is watertight across them), and closed at the array's edges.
+count, `float32` x, y, z per vertex in nanometres, `uint32` triangle corners). A fragment is
+its chunk plus one voxel on its high sides, so neighbouring fragments meet exactly (the
+surface is watertight across them), and closed at the array's edges. Neuroglancer fetches
+every fragment of the manifest, so the level bounds the work, and zooming in shows nothing
+finer.
+
+**Several resolutions** (`lods` above 1): the multi-resolution format, whose meshes get finer
+where the viewer zooms in. Level of detail `i` is the pyramid level `level - lods + 1 + i`,
+its octree nodes that level's chunks, so each finer level splits a node in eight. `info`
+(`neuroglancer_multilod_draco`, 16-bit positions), the index `1.index` (per level of detail
+its nodes and their sizes; each level's voxel size is its scale, the offset of its origin
+its vertex offset) and the fragments' file `1`, which Neuroglancer reads by HTTP Range
+requests, one node at a time, for the nodes in view at the detail it wants (a segmentation
+layer's `meshRenderScale`: larger is coarser). The format wants every fragment's size before
+any is fetched, which on-demand meshing cannot know, so every fragment is padded to one size
+(128 KB; Draco decoders read what they need and ignore the rest, and the server gzips them,
+so a padded fragment costs a few hundred bytes to a few tens of kilobytes on the wire). A
+node's mesh is marching cubes on each of its octants apart (no triangle may cross one, so
+Neuroglancer can show part of a coarse node while its children load), its vertices integers
+across the node, coarsened past 100,000 triangles, and encoded with Draco (DracoPy, in the
+`mesh` extra; the browser engine uses Draco's own WebAssembly build). Only nodes within two
+voxels of the coarsest level's surface are listed, which the index is made from when it is
+first asked for (the whole coarsest level is read once): a finer level's surface lies near
+the coarser one's, and a listed node that turns out empty costs only its fetch. Four levels
+of detail of the Mandelbulb from its 256³ level list about 47,000 nodes, a 750 KB index;
+more than two million are refused.
 
 The spec's `mesh` (CLI `--mesh`) says what is meshed: `kind: surface` (default) is the
 boundary of the voxels at or above `threshold` (128), by marching cubes (scikit-image, the
 `mesh` extra); `kind: terrain` is an elevation model (`y, x`, or `z, y, x` with one z) as
 two triangles per cell, its elevation times `exaggeration` as height, cells with a NaN
-corner left out. `level` picks the level (default: the finest whose longest side is at most
-512 voxels); Neuroglancer fetches every fragment of the manifest, so the level bounds the
-work. The browser engine serves the same at `virtual/<page>/<view>/mesh`, its workers
-running the same module (`chunkmirage.meshes`).
+corner left out (one resolution only). `level` picks the level, the coarsest with `lods`
+(default: the finest whose longest side is at most 512 voxels), and `lods` the levels of
+detail. The browser engine serves the same at `virtual/<page>/<view>/mesh`, its workers
+running the same module (`chunkmirage.meshes`); for the multi-resolution index it masks the
+coarsest level's eighths in its workers at once.
+
+```bash
+chunkmirage serve 'synthetic://mandelbulb?shape=268435456,268435456,268435456&voxel_size=1&unit=nm' \
+  --mesh threshold=255,level=20,lods=4 --chunk 32,32,32 --python-viewer
+```
 
 ## Data types
 

@@ -24,7 +24,7 @@ hdf5 = ["h5py>=3.10"]
 tiff = ["tifffile>=2024.1", "imagecodecs>=2024.1"]
 ops = ["scipy>=1.12"]
 # meshes computed on demand (marching cubes)
-mesh = ["scikit-image>=0.22"]
+mesh = ["scikit-image>=0.22", "DracoPy>=1.4"]
 mcp = ["mcp>=1.0"]
 viewer = ["neuroglancer>=2.40"]
 https = ["cryptography>=42"]

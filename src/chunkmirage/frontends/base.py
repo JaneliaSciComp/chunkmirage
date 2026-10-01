@@ -29,6 +29,9 @@ class Metadata:
 class ChunkRequest:
     level: int
     index: tuple[int, ...]
+    # a byte range [start, stop) of a file of `total` bytes (multi-resolution mesh fragments)
+    part: tuple[int, int] | None = None
+    total: int | None = None
 
 
 class Frontend(ABC):
@@ -42,6 +45,11 @@ class Frontend(ABC):
     @abstractmethod
     def encode(self, info: ArrayInfo, index: tuple[int, ...], block: np.ndarray) -> bytes:
         """Encode the (edge-clipped) block for chunk ``index`` in this format."""
+
+    def resolve_range(self, pipeline: Pipeline, path: str, start: int, stop: int) -> ChunkRequest | None:
+        """A request for bytes ``[start, stop)`` of ``path``, for files read by HTTP Range
+        requests; ``None`` serves the whole file as ``resolve`` does."""
+        return None
 
     def compute(self, pipeline: Pipeline, req: ChunkRequest) -> bytes:
         """The body for ``req``: its chunk, encoded. Frontends that serve something made from

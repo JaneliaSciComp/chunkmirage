@@ -10,6 +10,7 @@ import pytest
 import tensorstore as ts
 
 from chunkmirage import Pipeline, open_source
+from chunkmirage.core import Box
 from chunkmirage.frontends import get_frontend
 
 pytest.importorskip("skimage")
@@ -87,3 +88,53 @@ def test_terrain_has_the_elevation_as_height(tmp_path):
     assert len(verts) == 12 * 16 and len(faces) == 2 * 11 * 15 - 2  # the NaN corner's cell
     east = verts[:, 0] / 1e9 / 5  # x in pixels
     np.testing.assert_allclose(verts[16:, 2] / 1e9, 2 * 0.5 * east[16:], atol=1e-3)
+
+
+def test_multiresolution_meshes_list_nodes_near_the_surface_and_serve_them_by_range():
+    pytest.importorskip("DracoPy")
+    import DracoPy
+    from starlette.testclient import TestClient
+
+    from chunkmirage import meshes
+    from chunkmirage.cache import LRUCache
+    from chunkmirage.server import DatasetRegistry, create_app
+
+    src = "synthetic://mandelbulb?shape=128,128,128&levels=3&voxel_size=4&unit=nm"
+    p = Pipeline.from_spec({"source": src, "chunk_shape": [16, 16, 16], "mesh": {"threshold": 255, "level": 2, "lods": 3}})
+    infos = [p.info(i) for i in range(p.num_levels)]
+    spec = p.spec.mesh
+    assert meshes.lod_levels(infos, spec) == [0, 1, 2]
+    fe = get_frontend("mesh")
+    assert json.loads(fe.resolve(p, "info").body)["@type"] == "neuroglancer_multilod_draco"
+    index = fe.resolve(p, "1.index").body
+    shape = struct.unpack("<3f", index[:12])
+    n_lods = struct.unpack("<I", index[24:28])[0]
+    scales = struct.unpack(f"<{n_lods}f", index[28 : 28 + 4 * n_lods])
+    counts = struct.unpack(f"<{n_lods}I", index[28 + 16 * n_lods : 28 + 20 * n_lods])
+    assert n_lods == 3 and shape == (64.0, 64.0, 64.0) and scales == (4.0, 8.0, 16.0)
+    assert len(index) == 28 + 20 * n_lods + 16 * sum(counts)
+    # nodes only near the surface: the finest level's fewer than its grid's 8³, and every one's
+    # parent listed
+    assert 0 < counts[2] <= 8 and counts[0] < 8**3
+    nodes = meshes.multires_nodes(spec, p.read(2, Box((0, 0, 0), infos[2].shape)), infos, (16, 16, 16))
+    parents = {tuple(n) for n in nodes[1]}
+    assert all(tuple(c // 2) in parents for c in nodes[0])
+    # a node's fragment: integers across the node, no triangle across its octants, padded
+    level, node = 1, tuple(nodes[1][len(nodes[1]) // 2])
+    box = meshes.node_box(infos[level], node, (16, 16, 16))
+    v, f = meshes.multires_fragment(spec, p.read(level, box), box, infos[level], (16, 16, 16))
+    assert len(f) and v.max() <= 2**16 - 1
+    octant = (v[f] >= 2**15).astype(int)  # (triangles, corners, axes): which half per corner
+    mid = v[f] == 2**15  # corners on a midplane belong to both halves
+    assert ((octant.min(1) == octant.max(1)) | mid.any(1)).all()
+    # served: the k-th node's bytes by range, 206, decodable, the rest zeros
+    app = create_app(DatasetRegistry(LRUCache(1 << 26)))
+    app.state.registry.add("bulb", {"source": src, "chunk_shape": [16, 16, 16], "mesh": {"threshold": 255, "level": 2, "lods": 3}})
+    size = meshes.FRAGMENT_BYTES
+    k = counts[0] // 2
+    r = TestClient(app).get("/bulb/mesh/1", headers={"Range": f"bytes={k * size}-{(k + 1) * size - 1}"})
+    assert r.status_code == 206 and r.headers["content-range"] == f"bytes {k * size}-{(k + 1) * size - 1}/{sum(counts) * size}"
+    assert len(r.content) == size
+    if r.content.strip(b"\0"):
+        mesh = DracoPy.decode(r.content)
+        assert np.asarray(mesh.points).max() <= 2**16 - 1

@@ -72,6 +72,10 @@ export interface MeshSpec {
    * terrain: the elevation's scale
    */
   exaggeration?: number;
+  /**
+   * surface: levels of detail. 1 is one mesh of `level`; more serve Neuroglancer's multi-resolution format, `level` the coarsest and each further one a pyramid level finer, meshed where the viewer zooms in
+   */
+  lods?: number;
 }
 /**
  * The query of a ``register://`` URL. The one definition of it: the browser engine

@@ -29,6 +29,7 @@
   .date { font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; }
   #when { display: flex; flex-direction: column; gap: 4px; min-height: 64px; }
   #when[hidden] { display: none; }
+  [hidden] { display: none !important; }
   .controls { display: flex; flex-direction: column; gap: 10px; }
   .control { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; }
   .control input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }

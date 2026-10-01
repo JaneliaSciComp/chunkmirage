@@ -17,6 +17,9 @@ export interface CardLayer {
   additive?: boolean;        // image layers: add to what is below (channels of one image)
   shader?: string;           // image layers: a Neuroglancer shader of its own, over the above
   volume?: boolean;          // image layers: volume rendered in 3-D panels
+  samples?: number;          // volume rendering: depth samples (finer levels need more)
+  gain?: number;             // volume rendering: brightness (more samples are each fainter)
+  detail?: number;           // multi-resolution meshes: Neuroglancer's mesh render scale (larger is coarser)
 }
 
 interface Card { id: string; title: string; blurb: string; image: string; data: string; command: string }
@@ -27,6 +30,10 @@ export interface PipelineCard extends Card {
   panels: string[][];        // layer names per panel, side by side, each an x-y slice
   layouts?: string[];        // or each its own: "xy", "xz", "yz", "3d"
   turn?: number[];           // 3-D panels: the view's rotation (a quaternion)
+  // 3-D panels: depth of the view, in view heights; volume rendering picks its level from
+  // this over the depth samples, so Neuroglancer's 50 keeps the coarsest however close you zoom
+  depth?: number;
+  boxes?: boolean;           // the layers' bounding boxes (default shown)
   position: number[];        // full-resolution voxels of the first view, along its axes
   zoom: number;              // full-resolution voxels per screen pixel
   orientation?: number[];    // the slices' rotation (a quaternion), e.g. north up for a map
@@ -186,7 +193,7 @@ export const CARDS: DemoCard[] = [
   {
     kind: "pipeline", id: "mandelbulb", image: "cards/mandelbulb.jpg",
     title: "A 3-D fractal to zoom into forever, computed chunk by chunk",
-    blurb: "The Mandelbulb, the best known 3-D fractal, as a zarr array 2^28 voxels across, 21 levels deep: 10^25 voxels that exist nowhere. Each chunk is computed when the viewer asks for it, by chunkmirage's synthetic source running in this page; zoom into the slice on the left and finer levels iterate more, so new buds keep appearing. Right, the whole bulb volume rendered from its coarse levels. Colours are escape times, the same at every level.",
+    blurb: "The Mandelbulb, the best known 3-D fractal, as a zarr array 2^28 voxels across, 21 levels deep: 10^25 voxels that exist nowhere. Each chunk is computed when the viewer asks for it, by chunkmirage's synthetic source running in this page; zoom into the slice on the left and finer levels iterate more, so new buds keep appearing. Right, the bulb volume rendered: zoom into it and finer levels are computed there too. Colours are escape times, the same at every level.",
     data: "Computed: the power-8 Mandelbulb (White and Nylander, 2009), chunkmirage's synthetic://mandelbulb",
     views: {
       slice: { source: BULB, chunk: [256, 1, 256] },
@@ -194,22 +201,23 @@ export const CARDS: DemoCard[] = [
     },
     layers: [
       { name: "slice", view: "slice", type: "image", shader: BULB_SLICE },
-      { name: "bulb", view: "volume", type: "image", shader: BULB_VOLUME, volume: true },
+      { name: "bulb", view: "volume", type: "image", shader: BULB_VOLUME, volume: true, samples: 512, gain: 3.5 },
     ],
-    panels: [["slice"], ["bulb"]], layouts: ["xz", "3d"], turn: [0.28, 0.2, 0.06, 0.94],
+    panels: [["slice"], ["bulb"]], layouts: ["xz", "3d"], turn: [0.28, 0.2, 0.06, 0.94], depth: 2, boxes: false,
     position: [SIDE / 2, SIDE / 2, SIDE / 2], zoom: SIDE / 700,
     command: `chunkmirage serve '${BULB}' --chunk 256,1,256 --python-viewer`,
   },
   {
     kind: "pipeline", id: "mesh-bulb", image: "cards/mesh-bulb.jpg",
-    title: "The Mandelbulb as a solid surface, meshed as the viewer asks for it",
-    blurb: "The same 3-D fractal, now as a surface: each piece of mesh is made when Neuroglancer fetches it, by marching cubes over a chunk of chunkmirage's synthetic Mandelbulb, in this page. 64 pieces, each its chunk plus one voxel so they meet without seams; nothing is stored. Turn it in the 3-D panel.",
-    data: "Computed: the power-8 Mandelbulb, synthetic://mandelbulb, its 256³ level meshed by scikit-image's marching cubes",
-    views: { bulb: { source: BULB, chunk: [64, 64, 64], mesh: { threshold: 255, level: 20 } } },
-    layers: [{ name: "surface", view: "bulb", type: "mesh", colour: "#f2c46d" }],
+    title: "The Mandelbulb as a solid surface that sharpens as you zoom, meshed as the viewer asks",
+    blurb: "The same 3-D fractal, now as a surface in Neuroglancer's multi-resolution mesh format: four levels of detail, from the bulb at 256³ to 2048³, and each piece is made by marching cubes over its chunk of chunkmirage's synthetic Mandelbulb, in this page, only when the viewer asks for it. Zoom in and the pieces in view are replaced by finer ones. The format lists every piece's size before any is fetched, so each is padded to a fixed size; nothing is stored. Turn it in the 3-D panel.",
+    data: "Computed: the power-8 Mandelbulb, synthetic://mandelbulb, levels 17 to 20 meshed by scikit-image's marching cubes, encoded by Draco",
+    views: { bulb: { source: BULB, chunk: [32, 32, 32], mesh: { threshold: 255, level: 20, lods: 4 } } },
+    // detail: coarse enough that the whole bulb is its 256³ level, the finer ones where you zoom
+    layers: [{ name: "surface", view: "bulb", type: "mesh", colour: "#f2c46d", detail: 25 }],
     panels: [["surface"]], layouts: ["3d"], turn: [0.28, 0.2, 0.06, 0.94],
     position: [SIDE / 2, SIDE / 2, SIDE / 2], zoom: SIDE / 700,
-    command: `chunkmirage serve '${BULB}' --mesh threshold=255,level=20 --chunk 64,64,64 --python-viewer`,
+    command: `chunkmirage serve '${BULB}' --mesh threshold=255,level=20,lods=4 --chunk 32,32,32 --python-viewer`,
   },
   {
     kind: "pipeline", id: "mesh-moon", image: "cards/mesh-moon.jpg",
