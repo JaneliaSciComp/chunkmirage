@@ -14,7 +14,8 @@ along it). Type ``lag=3`` at the prompt to compare with three days before instea
 
 The store is xarray-written: chunkmirage takes its axes (time, lat, lon) from the dimension
 names, its spacing and origin from the coordinate arrays (time in seconds since the first
-day, degrees unitless), and unpacks its stored integers to kelvin, land as NaN. It has one
+day, degrees unitless), and unpacks its stored integers to kelvin, land as NaN; the left
+panel shifts them to degrees Celsius (a ``scale`` op), the change is the same in either. It has one
 resolution and 65 MB tiles of 5 days x 18 x 36 degrees, so it opens zoomed in on a region:
 zoomed out to the globe, the viewer would ask for every tile at full resolution.
 """
@@ -28,7 +29,7 @@ import threading
 MUR = "https://mur-sst.s3.us-west-2.amazonaws.com/zarr-v1/analysed_sst"
 FIRST_DAY = dt.date(2002, 6, 1)
 LAND = "if (isnan(v)) { emitRGB(vec3(0.18)); return; }"
-KELVIN = f"""#uicontrol invlerp temperature(range=[298, 305])
+CELSIUS = f"""#uicontrol invlerp temperature(range=[25, 32])
 void main() {{ float v = getDataValue(); {LAND} emitRGB(colormapJet(clamp(temperature(), 0.0, 1.0))); }}
 """
 CHANGE = f"""#uicontrol invlerp change(range=[-2, 2])
@@ -92,7 +93,9 @@ def main() -> None:
     registry = DatasetRegistry(
         LRUCache(int(args.cache_gb * 2**30)), source_cache_bytes=int(args.source_cache_gb * 2**30)
     )
-    registry.add("temperature", {"source": args.source, "chunk_shape": chunk})
+    # MUR stores kelvin; in degrees Celsius, as the viewer shows them when you hover
+    celsius = [{"op": "scale", "offset": -273.15}]
+    registry.add("temperature", {"source": args.source, "chunk_shape": chunk, "ops": celsius})
 
     def load() -> None:
         registry.add("change", spec(args.source, settings["lag"], chunk))
@@ -114,7 +117,7 @@ def main() -> None:
     # the viewer's position is physical, in voxels: degrees / 0.01, and time in days
     where = {"time": day + 0.5, "lat": lat / info.voxel_size[1], "lon": lon / info.voxel_size[2]}
     with viewer.viewer.txn() as s:
-        s.layers["temperature"].shader = KELVIN
+        s.layers["temperature"].shader = CELSIUS
         s.layers["change"].shader = CHANGE
         s.position = [where[n] for n in s.dimensions.names]
         dims = {

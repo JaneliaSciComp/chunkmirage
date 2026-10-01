@@ -109,7 +109,7 @@ const HEIGHT = `#uicontrol invlerp height(range=[-2850, 1800])
 void main() { float v = getDataValue(); if (isnan(v)) { emitTransparent(); return; } emitRGB(colormapCubehelix(clamp(height(), 0.0, 1.0))); }`;
 const MUR = "https://mur-sst.s3.us-west-2.amazonaws.com/zarr-v1/analysed_sst";
 const LAND = "if (isnan(v)) { emitRGB(vec3(0.18)); return; }";  // MUR has no value on land
-const KELVIN = `#uicontrol invlerp temperature(range=[298, 305])
+const CELSIUS = `#uicontrol invlerp temperature(range=[25, 32])
 void main() { float v = getDataValue(); ${LAND} emitRGB(colormapJet(clamp(temperature(), 0.0, 1.0))); }`;
 const CHANGE = `#uicontrol invlerp change(range=[-2, 2])
 void main() {
@@ -261,14 +261,15 @@ export const CARDS: DemoCard[] = [
   {
     kind: "pipeline", id: "hurricanes", image: "cards/hurricanes.jpg",
     title: "Hurricanes' cold wakes: each day's change across 4 trillion sea temperatures",
-    blurb: "NASA's daily sea-surface temperature of all the oceans since 2002, a kilometre apart: 4 trillion values, read straight from their public store. The change from the day before is computed for each chunk as you look, by chunkmirage's diff op running in this page. On 29 August 2005 Katrina leaves a cold swath across the Gulf of Mexico; scroll on through the days to Rita's, a month later. Left, the temperature (25 to 32 °C); right, its change since the day before (±2 °C).",
+    blurb: "NASA's daily sea-surface temperature of all the oceans since 2002, a kilometre apart: 4 trillion values, read straight from their public store. The change from the day before is computed for each chunk as you look, by chunkmirage's diff op running in this page. On 29 August 2005 Katrina leaves a cold swath across the Gulf of Mexico; scroll on through the days to Rita's, a month later. Left, the temperature in °C (25 to 32; MUR stores kelvin, shifted here as each chunk is computed); right, its change since the day before (±2 °C, the same in kelvin).",
     data: "MUR sea-surface temperature, v4.1 (NASA JPL; AWS Open Data)",
     views: {
-      sst: { source: MUR, chunk: [1, 256, 256] },
+      // MUR stores kelvin: in °C, which the viewer then shows when you hover
+      sst: { source: MUR, chunk: [1, 256, 256], ops: [{ op: "scale", offset: -273.15 }] },
       change: { source: MUR, chunk: [1, 256, 256], ops: [{ op: "diff", axis: 0, lag: 1 }] },
     },
     layers: [
-      { name: "temperature", view: "sst", type: "image", shader: KELVIN },
+      { name: "temperature", view: "sst", type: "image", shader: CELSIUS },
       { name: "change", view: "change", type: "image", shader: CHANGE },
     ],
     panels: [["temperature"], ["change"]],
