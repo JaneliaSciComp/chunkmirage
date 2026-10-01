@@ -37,7 +37,11 @@ describe shipped features as future work.
    transform model; landmark pairs drawn in Neuroglancer, fitted to a thin-plate spline and
    served live; several scene images fused into one volume (for example through
    multiview-stitcher). Resampling through OME-Zarr 0.6 transformations has shipped as
-   [`scene://` sources](concepts/formats.md#scene-sources-ome-zarr-06-transformations).
+   [`scene://` sources](concepts/formats.md#scene-sources-ome-zarr-06-transformations), and
+   tiles stitched by interest points and fused as read as
+   [`stitch://` sources](concepts/formats.md#stitch-sources-tiles-stitched-by-interest-points-and-ransac)
+   (BigStitcher projects of OME-Zarr tiles; other loaders, multi-view registration and
+   saving the result back to the project are still to do).
 7. **Adaptive caching.** Measure stage compute time at runtime and cache automatically when
    it exceeds a threshold, removing the manual `cache` flag.
 8. **MCP surface and hot-loaded ops.** `list_ops`, `set_pipeline`, `define_op` from source,

@@ -10,6 +10,9 @@
     "register": {
       "$ref": "#/$defs/RegisterParams"
     },
+    "stitch": {
+      "$ref": "#/$defs/StitchParams"
+    },
     "op": {
       "$ref": "#/$defs/OpSpec"
     }
@@ -719,6 +722,110 @@
       "required": [
         "op"
       ]
+    },
+    "StitchParams": {
+      "description": "How tiles are stitched: the interest points, their matching, RANSAC and the fit.",
+      "properties": {
+        "channel": {
+          "default": 0,
+          "description": "The tiles' channel (setup attribute) stitched",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "level": {
+          "default": 1,
+          "description": "The tiles' level interest points are found on",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sigma": {
+          "default": 1.8,
+          "description": "Blob size: the difference of Gaussians' smaller sigma, in voxels of that level along x (scaled along the other axes by their spacing)",
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "threshold": {
+          "default": 0.005,
+          "description": "Smallest difference-of-Gaussians peak kept, in units of the tile's intensity range (BigStitcher's threshold)",
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "margin": {
+          "default": 20.0,
+          "description": "How far tiles may be from their stage positions: the overlaps searched are grown by this (physical units)",
+          "minimum": 0,
+          "type": "number"
+        },
+        "neighbors": {
+          "default": 3,
+          "description": "Nearest neighbours a point's descriptor holds",
+          "maximum": 6,
+          "minimum": 2,
+          "type": "integer"
+        },
+        "redundancy": {
+          "default": 1,
+          "description": "Extra neighbours: subsets of them are tried too",
+          "maximum": 3,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "significance": {
+          "default": 3.0,
+          "description": "A match's descriptor must be this many times closer than the next best candidate's",
+          "minimum": 1,
+          "type": "number"
+        },
+        "model": {
+          "default": "translation",
+          "description": "What each tile may do beyond its stage position",
+          "enum": [
+            "translation",
+            "rigid",
+            "affine"
+          ],
+          "type": "string"
+        },
+        "epsilon": {
+          "default": 5.0,
+          "description": "RANSAC: largest error of an inlier (physical units)",
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "min_inlier_ratio": {
+          "default": 0.1,
+          "description": "RANSAC: smallest share of inliers",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "min_inliers": {
+          "default": 6,
+          "description": "RANSAC: fewest inliers for a pair to count",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "iterations": {
+          "default": 10000,
+          "description": "RANSAC: hypotheses tried",
+          "maximum": 200000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "seed": {
+          "default": 0,
+          "description": "RANSAC's random draws",
+          "type": "integer"
+        },
+        "blend": {
+          "default": 40.0,
+          "description": "Fusion: the band at a tile's edges its weight falls off over (physical units along y and x)",
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "title": "StitchParams",
+      "type": "object"
     },
     "Threshold": {
       "additionalProperties": false,

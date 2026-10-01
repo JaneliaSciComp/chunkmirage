@@ -65,6 +65,7 @@ export class Engine {
   private kept = new Map<string, ArrayBuffer>();  // in use order
   private keptBytes = 0;
   private edits = 0;
+  private producers = new Map<string, (level: number, index: number[]) => Promise<ArrayBuffer>>();
 
   /** `onChange` is told whenever the counts change. */
   constructor(private onChange: () => void = () => {}) {}
@@ -99,6 +100,28 @@ export class Engine {
     const plans = await Promise.all(this.pool.map((w) => w.call<Record<string, Plan>>({ type: "plan", views: specs })));
     for (const [v, s] of Object.entries(opened)) this.infos[v] = { ...s, out: plans[0][v].dtype, lead: plans[0][v].lead, halo: plans[0][v].halo };
     Object.assign(this.views, views);
+  }
+
+  /** Serve `views` too. */
+  add(views: Record<string, PipelineView>): Promise<void> { return this.plan(views); }
+
+  /** Serve a view whose chunks the page computes itself: `produce` gives chunk `index` of a
+   * level as zarr v3 bytes (whole, little endian). */
+  serve(view: string, info: ViewInfo, chunk: number[], produce: (level: number, index: number[]) => Promise<ArrayBuffer>) {
+    this.infos[view] = info;
+    this.views[view] = { source: "page://", chunk };
+    this.producers.set(view, produce);
+  }
+
+  /** Voxels [lo, hi) of a level of a view's source, as the reader reads them for a chunk. */
+  read(view: string, level: number, lo: number[], hi: number[]): Promise<ArrayBuffer> {
+    return this.reader!.call<ArrayBuffer>({ type: "read", view, level, lo, hi });
+  }
+
+  /** A step of chunkmirage.stitching, run by the next Pyodide worker. */
+  stitch<T>(fn: string, args: Record<string, unknown>, arrays: ArrayBuffer[] = []): Promise<T> {
+    const worker = this.pool[this.turn++ % this.pool.length];
+    return worker.call<T>({ type: "stitch", fn, args: JSON.stringify(args), arrays }, arrays);
   }
 
   /** View `view` with some of its spec changed (other ops, another source), served under a
@@ -178,6 +201,8 @@ export class Engine {
    * level; the worker pads it at the edges as a server stage does), computed by a worker.
    * With `mesh`, the chunk's mesh fragment instead: one voxel more on its high sides. */
   private async compute(view: string, level: number, index: number[], mesh = false): Promise<ArrayBuffer> {
+    const produce = this.producers.get(view);
+    if (produce) return produce(level, index);
     const v = this.infos[view], l = v.levels[level], C = this.views[view].chunk, halo = v.halo, more = mesh ? 1 : 0;
     const outLo = index.map((i, a) => i * C[a]), outHi = outLo.map((o, a) => Math.min(o + C[a] + more, l.shape[a]));
     const inLo = outLo.map((o, a) => o - halo[a]), inHi = outHi.map((o, a) => o + halo[a]);

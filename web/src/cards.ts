@@ -96,6 +96,8 @@ void main() {
   // just outside the surface, where points take longest to escape: the bulb's skin
   emitRGBA(vec4(0.5 + 0.5 * cos(6.2832 * (v / period + vec3(0.0, 0.33, 0.67))), skin * (v - 32.0) / 223.0));
 }`;
+const HEIGHT = `#uicontrol invlerp height(range=[-2850, 1800])
+void main() { float v = getDataValue(); if (isnan(v)) { emitTransparent(); return; } emitRGB(colormapCubehelix(clamp(height(), 0.0, 1.0))); }`;
 const MUR = "https://mur-sst.s3.us-west-2.amazonaws.com/zarr-v1/analysed_sst";
 const LAND = "if (isnan(v)) { emitRGB(vec3(0.18)); return; }";  // MUR has no value on land
 const KELVIN = `#uicontrol invlerp temperature(range=[298, 305])
@@ -123,6 +125,14 @@ export const CARDS: DemoCard[] = [
     data: "Janelia EASI-FISH, fly central brain, rounds 1 and 2 (janelia-data-examples)",
     href: `register.html?fixed=${ROUND1}&moving=${ROUND2}&refine=3&iterations=100,40,40,40&window=15,31,31,31`,
     command: `chunkmirage serve 'register://${ROUND2}?fixed=${encodeURIComponent(ROUND1)}&affine=auto&refine=3&iterations=100,40,40,40&window=15,31,31,31&show=pair' --python-viewer`,
+  },
+  {
+    kind: "link", id: "stitch", image: "cards/stitch.jpg",
+    title: "Six microscope tiles stitched by RANSAC, every setting live, fused as you look",
+    blurb: "Interest points in every overlap, matched between neighbouring tiles and filtered by RANSAC, then each tile placed by a fit to all the kept matches and the fused volume computed chunk by chunk, all in this page. Every knob (blob size, threshold, the ratio test, RANSAC's error, inlier counts, the model) reruns it in a second or two, and the result is checked against BigStitcher's own stitching of the same tiles: 0.4 µm apart with the defaults.",
+    data: "BigStitcher-Spark's stitching example: a larval fly CNS, 2 × 3 tiles of 512 × 512 × 86, three channels",
+    href: "stitch.html",
+    command: "chunkmirage serve 'stitch://https://janelia-bigstitcher-spark.s3.amazonaws.com/Stitching/dataset.xml' --python-viewer",
   },
   {
     kind: "pipeline", id: "contacts", image: "cards/contacts.jpg",
@@ -201,12 +211,15 @@ export const CARDS: DemoCard[] = [
   {
     kind: "pipeline", id: "mesh-moon", image: "cards/mesh-moon.jpg",
     title: "Shackleton crater's rim in 3-D, meshed from its elevation as you look",
-    blurb: "NASA's 5 m elevation map of the rim of Shackleton crater at the Moon's south pole, 16 km across, turned into a surface in 3-D: each piece of terrain is made when Neuroglancer fetches it, two triangles per 20 m cell, by chunkmirage in this page. Heights are real, not exaggerated: from the rim the ground falls 4.6 km into the crater.",
+    blurb: "NASA's 5 m elevation map of the rim of Shackleton crater at the Moon's south pole, 16 km across (left, as stored: height in colour), turned into a surface in 3-D (right): each piece of terrain is made when Neuroglancer fetches it, two triangles per 20 m cell, by chunkmirage in this page. Heights are real, not exaggerated: from the rim the ground falls 4.6 km into the crater.",
     data: "LOLA 5 m south-pole elevation (Barker et al.), Shackleton rim, cloud-optimized GeoTIFF (USGS Astrogeology)",
     views: { rim: { source: `${DEMS}/Site04/Site04.tif`, chunk: [1, 200, 200], mesh: { kind: "terrain", level: 2 } } },
-    layers: [{ name: "terrain", view: "rim", type: "mesh", colour: "#c9c4b8" }],
-    panels: [["terrain"]], layouts: ["3d"], turn: [0.5, 0, 0, 0.866],
-    position: [0, 1600, 1600], zoom: 4,
+    layers: [
+      { name: "elevation", view: "rim", type: "image", shader: HEIGHT },
+      { name: "terrain", view: "rim", type: "mesh", colour: "#c9c4b8" },
+    ],
+    panels: [["elevation"], ["terrain"]], layouts: ["xy", "3d"], turn: [0.5, 0, 0, 0.866],
+    position: [0, 1600, 1600], zoom: 5.2,
     command: `chunkmirage serve '${DEMS}/Site04/Site04.tif' --mesh kind=terrain,level=2 --chunk 200,200 --python-viewer`,
   },
   {

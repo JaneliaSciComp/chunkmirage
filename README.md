@@ -155,8 +155,9 @@ Early, but working:
 * **Sources:** zarr v2/v3, N5 and precomputed (file, S3, GCS, HTTP) and HDF5; computed
   `synthetic://` volumes, `scene://` registration through OME-Zarr 0.6 transformations,
   `warp://` procedural deformations, `register://` deformable registration solved on
-  a GPU, `stack://` several images as one array's channels, and `flip://` images stored
-  the other way round. Arrays xarray wrote (geo, climate, solar) read with their own axes
+  a GPU, `stitch://` a BigStitcher project's tiles stitched by interest points and RANSAC
+  and fused as read, `stack://` several images as one array's channels, and `flip://`
+  images stored the other way round. Arrays xarray wrote (geo, climate, solar) read with their own axes
   (`time, lat, lon`), coordinates and CF packing; (cloud-optimized) GeoTIFFs tile by tile,
   their overviews as levels.
 * **Frontends:** N5, Zarr v2, Zarr v3 and precomputed, all served at once, and meshes

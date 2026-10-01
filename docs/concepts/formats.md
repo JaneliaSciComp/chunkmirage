@@ -443,6 +443,46 @@ pyramids whose extents halve evenly do, since a level mirrored about its own cen
 otherwise drift from the others; `flip://` refuses a pyramid whose levels share their
 corner instead (as `synthetic://` levels do).
 
+### Stitch sources (tiles stitched by interest points and RANSAC)
+
+```
+stitch://<BigStitcher project.xml>?channel=0&model=translation&epsilon=5&threshold=0.005
+```
+
+stitches the tiles of one channel of a BigStitcher project when opened, as BigStitcher's
+interest-point registration does, then serves them fused, region by region: no fused copy
+is written. Each overlap of two tiles' stage positions, grown by `margin`, is read at the
+tiles' level `level`, and its bright blobs found in both tiles: local maxima of a
+difference of Gaussians (`sigma`, and 2^(1/4) times it, scaled to the same physical size on
+every axis) at least `threshold` of the region's intensity range, located to a fraction of
+a voxel. A point's descriptor is the offsets to `neighbors` of its `neighbors + redundancy`
+nearest neighbours (every such subset), which a shift leaves unchanged; two points match
+when their descriptors are the closest pair both ways and `significance` times closer than
+the next candidate. RANSAC then draws `iterations` minimal samples of the matches, keeps the
+`model` (`translation`, `rigid` or `affine`) that most matches agree with to within
+`epsilon`, refits it to them until they settle, and keeps the pair if it has `min_inliers`
+inliers and `min_inlier_ratio` of its matches. Finally every tile's correction is fitted to
+all the kept matches at once (each round refits each tile to where its neighbours put their
+ends of its matches), one tile of each linked group held still.
+
+The fused volume has a level for each level every tile has, the first tile's voxel size
+there, covering every placed tile. A region of it is each tile that reaches it, sampled
+trilinearly where its placement puts it, averaged with weights that fall off as a half
+cosine over `blend` at the tiles' edges in y and x, so the seams do not show. The project's
+images must be OME-Zarr (BigStitcher-Spark's `bdv.multimg.zarr` loader); a tile's stage
+position is its view transforms but the outermost ones named "Stitching Transform" (a
+stitching done before), and the log says how far the result lies from that one. The steps
+are functions of arrays in `chunkmirage.stitching` (numpy and scipy, so the `ops` extra), the
+same code the browser's stitch page runs in Pyodide.
+
+```bash
+chunkmirage serve 'stitch://https://janelia-bigstitcher-spark.s3.amazonaws.com/Stitching/dataset.xml' --python-viewer
+```
+
+On BigStitcher-Spark's example (a larval fly CNS in 2 × 3 tiles), the defaults keep 8 of
+its 11 overlaps and put the tiles 0.4 µm (RMS) from BigStitcher's own phase-correlation
+stitching; opening takes about 9 s, most of it reading the overlaps.
+
 ### GeoTIFF sources (cloud-optimized GeoTIFFs)
 
 ```text

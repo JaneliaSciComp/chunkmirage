@@ -9,7 +9,7 @@ chunkmirage schema [--out FILE]
 
 `SOURCE` is anything chunkmirage reads: a stored array or multiscale group (zarr, N5,
 precomputed; local, `s3://`, `gs://`, `http(s)://`), `file.h5::/dataset`, or a computed
-`synthetic://`, `scene://`, `warp://` or `register://` URL
+`synthetic://`, `scene://`, `warp://`, `register://` or `stitch://` URL
 ([sources](../concepts/formats.md#sources)).
 
 ## `serve`

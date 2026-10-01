@@ -51,6 +51,21 @@ deformable solver, and the `scene://`, `warp://` and `register://` sources built
 ::: chunkmirage.registration.find_affine
 ::: chunkmirage.sources.register.open_register
 
+## Stitching
+
+Tiles stitched by interest points and RANSAC, and fused, behind `stitch://` and the
+browser's stitch page.
+
+::: chunkmirage.stitching.StitchParams
+::: chunkmirage.stitching.detect
+::: chunkmirage.stitching.match
+::: chunkmirage.stitching.ransac
+::: chunkmirage.stitching.optimize
+::: chunkmirage.stitching.register
+::: chunkmirage.stitching.fuse
+::: chunkmirage.stitching.tiles_from_bdv
+::: chunkmirage.sources.stitch.open_stitch
+
 ## Frontends
 
 ::: chunkmirage.frontends.base.Frontend

@@ -26,13 +26,14 @@ class _Titled(GenerateJsonSchema):
 
 def spec_schema() -> dict[str, Any]:
     """One schema whose ``$defs`` hold every model: ``PipelineSpec``, ``RegisterParams``,
-    one per registered op (tagged with its ``op`` name), and ``OpSpec``, the union of them."""
+    ``StitchParams``, one per registered op (tagged with its ``op`` name), and ``OpSpec``, the union of them."""
     from chunkmirage.ops.base import get_op, list_ops
     from chunkmirage.pipeline import PipelineSpec
     from chunkmirage.sources.register import RegisterParams
+    from chunkmirage.stitching import StitchParams
 
     ops = {name: get_op(name) for name in list_ops()}
-    models = [PipelineSpec, RegisterParams, *ops.values()]
+    models = [PipelineSpec, RegisterParams, StitchParams, *ops.values()]
     _, top = models_json_schema([(m, "validation") for m in models], schema_generator=_Titled)
     defs = top["$defs"]
     for name, cls in ops.items():
@@ -52,6 +53,7 @@ def spec_schema() -> dict[str, Any]:
         "properties": {
             "pipeline": {"$ref": "#/$defs/PipelineSpec"},
             "register": {"$ref": "#/$defs/RegisterParams"},
+            "stitch": {"$ref": "#/$defs/StitchParams"},
             "op": {"$ref": "#/$defs/OpSpec"},
         },
         "$defs": dict(sorted(defs.items())),

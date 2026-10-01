@@ -24,6 +24,7 @@ export type OpSpec =
 export interface Chunkmirage {
   pipeline?: PipelineSpec;
   register?: RegisterParams;
+  stitch?: StitchParams;
   op?: OpSpec;
 }
 /**
@@ -151,6 +152,71 @@ export interface RegisterParams {
    * auto (the GPU with the most free memory, else the CPU), cpu, cuda:1, ...
    */
   device?: string;
+}
+/**
+ * How tiles are stitched: the interest points, their matching, RANSAC and the fit.
+ */
+export interface StitchParams {
+  /**
+   * The tiles' channel (setup attribute) stitched
+   */
+  channel?: number;
+  /**
+   * The tiles' level interest points are found on
+   */
+  level?: number;
+  /**
+   * Blob size: the difference of Gaussians' smaller sigma, in voxels of that level along x (scaled along the other axes by their spacing)
+   */
+  sigma?: number;
+  /**
+   * Smallest difference-of-Gaussians peak kept, in units of the tile's intensity range (BigStitcher's threshold)
+   */
+  threshold?: number;
+  /**
+   * How far tiles may be from their stage positions: the overlaps searched are grown by this (physical units)
+   */
+  margin?: number;
+  /**
+   * Nearest neighbours a point's descriptor holds
+   */
+  neighbors?: number;
+  /**
+   * Extra neighbours: subsets of them are tried too
+   */
+  redundancy?: number;
+  /**
+   * A match's descriptor must be this many times closer than the next best candidate's
+   */
+  significance?: number;
+  /**
+   * What each tile may do beyond its stage position
+   */
+  model?: "translation" | "rigid" | "affine";
+  /**
+   * RANSAC: largest error of an inlier (physical units)
+   */
+  epsilon?: number;
+  /**
+   * RANSAC: smallest share of inliers
+   */
+  min_inlier_ratio?: number;
+  /**
+   * RANSAC: fewest inliers for a pair to count
+   */
+  min_inliers?: number;
+  /**
+   * RANSAC: hypotheses tried
+   */
+  iterations?: number;
+  /**
+   * RANSAC's random draws
+   */
+  seed?: number;
+  /**
+   * Fusion: the band at a tile's edges its weight falls off over (physical units along y and x)
+   */
+  blend?: number;
 }
 /**
  * Convert to another data type, e.g. float32 → uint8 for viewers that need integers.

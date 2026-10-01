@@ -15,6 +15,7 @@ import pyCache from "../../src/chunkmirage/cache.py?raw";
 import pySourceBase from "../../src/chunkmirage/sources/base.py?raw";
 import pySynthetic from "../../src/chunkmirage/sources/synthetic.py?raw";
 import pyMeshes from "../../src/chunkmirage/meshes.py?raw";
+import pyStitching from "../../src/chunkmirage/stitching.py?raw";
 import type { Answer, ToPyWorker } from "./types";
 
 export const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/";
@@ -27,6 +28,7 @@ const FILES: Record<string, string> = {
   "chunkmirage/cache.py": pyCache, "chunkmirage/sources/__init__.py": '"""The computed sources, for the browser engine."""\n',
   "chunkmirage/sources/base.py": pySourceBase, "chunkmirage/sources/synthetic.py": pySynthetic,
   "chunkmirage/meshes.py": pyMeshes,  // meshes of a view, made where a fragment is fetched
+  "chunkmirage/stitching.py": pyStitching,  // the stitch page's steps, one call each
 };
 const GLUE = `
 import json
@@ -84,6 +86,48 @@ def compute(view, level, data, read_shape, in_lo, in_hi, out_lo, out_hi, full_sh
     return np.ascontiguousarray(result).astype(result.dtype.newbyteorder("<"), copy=False).tobytes()
 `;
 
+const STITCH = `
+def stitch(fn, args, arrays):
+    """One step of chunkmirage.stitching for the stitch page: JSON in, JSON (or a chunk's
+    bytes) out, arrays as raw bytes."""
+    from chunkmirage import stitching as S
+    a = json.loads(args)
+    p = S.StitchParams(**a.get("params", {}))
+    if fn == "tiles":
+        return json.dumps(S.tiles_from_bdv(a["xml"], a["base"], a["channel"]))
+    if fn == "overlaps":  # each overlap, and the region of each of its two tiles that holds it
+        out = []
+        for i, j, lo, hi in S.overlaps(a["tiles"], p.margin):
+            out.append({"tiles": [i, j], "lo": lo.tolist(), "hi": hi.tolist(),
+                        "regions": [S.region(a["tiles"][t], p.level, lo, hi) for t in (i, j)]})
+        return json.dumps(out)
+    if fn == "points":
+        block = np.frombuffer(arrays[0].to_py(), np.dtype(a["dtype"])).reshape(a["shape"])
+        pts = S.points_in(a["tile"], p.level, block, a["start"], a["voxel"], a["lo"], a["hi"], p)
+        return json.dumps(pts.round(3).tolist())
+    if fn == "register":
+        found = S.register(a["tiles"], a["points"], p, a.get("fixed", 0))
+        found["grids"] = S.grids(a["tiles"], found["placements"])
+        found["reference"] = S.compare(a["tiles"], found["placements"])
+        return json.dumps(found)
+    if fn == "regions":  # where each tile holds voxels [lo, hi) of a fused level
+        lo, hi = S.scene_box(a["grid"], a["lo"], a["hi"])
+        return json.dumps([S.region(t, a["level"], lo, hi, pl) for t, pl in zip(a["tiles"], a["placements"])])
+    if fn == "fuse":
+        blocks, k = [], 0
+        for r in a["regions"]:
+            if r is None:
+                blocks.append(None)
+                continue
+            shape = [b - s for s, b in zip(*r)]
+            blocks.append((np.frombuffer(arrays[k].to_py(), np.dtype(a["dtype"])).reshape(shape), r[0]))
+            k += 1
+        out = S.fuse(a["tiles"], a["placements"], a["level"], a["grid"], a["lo"], a["hi"], blocks, p.blend, a["dtype"])
+        out = np.pad(out, [(0, c - n) for c, n in zip(a["chunk"], out.shape)])  # zarr chunks are whole
+        return np.ascontiguousarray(out).astype(out.dtype.newbyteorder("<"), copy=False).tobytes()
+    raise ValueError(f"no stitching step {fn}")
+`;
+
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let py: any = null;
@@ -96,7 +140,7 @@ async function load() {
     py.FS.mkdirTree(`/chunkmirage/${path.slice(0, path.lastIndexOf("/"))}`);
     py.FS.writeFile(`/chunkmirage/${path}`, text);
   }
-  py.runPython(`import sys; sys.path.insert(0, "/chunkmirage")\n${GLUE}`);
+  py.runPython(`import sys; sys.path.insert(0, "/chunkmirage")\n${GLUE}\n${STITCH}`);
 }
 
 /** Each view's output dtype, the leading axes its ops consume and the halo they need. */
@@ -109,6 +153,16 @@ async function plan(views: Extract<ToPyWorker, { type: "plan" }>["views"]) {
     out[id] = p;
   }
   return out;
+}
+
+/** A stitching step: JSON back, or with `bytes` a chunk's bytes. */
+async function stitch(m: Extract<ToPyWorker, { type: "stitch" }>): Promise<unknown> {
+  if (!py) await load();
+  const out = py.globals.get("stitch")(m.fn, m.args, (m.arrays ?? []).map((b) => new Uint8Array(b)));
+  if (typeof out === "string") return JSON.parse(out);
+  const bytes = out.toJs() as Uint8Array;
+  out.destroy();
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
 let meshing: Promise<void> | null = null;  // scikit-image, loaded when a mesh is first asked for
@@ -128,6 +182,7 @@ ctx.onmessage = async ({ data: m }: MessageEvent<ToPyWorker>) => {
   try {
     if (m.type === "describe") { if (!py) await load(); ctx.postMessage({ reqId: m.reqId, value: JSON.parse(py.globals.get("describe")(m.source)) } satisfies Answer); }
     else if (m.type === "plan") ctx.postMessage({ reqId: m.reqId, value: await plan(m.views) } satisfies Answer);
+    else if (m.type === "stitch") { const v = await stitch(m); ctx.postMessage({ reqId: m.reqId, value: v } satisfies Answer, v instanceof ArrayBuffer ? [v] : []); }
     else if (m.type === "compute") { const body = await compute(m); ctx.postMessage({ reqId: m.reqId, value: body } satisfies Answer, [body]); }
   } catch (e) {
     // Pyodide's file-system errors are objects without a message: say what they are

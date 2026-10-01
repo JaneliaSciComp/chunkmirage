@@ -20,7 +20,9 @@ def open_source(
     deformation on a GPU when opened (see ``sources.register``); ``stack://a|b`` serves
     images on one grid as the channels of one array, for ops over several images (see
     ``sources.stack``); ``flip://image?axes=y`` mirrors an image stored the other way round
-    (see ``sources.flip``); ``.tif``/``.tiff`` paths are (cloud-optimized) GeoTIFFs, read
+    (see ``sources.flip``); ``stitch://project.xml`` stitches a BigStitcher project's tiles by
+    interest points and RANSAC when opened, and fuses them as they are read (see
+    ``sources.stitch``); ``.tif``/``.tiff`` paths are (cloud-optimized) GeoTIFFs, read
     tile by tile with their overviews as levels (see ``sources.geotiff``).
 
     ``cache_bytes`` is tensorstore's pool of decoded source chunks; ``cache`` is the chunk
@@ -47,6 +49,10 @@ def open_source(
         from chunkmirage.sources.stack import open_stack
 
         return open_stack(path, cache_bytes=cache_bytes, cache=cache)
+    if path.startswith("stitch://"):
+        from chunkmirage.sources.stitch import open_stitch
+
+        return open_stitch(path, cache_bytes=cache_bytes, cache=cache)
     if path.startswith("flip://"):
         from chunkmirage.sources.flip import open_flip
 
