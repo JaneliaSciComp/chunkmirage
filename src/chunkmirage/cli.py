@@ -96,7 +96,7 @@ def serve(
     ),
     cache_gb: float = typer.Option(2.0, help="in-process chunk cache size"),
     source_cache_gb: float = typer.Option(
-        0.5, help="tensorstore raw-byte cache for remote sources"
+        0.5, help="tensorstore's cache of decoded source chunks, shared by every source"
     ),
     viewer: str = typer.Option("https://neuroglancer-demo.appspot.com"),
     format: str = typer.Option("zarr3", help="format used for the printed neuroglancer link"),

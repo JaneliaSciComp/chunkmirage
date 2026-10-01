@@ -71,6 +71,9 @@
   .example p { margin: 0; }
   .start { display: grid; gap: 4px; margin: 8px 0; }
   .start label { display: flex; gap: 6px; align-items: baseline; color: var(--muted); cursor: pointer; }
+  .mirror { display: flex; gap: 8px; align-items: flex-start; font-size: 11px; color: var(--faint); cursor: pointer; }
+  .mirror b { color: var(--muted); font-weight: 600; }
+  .mirror input { width: 16px; height: 16px; flex: none; margin: 1px 0 0; padding: 0; accent-color: var(--accent); cursor: pointer; }
   main { position: relative; min-width: 0; background: #000; }
   main iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
   .empty { position: absolute; inset: 0; display: grid; place-content: center; gap: 6px; padding: 24px; text-align: center; color: var(--faint); }
@@ -90,7 +93,7 @@
     <h1>Register in the browser</h1>
     <p class="lede">Aligns a moving image onto a fixed one in two steps: an affine places it roughly
       (scale, rotation, shift), given or found here, then this computer's GPU fits a smooth field of
-      local shifts on top.
+      local shifts on top, and, if asked, finer fields where you zoom in.
       The images are read straight from their URLs and nothing is uploaded; the registered volume is
       computed here, chunk by chunk, as the viewer asks.</p>
   </div>
@@ -117,14 +120,26 @@
         roughly right; the left panel shows it alone. Empty: Register finds one first, by matching the
         images' centres and principal axes and then fitting it.</span>
       <textarea name="affine" rows="3" wrap="off" spellcheck="false" placeholder="12 or 16 numbers, row by row, in physical units. Empty: identity."></textarea></label>
+    <label class="mirror"><input type="checkbox" name="mirrored" value="true"><span><b>Moving image is mirrored</b>
+      (one axis reversed, as when a stack is taken the other way round): the search then tries only mirrored
+      placements. It cannot tell by itself: on a brain, left and right look alike.</span></label>
     <details>
       <summary>Solver settings</summary>
       <div class="settings">
         <label class="field">Levels, coarse to fine<input name="levels" placeholder="automatic"></label>
-        <label class="field">Iterations per level<input name="iterations" type="number"></label>
+        <label class="field">Iterations per level<input name="iterations" autocomplete="off"></label>
         <label class="field">Smoothness<input name="smooth" type="number" step="any"></label>
         <label class="field">Grid spacing, voxels<input name="grid" type="number" step="any"></label>
+        <label class="field">Correlation window, voxels<input name="window" autocomplete="off"></label>
+        <label class="field">Block context, voxels<input name="halo" type="number"></label>
+        <label class="field">Block size, voxels (z, y, x)<input name="block" autocomplete="off"></label>
       </div>
+      <p class="hint">Iterations and window take one value, one per level, or one per level with the
+        refined ones below (fine levels gain from a wider window, such as 15 or 31).</p>
+      <label class="field"><span>Fit where you look: levels below the solved ones</span>
+        <input name="refine" type="number">
+        <span class="hint">Their field is fitted block by block, from the solved field, when the viewer first
+          shows a chunk: zoom in and the fit follows. 0 serves them through the solved field.</span></label>
     </details>
     <button id="go" type="submit">Register</button>
   </form>
@@ -133,6 +148,7 @@
     <div class="gpu" id="gpu"></div>
     <div id="stages" class="status"></div>
     <div class="summary" id="summary"></div>
+    <div class="summary" id="blocks" hidden></div>
     <div class="error" id="error" hidden></div>
     <div class="links" id="links" hidden><a href="#" id="copy">Copy link to this run</a><a id="save" download="field.json">Download field</a></div>
   </section>
@@ -140,15 +156,16 @@
     <div class="title">The same in Python</div>
     <p class="hint">chunkmirage serves this registration to any viewer or library (napari, Fiji, dask), solved on a server's GPU.</p>
     <pre id="pyCommand"></pre>
-    <p class="hint" id="pyNote">Python's <code>register://</code> does not search for an affine yet, so this starts from none; after Register it holds the affine found here.</p>
+    <p class="hint">Python solves its levels whole (a server's GPU has the memory) and finds the affine itself
+      with <code>affine=auto</code>; after Register the command holds the affine found here.</p>
     <div class="links"><a href="#" id="copyPy">Copy</a></div>
   </section>
   <div class="legend">
     <span><span class="swatch" style="background: var(--fixed)"></span>fixed image</span>
     <span><span class="swatch" style="background: var(--moving)"></span>moving image</span>
     <span>white where they agree</span>
-    <label class="toggle"><input type="checkbox" id="view3d"><span><b>3D views</b> under the slices: the brightest point
-      along each ray (drag to turn). Costly on large volumes, so off for them unless ticked.</span></label>
+    <label class="toggle"><input type="checkbox" id="view3d" checked><span><b>3D views</b> under the slices: the brightest
+      point along each ray (drag to turn). Untick on a slow computer: they ask for chunks across the whole volume.</span></label>
   </div>
 </aside>
 <main>

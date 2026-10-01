@@ -127,7 +127,34 @@ through the same resampler. The split follows the costs. The field is global (an
 chunk may depend on all of it) but cheap to fit at coarse levels and small to keep, while
 resampling full resolution is expensive and local, which is exactly what chunk-by-chunk
 serving does lazily. So the fit happens once, when the source opens, and nothing of the
-registered volume is ever written. PyTorch supplies autograd and grid sampling, as an
+registered volume is ever written. That split holds while the field can be coarse. Where
+it cannot, `refine=` moves the fit into the on-demand path too: the field of each finer
+level becomes a chunked source of its own, a lattice `grid` voxels apart in blocks of
+`block` voxels, fitted from the solved field over the block plus a `halo` of context when a
+chunk it covers is first requested, coarse to fine within the block, and cached like any
+stage. Blocks are sized on their own, not as the output's chunks: a chunk's field reaches
+into the lattice beyond it, so a thin chunk straddles two thin blocks, and each block pays
+for its context and correlation windows on every side. On the EASI-FISH pair, blocks of
+64×128×128 voxels (the default) align full-resolution chunks better than blocks of
+16×128×128 (correlation 0.851 against 0.829 on one), since they are deep enough to fit
+coarse to fine, and in Python they take half the GPU time. (Fitting each level's blocks from the level above's instead was tried first: on a
+pyramid whose z axis is never downsampled, one full-resolution chunk pulled in 48 blocks
+across three levels, most of them for context, and a minute of GPU time.) The requests then
+schedule the registration, so its cost follows what is looked at rather than the volume,
+and a block can afford what a whole-image fit cannot (a finer lattice, more iterations).
+Blocks fitted separately disagree where they meet, and kept side by side they made the
+field step at their edges (up to 0.9 µm per voxel on the EASI-FISH pair, three times the
+steepest 1% inside a block). So each block keeps its fit over its context too, and
+neighbouring blocks are blended across that overlap, as bigstream's distributed pipeline
+does, with weights that are 1 over a block's own points and fall off linearly into its
+context; the field then changes no faster across block edges than inside them. Blending
+the fits, rather than fitting each block against its neighbours' results, keeps every
+block's fit a function of the solved field and the images alone, so the result is the
+same whatever order a client's requests fit blocks in. Nothing of this is viewer-specific: any client reading chunks
+drives it. Measured on two rounds of a public EASI-FISH fly brain, the blocks raise the
+correlation of full-resolution chunks well above the coarse field's, the more the wider
+their window (see [register sources](concepts/formats.md#register-sources-deformable-registration-on-a-gpu)).
+PyTorch supplies autograd and grid sampling, as an
 optional dependency; the objective is local cross-correlation with flat windows left out,
 because damping them with a constant instead rewards warps that add contrast (the tests
 catch that). Adam is written out rather than taken from `torch.optim`, whose import loads
@@ -216,12 +243,47 @@ Fully client-side is feasible and would make a compelling hosted demo:
   Neuroglancer hosted on the page's origin: the page's service worker hands the viewer's
   requests for the registered volume to the page, whose web workers resample the moving
   image through the field as `scene://` does, reading it from its URL through a cache of
-  decoded blocks. Caching is the viewer's job, not the page's: the page only raises the
-  viewer's memory limits to twice their defaults, since a chunk the viewer drops and asks
-  for again costs a read of the moving image and a resample. Its 3D maximum projections
-  are a checkbox, off by default above 2^27 voxels: volume rendering asks for chunks
-  across the whole visible volume, which on a whole-organ image keeps the workers busy
-  and the viewer dropping chunks. So all of `register://` runs client side. WebGPU and service workers
+  decoded blocks. The viewer caches what it shows and the page what it reads (every read of
+  the stores goes through one cache in the service worker, shared by the page, its workers
+  and the viewer; see [caching](concepts/caching.md#in-the-browser-engine)); the page only
+  raises the viewer's memory limits to twice their defaults, since a chunk the viewer drops
+  and asks for again costs a read of the moving image and a resample. Its 3D maximum projections
+  are a checkbox, on unless the link says `3d=0`: volume rendering asks for chunks across
+  the whole visible volume, which on a whole-organ image keeps the workers busy, so a slow
+  computer is better off without. It asks for coarse levels only until the view is zoomed
+  in, so it does not set off `refine`'s block fits across the organ (none in 150 s on the
+  EASI-FISH pair). `refine` runs in the page too: a chunk worker that needs
+  the field of a refined level asks the page for the window of that level's lattice its
+  chunk touches, and the page fits the blocks it covers on its GPU (`blocks.ts`, one at a
+  time, as `register.py` does), keeps them, and sends the window back; the after and field
+  views share the blocks. The fits wait in one queue, which knows only the requests, so it
+serves any client the same way, with the rules the Python server applies to all its work
+([caching](concepts/caching.md#order-of-work-and-requests-given-up-on)). A client that stops waiting for a chunk aborts its request;
+a service worker is not told of that (Chrome 148), but it answers each chunk request at
+once with a head and a body it streams later, and a reply whose request was aborted has its
+stream cancelled, which it does see. So every request holds a claim on the blocks it needs,
+a cancelled request releases its claims, and a waiting block no request claims any more is
+dropped without being fitted; one already fitting finishes and is kept. Zooming the
+EASI-FISH pair to full resolution and then panning away, Neuroglancer gave up on 430 of the
+973 requests it made for the refined views, and 29 waiting blocks were dropped. Among the
+blocks still wanted, the finest level goes first: a viewer asks for coarser levels of the
+same place to show while the fine chunks compute, and those placeholders are worth fitting
+only once nothing finer waits (on the EASI-FISH zoom the full-resolution chunks on screen
+were answered after a median 103 s instead of 166 s, the same blocks fitted in all). Within
+a level the latest burst of requests goes first, in the order the client sent them, which is
+its own priority; a block asked for again joins the current burst. Three run at once, so the
+GPU fits one while the next ones read, and the rest cannot flood the network. The page reports the queue as it goes: blocks fitting and waiting per level, those dropped
+  because nobody waits for them any more, fitted per level, and how much of what was read
+  came from the cache. Fed the same affine and
+  levels (the page's "same in Python" command carries them), its refined
+  full-resolution chunks of the fly templates match Python's to a median 0.005 µm in the
+  field (0.03 µm at the 95th percentile), as close as PyTorch on CUDA and on the CPU come
+  to each other, while the refinement itself moves 60% of the tissue's voxels by more
+  than a grey level. On emulated WebGPU (SwiftShader) a block takes about 13 s; a real GPU
+  is many times faster. A coarsest level
+  larger than the page's GPU budget (2^22 voxels, where a pyramid stops early or stays
+  deep in z) is halved on the page before the solve, as a stored pyramid would be (the
+  voxels' means, then normalized). So all of `register://` runs client side. WebGPU and service workers
   need a secure page, and a service worker will not run on a certificate that was only
   clicked through: `web/serve.py` serves the build over https with the
   self-signed certificate (trusted once in the system; it is made to the rules macOS and
@@ -242,8 +304,11 @@ Fully client-side is feasible and would make a compelling hosted demo:
 * With the affine left empty the page finds one before the field (`affine.ts`, on the CPU:
   a few hundred thousand voxels are enough). It matches the two images' intensity
   moments, centre to centre and principal axis to principal axis, which leaves the axes'
-  signs open; of the four orientations that do not mirror the image, the best correlated
-  is kept. Then it fits the 12 numbers by gradient ascent on the normalized
+  signs open; of the four orientations that do not mirror the image (with the page's
+  "mirrored" box, `mirrored=true` in Python, of the four that do), the best correlated is
+  kept. Handedness is left to the user because correlation cannot tell it on a nearly
+  symmetric specimen: on the fly templates a mirror scores exactly as well (0.872) while
+  226 µm from the published affine. Then it fits the 12 numbers by gradient ascent on the normalized
   cross-correlation, at two resolutions. On the fly templates, which start 58 µm apart
   (mean distance from where the published affine puts each voxel), that takes the
   correlation from 0.14 to 0.84 (moments) and 0.87 (fit), and ends 2 µm from the published
@@ -253,7 +318,9 @@ Fully client-side is feasible and would make a compelling hosted demo:
   built through the generated `RegisterParams` type, with the found affine and the solved
   levels filled in after a run. Solved from that command, Python's field matches the
   page's to 0.01 µm (median; 0.04 µm at the 95th percentile) on the fly templates, whose
-  field moves tissue by 7 µm (median). Python's `register://` has no affine search yet.
+  field moves tissue by 7 µm (median). Python's `register://` finds the same affine with
+  `affine=auto` (`registration.find_affine`, the page's search ported: PyTorch's autograd
+  supplies the gradient the page writes out by hand).
 
 ## Deployment shapes
 

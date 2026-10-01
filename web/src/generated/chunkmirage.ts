@@ -39,9 +39,13 @@ export interface RegisterParams {
    */
   fixed: string;
   /**
-   * The fixed-to-moving affine in physical units, C order: a .npy or text file holding a 4x4 or 3x4 matrix, or its 12 or 16 values inline, row by row. Default: identity.
+   * The fixed-to-moving affine in physical units, C order: a .npy or text file holding a 4x4 or 3x4 matrix, or its 12 or 16 values inline, row by row; or auto, to find one from the images' intensity moments and a correlation fit. Default: identity.
    */
   affine?: string | null;
+  /**
+   * The moving image is a mirror image of the fixed one (one axis reversed, as when a stack is acquired the other way round), for affine=auto: the search then tries only mirrored orientations. Correlation cannot tell handedness on a nearly symmetric specimen.
+   */
+  mirrored?: boolean;
   /**
    * The fixed image's channel to match on, for images with a c axis.
    */
@@ -55,9 +59,24 @@ export interface RegisterParams {
    */
   levels?: number[] | null;
   /**
-   * Adam steps per level: one value, or one per level. 0 skips the solve (the affine alone).
+   * Adam steps per level: one value, one per level, or one per level including the refined ones. 0 skips the solve (the affine alone).
    */
   iterations?: number[];
+  /**
+   * Levels below the solved ones whose field is fitted on demand, block by block, where it is viewed: refine=2 with levels 6,5,4 fits levels 3 and 2, a block (one output chunk) when a chunk it covers is first requested, from the solved field, coarse to fine within the block. The finest fitted level's field serves every finer one.
+   */
+  refine?: number;
+  /**
+   * Voxels of context on every side of a block whose field is fitted on demand: how far beyond the block the fit looks, so neighbouring blocks agree.
+   */
+  halo?: number;
+  /**
+   * Voxels per block of a field fitted on demand, C order. Independent of the output's chunks: a chunk's field reaches into the neighbouring blocks, so blocks deeper than a thin chunk fit fewer voxels in all, even for one slice.
+   *
+   * @minItems 3
+   * @maxItems 3
+   */
+  block?: [number, number, number];
   /**
    * Weight of the penalty on the field's gradient.
    */
@@ -67,9 +86,11 @@ export interface RegisterParams {
    */
   grid?: number;
   /**
-   * Correlation window, voxels, odd.
+   * Correlation window, voxels, odd: one value, one per level, or one per level including the refined ones. Fine levels gain from a wider one.
+   *
+   * @minItems 1
    */
-  window?: number;
+  window?: [number, ...number[]];
   /**
    * image: the registered moving image; pair: a c axis of two, the fixed image's channel then the registered one; field: u itself, components first, in physical units.
    */

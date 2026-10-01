@@ -218,22 +218,101 @@ parameter does. The solve runs in whatever opens the source (server start-up, or
 `PUT` that sets it), plus about 10 s the first time to import PyTorch from a network
 file system.
 
+With `refine=n`, the `n` levels below the solved ones are fitted where they are looked
+at, not up front. Each gets its own control lattice, `grid` voxels apart, in blocks of
+`block` voxels (64×128×128 by default, whatever the output's chunks), and a block is
+fitted when a chunk it covers is first requested: from the
+solved field over the block plus `halo` voxels of context, against the fixed and moving
+voxels those reach, coarse to fine over halved copies of them (down to about the solved
+level's resolution) for that level's `iterations` per copy; then it is kept (1 GiB of
+blocks per process). Every block starts from the solved field, so no level waits on
+another's blocks. The finest fitted level's field serves every level below it. So the fit's
+detail grows with the zoom and its cost with what is viewed rather than with the volume,
+and whatever asks for chunks drives it: Neuroglancer, Fiji, webKnossos, a dask array.
+Blocks are fitted separately, each over its context too, so neighbouring blocks overlap,
+and they are blended there, as bigstream blends its blocks: a lattice point's value is the
+average of the blocks whose fits cover it, each weighted 1 over its own block and less the
+further into its context, so the field turns from one block's fit to the next's across the
+overlap. Without it, neighbouring fits that disagree made the field step at their shared
+edge: on the EASI-FISH pair below, by up to 0.9 µm per voxel, three times the steepest 1%
+inside a block, enough to shift structures by a few voxels at a seam. Blended, the field
+changes no faster across block edges than inside a block (0.17 to 0.21 µm per voxel at the
+99th percentile, against 0.18 to 0.24 inside). A block's fit still depends only on the
+solved field and the images, so the result does not depend on which blocks were fitted
+first. The price is a ring of blocks: a chunk at a block's edge needs the block on the
+other side too (zooming the browser page into the EASI-FISH pair, 66 blocks instead of 45,
+and the view complete in 115 s instead of 98 s). On the tests' swirled volume the block
+fit and a whole-image solve of the same levels agree to 2×10⁻³ in correlation with the
+fixed image.
+
+The window matters most at the fine levels. Two rounds of one EASI-FISH fly brain sit in a
+public bucket that allows any origin (3.4 G voxels per channel, 0.23 µm), so this runs from
+anywhere:
+
+```bash
+E=https://janelia-data-examples.s3.amazonaws.com/fly-efish/NP31_R2_20240119
+chunkmirage serve "register://$E/NP31_R2_2_1_SS00090_FMRFa_546_Proc_647_1x_Central.zarr/0?fixed=$E/NP31_R2_1_1_SS00090_Spab_546_Nplp1_647_1x_Central.zarr/0&affine=auto&refine=3&iterations=100,40,40,40&window=15,31,31,31&show=pair" --https
+```
+
+`affine=auto` finds in 2 s how round 2 was remounted: turned over (z and x reversed, a half
+turn about y) and tilted about 22° in the z-y plane. Level 3 (the default, 54 M voxels)
+solves in 20 s on an RTX 2080 Ti, and levels 2 to 0 are fitted as you zoom. Whether round 2
+is instead a mirror image (z alone reversed, as a stack taken the other way round would be)
+the images cannot say: the brain is nearly symmetric, so with `mirrored=true` the search
+finds a tilted mirror that correlates as well (0.826 against 0.822), and full-resolution
+chunks split between the two. The half turn needs the smaller field afterwards (a median
+0.2 µm against 0.5 µm), and the acquisition metadata fits it (both stacks scanned in the
+same direction, the sample moved on the stage), so it is kept here; `mirrored=true` is
+there for whoever knows otherwise.
+Three full-resolution chunks in the tissue correlate with the fixed image at 0.75, 0.64 and
+0.86 through the level-3 field, and at 0.85, 0.77 and 0.87 through blocks fitted with the
+command above. Measured with blocks of 128³ voxels, the window matters most: 7 gives 0.79,
+0.69 and 0.86, 15 gives 0.83, 0.75 and 0.87, 31 gives 0.86, 0.79 and 0.87 (a wider window
+helps the level-3 solve too: 15 there alone gives 0.82, 0.73 and 0.86), while a larger halo
+or more iterations changed nothing. Deeper blocks fit better, having room to go coarse to
+fine: with the command's windows, blocks of 16×128×128 voxels reach 0.83, 0.75 and 0.87,
+64×128×128 (the default) 0.85, 0.77 and 0.87, and 128³ 0.86, 0.79 and 0.87. The first
+chunk of a region takes about 20 s, mostly its blocks (with the neighbours its
+interpolation touches), then about 10 s a chunk, and blocks are kept, so a region fills in
+faster the longer it is looked at.
+
+`affine=auto` finds the starting affine from the images (the coarsest solved level of
+each, halved to a few hundred thousand voxels): their intensity moments are matched, centre
+to centre and principal axis to principal axis, the best-correlated of the orientations
+that do not mirror the image is kept (with `mirrored=true`, of those that do), and the 12
+numbers are then fitted by gradient ascent
+on the normalized cross-correlation at two resolutions, as the browser page does. The
+moments assume both images show the same whole object; a crop of one needs an affine given.
+Handedness is the caller's to say, not the search's: on a nearly symmetric specimen a mirror
+correlates as well as the right rotation while swapping left and right (on the fly
+templates exactly as well, 0.872, and 226 µm from the published affine). A found affine is
+remembered per image pair, like the solves.
+
 `show=pair` serves a `(c, z, y, x)` volume whose two channels are the fixed image's
 matched channel and the registered moving image's, so one Neuroglancer shader can compare
-them on the viewer's GPU (overlay, checkerboard, fade, difference) with no refetch.
+them on the viewer's GPU (overlay, checkerboard, fade, difference) with no refetch. The
+source carries that shader, so the link `chunkmirage serve` prints, the REST API's
+`neuroglancer` routes and the python viewer show the pair in colour without being asked:
+fixed magenta, registered green, white where they agree, with contrast from the coarsest
+solved level and a `mode` control for the other three comparisons. `show=field` likewise
+comes as a heat map of how far each point moved (a `direction` box colours by direction).
 `examples/register_demo.py` shows that next to the affine alone (`iterations=0`), and
 re-solves when you type new settings, the viewer keeping its camera.
 
 | parameter | default | meaning |
 | --------- | ------- | ------- |
 | `fixed` | (required) | the fixed image: anything `open_source` reads, with the same spatial units as `<moving>`; percent-encode it if it has a query |
-| `affine` | identity | fixed-to-moving affine in physical units, C order: a `.npy` or text file with a 4×4 or 3×4 matrix, or its 12 or 16 values inline, row by row |
+| `affine` | identity | fixed-to-moving affine in physical units, C order: a `.npy` or text file with a 4×4 or 3×4 matrix, or its 12 or 16 values inline, row by row; `auto` finds one from the images |
+| `mirrored` | `false` | the moving image is a mirror image of the fixed one (one axis reversed, as when a stack is taken the other way round): `affine=auto` then tries only mirrored orientations. Correlation cannot tell handedness on a nearly symmetric specimen |
 | `fixed_channel`, `moving_channel` | `0` | the channel each image is matched on, for images with a `c` axis |
 | `levels` | from the coarsest with ≥ 16 voxels on every axis to the finest with ≤ 2²⁵ | fixed-image levels to solve on, coarse to fine, e.g. `6,5,4`; each is matched with the moving level nearest its voxel size |
-| `iterations` | `100` | Adam steps per level, one value or one per level; `0` leaves the affine alone (no GPU needed) |
+| `iterations` | `100` | Adam steps per level: one value, one per level, or one per level with the refined ones; `0` leaves the affine alone (no GPU needed) |
+| `refine` | `0` | levels below the solved ones fitted block by block where they are viewed: `refine=3` with `levels=6,5,4` fits levels 3, 2 and 1 |
+| `halo` | `8` | voxels of context on every side of a block being fitted: how far beyond it the fit looks |
+| `block` | `64,128,128` | voxels per refined block, C order, independent of the output's chunks; deeper blocks fit better (coarse to fine within them), thinner ones answer a single slice sooner |
 | `smooth` | `1` | weight of the penalty on the field's gradient |
 | `grid` | `4` | control-point spacing, voxels of each level |
-| `window` | `7` | correlation window, voxels (odd) |
+| `window` | `7` | correlation window, voxels (odd): one value, one per level, or one per level with the refined ones; fine levels gain from a wider one (see below) |
 | `show` | `image` | `pair` (fixed and registered as two channels) or `field` (`u`, components first, physical units) |
 | `frames` | none | a leading `t` axis of that many snapshots of the solve, from the affine alone to the final field: play `t` to watch it converge. The moving image's own `t` axis must hold one time point, which the frames replace |
 | `chunk` | the fixed image's | output chunk shape of the spatial axes, C order |
@@ -247,7 +326,11 @@ engine's types and form defaults are generated from: the
 [browser page](https://yuriyzubov.github.io/chunkmirage/browser/register.html) solves the
 same spec on the viewer's GPU and shows the `chunkmirage serve 'register://…'` command for
 its settings, and fed the same affine and levels the two fields agree to 0.01 µm (median)
-on the fly templates, whose field moves tissue by 7 µm (median).
+on the fly templates, whose field moves tissue by 7 µm (median). It fits blocks on demand
+(`refine`) the same way, on the viewer's GPU, so the EASI-FISH pair above runs from a link
+with nothing installed:
+[register.html with the EASI-FISH rounds](https://yuriyzubov.github.io/chunkmirage/browser/register.html?fixed=https://janelia-data-examples.s3.amazonaws.com/fly-efish/NP31_R2_20240119/NP31_R2_1_1_SS00090_Spab_546_Nplp1_647_1x_Central.zarr/0&moving=https://janelia-data-examples.s3.amazonaws.com/fly-efish/NP31_R2_20240119/NP31_R2_2_1_SS00090_FMRFa_546_Proc_647_1x_Central.zarr/0&refine=3&iterations=100,40,40,40&window=15,31,31,31)
+(it shows the two rounds; Register solves).
 
 ### Stored sources
 

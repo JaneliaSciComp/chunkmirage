@@ -49,7 +49,10 @@ the new URL into the viewer, from least to most convenient:
    `Viewer.set_dimensions(name)`: spatial axes first, then the rest (time last), with x, y
    and z displayed. `Viewer.rename_dimensions(name, {"c'": "c^"})` renames a dataset's
    dimensions in its layer (here, the channel axis becomes a shader channel); the rename
-   is rebuilt from the dataset's axes on every edit. `Viewer.hosted_link()` gives the
+   is rebuilt from the dataset's axes on every edit. A source that says how to show its
+   channels (a `MultiscaleSource` with a `shader`, as `register://`'s `show=pair` and
+   `show=field` are) gets that shader and the rename by itself, here and in the printed
+   link. `Viewer.hosted_link()` gives the
    current state as an appspot link: a snapshot that does not follow later edits but
    needs no python server.
 

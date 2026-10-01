@@ -25,7 +25,7 @@ precomputed; local, `s3://`, `gs://`, `http(s)://`), `file.h5::/dataset`, or a c
 | `--cert` / `--key`    | auto-generated                            | use your own certificate and key with `--https` |
 | `--public-url`        | `http(s)://<lan-ip>:PORT`                 | address clients use in every printed link and layer URL; defaults to this machine's network address when binding `0.0.0.0`, `localhost` when binding `127.0.0.1`; set explicitly behind a tunnel or proxy |
 | `--cache-gb`          | `2.0`                                     | in-process chunk cache |
-| `--source-cache-gb`   | `0.5`                                     | tensorstore raw-byte cache |
+| `--source-cache-gb`   | `0.5`                                     | tensorstore's cache of decoded source chunks, one pool shared by every source the server reads |
 | `--viewer`            | `https://neuroglancer-demo.appspot.com`   | viewer for the printed link |
 | `--format`            | `zarr3`                                   | format used in the printed link |
 | `--threads`           | `2 × CPUs` (min 40)                       | chunk requests computing at once; numpy/scipy/tensorstore release the GIL so this is the effective parallelism. The thread pool itself is larger, so requests waiting on queued work (GPU fits) hold no slot ([caching](../concepts/caching.md#order-of-work-and-requests-given-up-on)) |

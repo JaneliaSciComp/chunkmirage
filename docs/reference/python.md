@@ -48,6 +48,7 @@ deformable solver, and the `scene://`, `warp://` and `register://` sources built
 ::: chunkmirage.sources.warp.open_warp
 ::: chunkmirage.registration.solve
 ::: chunkmirage.registration.Settings
+::: chunkmirage.registration.find_affine
 ::: chunkmirage.sources.register.open_register
 
 ## Frontends

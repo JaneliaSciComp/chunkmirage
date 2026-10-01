@@ -78,3 +78,23 @@ def test_rechunk_reads_span_source_chunks(zarr2_path, volume):
     # edge chunk is clipped
     last = tuple(g - 1 for g in p.info(0).chunk_grid)
     assert p.chunk(0, last).shape == p.info(0).chunk_box(last).shape
+
+
+def test_sources_share_one_tensorstore_context(zarr2_path, monkeypatch):
+    # one cache pool for every source in the process, so two opens of a store (and its
+    # levels, and other images) share what is decoded rather than each keeping its own
+    from chunkmirage.sources import tensorstore_source
+
+    seen = []
+    real = tensorstore_source.ts.open
+
+    def recording(spec, *args, context=None, **kw):
+        seen.append(context)
+        return real(spec, *args, context=context, **kw)
+
+    monkeypatch.setattr(tensorstore_source.ts, "open", recording)
+    open_source(zarr2_path, cache_bytes=1 << 20)
+    open_source(zarr2_path, cache_bytes=1 << 20)
+    assert len(seen) >= 2 and all(c is seen[0] for c in seen)
+    open_source(zarr2_path, cache_bytes=2 << 20)
+    assert seen[-1] is not seen[0]  # another budget, another pool

@@ -85,7 +85,9 @@ chunkmirage serve "scene:///tmp/fly/fly_brains.zarr?image=FCWB&target=JRC2018F"
 ```
 
 `register://` sources solve the registration too: a deformable field fitted on the GPU
-in seconds from coarse levels, then every level served through it. The demo compares
+in seconds from coarse levels, then every level served through it; with `refine=`, the
+finer levels' fields are fitted block by block where you look, and `affine=auto` finds
+the starting affine from the images. The demo compares
 before and after in the viewer's own GPU shader, and solves again as you change settings:
 
 ```bash

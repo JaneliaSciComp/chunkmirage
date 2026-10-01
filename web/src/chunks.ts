@@ -2,33 +2,32 @@
 // the fixed image's grid through the affine and, for a solved view, the field), as
 // chunkmirage's scene:// resampler does on a server. The page hands it Neuroglancer's
 // chunk requests, relayed by the service worker, and passes the bytes back.
-import { fieldAt, leadIndex, openImage, zarr, type Image, type Numbers } from "./ome";
-import type { Affine, ControlGrid, FromWorker, LevelGrid, ToWorker, ViewKind } from "./types";
+import { fieldAt, openImage, RegionReader, type Image, type TypedCtor } from "./ome";
+import type { Affine, ControlGrid, FromWorker, Lattice, LevelGrid, ToWorker, ViewKind } from "./types";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
-const BLOCK = 64;                  // moving-image blocks are read and cached this big
-const CACHE_BYTES = 256 * 2 ** 20;  // decoded blocks kept per worker
-type TypedCtor = { new (n: number): Numbers & { buffer: ArrayBuffer }; BYTES_PER_ELEMENT: number };
-const TYPED: Record<string, TypedCtor> = { uint8: Uint8Array, uint16: Uint16Array, uint32: Uint32Array, int8: Int8Array, int16: Int16Array, int32: Int32Array, float32: Float32Array, float64: Float64Array };
+const CACHE_BYTES = 128 * 2 ** 20;  // decoded moving-image pieces kept per worker (the fetched bytes: the service worker)
 
-interface View { kind: ViewKind; affine: Affine; grid: ControlGrid | null; levels: Map<number, number> }
-interface Block { data: Numbers; shape: number[] }
-let moving: Image, fixedLevels: LevelGrid[], chunkShape: number[], Typed: TypedCtor = Float32Array, blockBytes = 0;
+interface View { kind: ViewKind; affine: Affine; grid: ControlGrid | null; refined: Lattice[]; levels: Map<number, number> }
+let moving: Image, reader: RegionReader, fixedLevels: LevelGrid[], chunkShape: number[], Typed: TypedCtor = Float32Array;
 const views = new Map<string, View>();
-const blocks = new Map<string, Promise<Block>>();  // in use order
-let cached = 0;
+const fields = new Map<number, { resolve: (g: ControlGrid | null) => void; reject: (e: Error) => void }>();  // asked of the page
+let fieldSeq = 0;
 const post = (m: FromWorker, transfer: Transferable[] = []) => ctx.postMessage(m, transfer);
 
 ctx.onmessage = async ({ data: m }: MessageEvent<ToWorker>) => {
   try {
     if (m.type === "setup") {
       moving = await openImage(m.moving);
-      fixedLevels = m.fixedLevels; chunkShape = m.chunkShape;
-      Typed = TYPED[moving.dtype] ?? Float32Array;
-      blockBytes = BLOCK ** 3 * Typed.BYTES_PER_ELEMENT;
+      reader = new RegionReader(moving, CACHE_BYTES);
+      fixedLevels = m.fixedLevels; chunkShape = m.chunkShape; Typed = reader.Typed;
       post({ type: "ready" });
     } else if (m.type === "view") {
-      views.set(m.id, { kind: m.kind, affine: m.affine, grid: m.grid, levels: new Map() });
+      views.set(m.id, { kind: m.kind, affine: m.affine, grid: m.grid, refined: m.refined ?? [], levels: new Map() });
+    } else if (m.type === "field") {
+      const f = fields.get(m.reqId);
+      fields.delete(m.reqId);
+      if (m.error) f?.reject(new Error(m.error)); else f?.resolve(m.grid);
     } else if (m.type === "drop") {
       for (const id of m.ids) views.delete(id);
     } else if (m.type === "chunk") {
@@ -40,43 +39,26 @@ ctx.onmessage = async ({ data: m }: MessageEvent<ToWorker>) => {
   }
 };
 
-async function block(li: number, channel: number, b: number[]): Promise<Block> {
-  const key = `${li}/${channel}/${b.join(",")}`;
-  let hit = blocks.get(key);
-  if (hit) { blocks.delete(key); blocks.set(key, hit); return hit; }
-  const lvl = moving.levels[li];
-  const lo = b.map((v) => v * BLOCK), hi = lo.map((v, a) => Math.min(v + BLOCK, lvl.shape[a]));
-  hit = zarr.get(lvl.arr, [...leadIndex(moving, channel), ...lo.map((v, a) => zarr.slice(v, hi[a]))])
-    .then((r) => ({ data: r.data as Numbers, shape: hi.map((v, a) => v - lo[a]) }))
-    .catch((e) => { blocks.delete(key); throw e; });  // a failed read is retried next time
-  blocks.set(key, hit);
-  cached += blockBytes;
-  while (cached > CACHE_BYTES && blocks.size > 1) {
-    blocks.delete(blocks.keys().next().value as string);
-    cached -= blockBytes;
+/** The field a chunk of `view` at `level` goes through: the solved grid, or, for a level
+ * whose field is fitted where it is viewed, the window of that level's lattice the chunk
+ * touches (the cells its voxel centres fall in, and the point past them), which the page
+ * fits block by block on request. */
+function fieldFor(id: string, view: View, level: number, fl: LevelGrid, start: number[], size: number[], chunk: number): Promise<ControlGrid | null> {
+  const levels = view.refined.map((l) => l.level);
+  if (!levels.length || level > Math.max(...levels)) return Promise.resolve(view.grid);
+  const lat = view.refined.find((l) => l.level === Math.max(level, Math.min(...levels)))!;
+  const lo = [0, 0, 0], hi = [0, 0, 0];
+  for (let a = 0; a < 3; a++) {
+    const x0 = fl.origin[a] + start[a] * fl.voxel[a], x1 = x0 + (size[a] - 1) * fl.voxel[a];
+    const g0 = (Math.min(x0, x1) - lat.origin[a]) / lat.spacing[a], g1 = (Math.max(x0, x1) - lat.origin[a]) / lat.spacing[a];
+    lo[a] = Math.min(Math.max(Math.floor(g0), 0), lat.shape[a] - 2);
+    hi[a] = Math.min(Math.max(Math.floor(g1) + 2, lo[a] + 2), lat.shape[a]);
   }
-  return hit;
-}
-
-/** The moving image's voxels [lo, hi) of level li, one channel, from cached blocks. */
-async function region(li: number, channel: number, lo: number[], hi: number[]) {
-  const shape = hi.map((v, a) => v - lo[a]);
-  const out = new Typed(shape[0] * shape[1] * shape[2]);
-  const b0 = lo.map((v) => Math.floor(v / BLOCK)), b1 = hi.map((v) => Math.floor((v - 1) / BLOCK));
-  const wanted: number[][] = [];
-  for (let z = b0[0]; z <= b1[0]; z++) for (let y = b0[1]; y <= b1[1]; y++) for (let x = b0[2]; x <= b1[2]; x++) wanted.push([z, y, x]);
-  const got = await Promise.all(wanted.map((b) => block(li, channel, b)));
-  wanted.forEach((b, n) => {
-    const { data, shape: bs } = got[n];
-    const start = b.map((v) => v * BLOCK);
-    const from = start.map((s, a) => Math.max(s, lo[a])), to = start.map((s, a) => Math.min(s + bs[a], hi[a]));
-    for (let z = from[0]; z < to[0]; z++) for (let y = from[1]; y < to[1]; y++) {
-      const src = ((z - start[0]) * bs[1] + (y - start[1])) * bs[2] - start[2];
-      const dst = ((z - lo[0]) * shape[1] + (y - lo[1])) * shape[2] - lo[2];
-      out.set(data.subarray(src + from[2], src + to[2]) as ArrayLike<number>, dst + from[2]);
-    }
+  return new Promise((resolve, reject) => {
+    const reqId = ++fieldSeq;
+    fields.set(reqId, { resolve, reject });
+    post({ type: "field", reqId, chunk, id, level: lat.level, lo, hi });
   });
-  return { data: out, shape };
 }
 
 /** The field itself on the fixed grid: its three components (z, y, x), physical units. */
@@ -122,14 +104,15 @@ function pickLevel(view: View, fl: LevelGrid): number {
   return best;
 }
 
-async function chunk({ id, level, channel, index }: { id: string; level: number; channel: number; index: number[] }): Promise<ArrayBuffer> {
+async function chunk({ reqId, id, level, channel, index }: { reqId: number; id: string; level: number; channel: number; index: number[] }): Promise<ArrayBuffer> {
   const view = views.get(id);
   const fl = fixedLevels[level], cs = chunkShape;
   const start = index.map((i, a) => i * cs[a]);
   const size = start.map((s, a) => Math.max(0, Math.min(cs[a], fl.shape[a] - s)));
-  if (view?.kind === "field" && view.grid) return fieldChunk(view.grid, fl, start, size);
   const out = new Typed(cs[0] * cs[1] * cs[2]);  // a whole chunk: zero past the array's edge
-  if (!view || size.some((n) => n === 0)) return out.buffer;
+  if (!view || size.some((n) => n === 0)) return view?.kind === "field" ? new Float32Array(3 * out.length).buffer : out.buffer;
+  const grid = await fieldFor(id, view, level, fl, start, size, reqId);
+  if (view.kind === "field") return grid ? fieldChunk(grid, fl, start, size) : new Float32Array(3 * out.length).buffer;
   if (!view.levels.has(level)) view.levels.set(level, pickLevel(view, fl));
   const li = view.levels.get(level)!, ml = moving.levels[li];
   const A = view.affine, d = [0, 0, 0];
@@ -144,7 +127,7 @@ async function chunk({ id, level, channel, index }: { id: string; level: number;
       const x1 = fl.origin[1] + (start[1] + j) * fl.voxel[1];
       for (let k = 0; k < size[2]; k++, p++) {
         const x2 = fl.origin[2] + (start[2] + k) * fl.voxel[2];
-        if (view.grid) fieldAt(view.grid, x0, x1, x2, d);
+        if (grid) fieldAt(grid, x0, x1, x2, d);
         const q0 = x0 + d[0], q1 = x1 + d[1], q2 = x2 + d[2];
         let ok = true;
         for (let a = 0; a < 3; a++) {
@@ -166,7 +149,7 @@ async function chunk({ id, level, channel, index }: { id: string; level: number;
   }
   if (!any) return out.buffer;
   const rlo = lo.map((v) => Math.max(0, v)), rhi = hi.map((v, a) => Math.min(ml.shape[a], v + 1));
-  const { data: src, shape: rs } = await region(li, channel, rlo, rhi);
+  const { data: src, shape: rs } = await reader.read(li, channel, rlo, rhi);
   const round = Typed !== Float32Array && Typed !== Float64Array;
   const [tz, ty, tx] = ml.shape.map((v) => v - 1), [lz, ly, lx] = rlo, [, ry, rx] = rs;
   p = 0;

@@ -77,6 +77,72 @@ export async function readLevel(img: Image, i: number, channel: number) {
   return { data: r.data as Numbers, shape: lvl.shape, voxel: lvl.voxel, origin: lvl.origin };
 }
 
+export type TypedCtor = { new (n: number): Numbers & { buffer: ArrayBuffer }; BYTES_PER_ELEMENT: number };
+export const TYPED: Record<string, TypedCtor> = {
+  uint8: Uint8Array, uint16: Uint16Array, uint32: Uint32Array, int8: Int8Array, int16: Int16Array, int32: Int32Array,
+  float32: Float32Array, float64: Float64Array,
+};
+const MAX_PIECE = 1 << 22;  // voxels: a store chunk bigger than this (a shard, say) is read in 64³ pieces
+
+interface Piece { data: Numbers; shape: number[] }
+
+/** Regions of an image's levels, one channel at a time, assembled from pieces aligned to the
+ * store's own chunks and kept (least recently used out past `maxBytes`), so each chunk is
+ * decoded once however many regions overlap it: neighbouring chunks and blocks, their
+ * halos, different outputs. One per image in each context (the page, each chunk worker);
+ * the service worker below them keeps the fetched bytes for all of them. */
+export class RegionReader {
+  readonly Typed: TypedCtor;
+  private pieces = new Map<string, Promise<Piece>>();  // in use order
+  private bytes = 0;
+  constructor(readonly img: Image, private maxBytes: number) { this.Typed = TYPED[img.dtype] ?? Float32Array; }
+
+  private pieceShape(li: number): number[] {
+    const c = this.img.levels[li].arr.chunks.slice(-3);
+    return prod(c) <= MAX_PIECE ? c : [64, 64, 64];
+  }
+
+  private piece(li: number, channel: number, b: number[], P: number[]): Promise<Piece> {
+    const key = `${li}/${channel}/${b.join(",")}`;
+    let hit = this.pieces.get(key);
+    if (hit) { this.pieces.delete(key); this.pieces.set(key, hit); return hit; }
+    const lvl = this.img.levels[li];
+    const lo = b.map((v, a) => v * P[a]), hi = lo.map((v, a) => Math.min(v + P[a], lvl.shape[a]));
+    hit = zarr.get(lvl.arr, [...leadIndex(this.img, channel), ...lo.map((v, a) => zarr.slice(v, hi[a]))])
+      .then((r) => ({ data: r.data as Numbers, shape: hi.map((v, a) => v - lo[a]) }))
+      .catch((e) => { this.pieces.delete(key); throw e; });  // a failed read is retried next time
+    this.pieces.set(key, hit);
+    this.bytes += prod(P) * this.Typed.BYTES_PER_ELEMENT;
+    while (this.bytes > this.maxBytes && this.pieces.size > 1) {
+      const [oldest] = this.pieces.keys();
+      this.pieces.delete(oldest);
+      this.bytes -= prod(this.pieceShape(Number(oldest.split("/")[0]))) * this.Typed.BYTES_PER_ELEMENT;
+    }
+    return hit;
+  }
+
+  /** Voxels [lo, hi) of level `li`, one channel, and that region's own origin. */
+  async read(li: number, channel: number, lo: number[], hi: number[]) {
+    const lvl = this.img.levels[li], P = this.pieceShape(li), shape = hi.map((v, a) => v - lo[a]);
+    const out = new this.Typed(prod(shape));
+    const b0 = lo.map((v, a) => Math.floor(v / P[a])), b1 = hi.map((v, a) => Math.floor((v - 1) / P[a]));
+    const wanted: number[][] = [];
+    for (let z = b0[0]; z <= b1[0]; z++) for (let y = b0[1]; y <= b1[1]; y++) for (let x = b0[2]; x <= b1[2]; x++) wanted.push([z, y, x]);
+    const got = await Promise.all(wanted.map((b) => this.piece(li, channel, b, P)));
+    wanted.forEach((b, n) => {
+      const { data, shape: bs } = got[n];
+      const start = b.map((v, a) => v * P[a]);
+      const from = start.map((s, a) => Math.max(s, lo[a])), to = start.map((s, a) => Math.min(s + bs[a], hi[a]));
+      for (let z = from[0]; z < to[0]; z++) for (let y = from[1]; y < to[1]; y++) {
+        const src = ((z - start[0]) * bs[1] + (y - start[1])) * bs[2] - start[2];
+        const dst = ((z - lo[0]) * shape[1] + (y - lo[1])) * shape[2] - lo[2];
+        out.set(data.subarray(src + from[2], src + to[2]) as ArrayLike<number>, dst + from[2]);
+      }
+    });
+    return { data: out, shape, voxel: lvl.voxel, origin: lvl.origin.map((o, a) => o + lo[a] * lvl.voxel[a]) };
+  }
+}
+
 export const prod = (a: number[]) => a.reduce((x, y) => x * y, 1);
 
 /** numpy's (linear) percentiles, on every step-th value as chunkmirage.registration does. */

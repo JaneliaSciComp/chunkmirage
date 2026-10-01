@@ -295,7 +295,12 @@
             }
           ],
           "default": null,
-          "description": "The fixed-to-moving affine in physical units, C order: a .npy or text file holding a 4x4 or 3x4 matrix, or its 12 or 16 values inline, row by row. Default: identity."
+          "description": "The fixed-to-moving affine in physical units, C order: a .npy or text file holding a 4x4 or 3x4 matrix, or its 12 or 16 values inline, row by row; or auto, to find one from the images' intensity moments and a correlation fit. Default: identity."
+        },
+        "mirrored": {
+          "default": false,
+          "description": "The moving image is a mirror image of the fixed one (one axis reversed, as when a stack is acquired the other way round), for affine=auto: the search then tries only mirrored orientations. Correlation cannot tell handedness on a nearly symmetric specimen.",
+          "type": "boolean"
         },
         "fixed_channel": {
           "default": 0,
@@ -328,11 +333,38 @@
           "default": [
             100
           ],
-          "description": "Adam steps per level: one value, or one per level. 0 skips the solve (the affine alone).",
+          "description": "Adam steps per level: one value, one per level, or one per level including the refined ones. 0 skips the solve (the affine alone).",
           "items": {
             "minimum": 0,
             "type": "integer"
           },
+          "type": "array"
+        },
+        "refine": {
+          "default": 0,
+          "description": "Levels below the solved ones whose field is fitted on demand, block by block, where it is viewed: refine=2 with levels 6,5,4 fits levels 3 and 2, a block (one output chunk) when a chunk it covers is first requested, from the solved field, coarse to fine within the block. The finest fitted level's field serves every finer one.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "halo": {
+          "default": 8,
+          "description": "Voxels of context on every side of a block whose field is fitted on demand: how far beyond the block the fit looks, so neighbouring blocks agree.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "block": {
+          "default": [
+            64,
+            128,
+            128
+          ],
+          "description": "Voxels per block of a field fitted on demand, C order. Independent of the output's chunks: a chunk's field reaches into the neighbouring blocks, so blocks deeper than a thin chunk fit fewer voxels in all, even for one slice.",
+          "items": {
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 3,
+          "minItems": 3,
           "type": "array"
         },
         "smooth": {
@@ -348,10 +380,15 @@
           "type": "number"
         },
         "window": {
-          "default": 7,
-          "description": "Correlation window, voxels, odd.",
-          "minimum": 1,
-          "type": "integer"
+          "default": [
+            7
+          ],
+          "description": "Correlation window, voxels, odd: one value, one per level, or one per level including the refined ones. Fine levels gain from a wider one.",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 1,
+          "type": "array"
         },
         "show": {
           "default": "image",

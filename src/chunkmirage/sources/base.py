@@ -125,13 +125,16 @@ class ChunkedSource(Source):
 
 
 class MultiscaleSource:
-    """An ordered list of ``Source`` levels, s0 = full resolution."""
+    """An ordered list of ``Source`` levels, s0 = full resolution. ``shader`` is a
+    Neuroglancer shader the viewer should show the data with (its channel axis then being
+    a shader channel), for sources whose channels mean something particular."""
 
-    def __init__(self, levels: Sequence[Source], name: str = ""):
+    def __init__(self, levels: Sequence[Source], name: str = "", shader: str | None = None):
         if not levels:
             raise ValueError("need at least one level")
         self.levels = list(levels)
         self.name = name
+        self.shader = shader
 
     def __len__(self) -> int:
         return len(self.levels)

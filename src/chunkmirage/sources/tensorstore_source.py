@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from typing import Any
 
 import numpy as np
@@ -64,6 +65,24 @@ def _split_parent(path: str) -> tuple[str | None, str]:
     """``.../group/s0`` -> (``.../group``, ``s0``); (None, name) if there is no parent."""
     head, _, name = path.rstrip("/").rpartition("/")
     return (head if head and not head.endswith(":/") else None), name
+
+
+_contexts: dict[int, ts.Context] = {}
+_contexts_lock = threading.Lock()
+
+
+def shared_context(cache_bytes: int) -> ts.Context:
+    """One tensorstore context per cache budget, shared by every source this process opens.
+    Its cache pool holds decoded chunks, and tensorstore shares them between stores opened in
+    one context: the levels of an image, two opens of it (a before and an after dataset, or
+    the images a registration reads while its output serves them too) and several images
+    all draw on one budget, rather than each array on a budget and a copy of its own."""
+    with _contexts_lock:
+        ctx = _contexts.get(int(cache_bytes))
+        if ctx is None:
+            ctx = ts.Context({"cache_pool": {"total_bytes_limit": int(cache_bytes)}})
+            _contexts[int(cache_bytes)] = ctx
+        return ctx
 
 
 def open_tensorstore(
@@ -291,7 +310,7 @@ class TensorStoreSource(Source):
         kv = _open_kvstore(path)
         driver = _detect_driver(kv)
         store = open_tensorstore(
-            path, cache_bytes=cache_bytes, driver=driver, scale_index=scale_index
+            path, context=shared_context(cache_bytes), driver=driver, scale_index=scale_index
         )
         if driver in ("n5", "neuroglancer_precomputed"):
             # Both drivers expose dimensions x-first, (x, y, z[, c]); we are C order.
