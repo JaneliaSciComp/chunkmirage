@@ -88,7 +88,7 @@ export const CARDS: DemoCard[] = [
   {
     kind: "link", id: "register-fly", image: "cards/register-fly.jpg",
     title: "Register two fly brain templates on your GPU",
-    blurb: "A deformable registration solved on this computer's GPU in seconds, then the moving brain served through it at every resolution, chunk by chunk. Before, after and the field side by side.",
+    blurb: "Not just an affine: one is found from the images, then a deformable field is solved on top of it on this computer's GPU in seconds, and the moving brain is served through both at every resolution, chunk by chunk. Before (as stored), after, and the field (how far the deformable part moved each point) side by side.",
     data: "FCWB and JRC2018F templates (OME-Zarr RFC-5 examples)",
     href: "register.html",
     command: "uv run python examples/fly_brain_registration.py",
@@ -96,7 +96,7 @@ export const CARDS: DemoCard[] = [
   {
     kind: "link", id: "register-efish", image: "cards/register-efish.jpg",
     title: "Align two EASI-FISH rounds, finer where you zoom",
-    blurb: "Two imaging rounds of one fly brain: an affine found from the images, a field solved on the GPU, and finer fields fitted block by block only where you zoom in.",
+    blurb: "Two imaging rounds of one fly brain: an affine found from the images, a deformable field solved on top of it on the GPU, and finer fields fitted block by block only where you zoom in.",
     data: "Janelia EASI-FISH, fly central brain, rounds 1 and 2 (janelia-data-examples)",
     href: `register.html?fixed=${ROUND1}&moving=${ROUND2}&refine=3&iterations=100,40,40,40&window=15,31,31,31`,
     command: `chunkmirage serve 'register://${ROUND2}?fixed=${encodeURIComponent(ROUND1)}&affine=auto&refine=3&iterations=100,40,40,40&window=15,31,31,31&show=pair' --python-viewer`,
