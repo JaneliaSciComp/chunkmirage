@@ -166,3 +166,13 @@ def test_time_lat_lon_data_shows_the_map_and_scrolls_time():
     axes = multiscales(_P(), "0.5")["axes"]
     assert [a["type"] for a in axes] == ["time", "space", "space"]
     assert axes[0]["unit"] == "second"
+
+
+def test_zoom_is_in_voxels_of_the_axis_asked_for():
+    """Neuroglancer counts crossSectionScale in the smallest scale among the dimensions,
+    units aside: beside 360 s frames, one 3480 km pixel per screen pixel is not 1."""
+    from chunkmirage.neuroglancer import cross_section_scale
+
+    dims = {"z": [360.0, "s"], "y": [3.48e6, "m"], "x": [3.48e6, "m"]}
+    assert cross_section_scale(dims, "x", 1.0) == pytest.approx(3.48e6 / 360)
+    assert cross_section_scale({"y": [4e-9, "m"], "x": [4e-9, "m"]}, "x", 2.0) == 2.0

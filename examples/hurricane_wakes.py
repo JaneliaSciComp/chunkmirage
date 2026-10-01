@@ -81,6 +81,7 @@ def main() -> None:
 
     from chunkmirage.cache import LRUCache
     from chunkmirage.netutil import free_port, is_loopback, public_host_for, serving_address
+    from chunkmirage.neuroglancer import cross_section_scale
     from chunkmirage.server import DatasetRegistry, create_app
     from chunkmirage.viewer import Viewer
 
@@ -116,7 +117,11 @@ def main() -> None:
         s.layers["temperature"].shader = KELVIN
         s.layers["change"].shader = CHANGE
         s.position = [where[n] for n in s.dimensions.names]
-        s.cross_section_scale = args.zoom
+        dims = {
+            n: [sc, u]
+            for n, sc, u in zip(s.dimensions.names, s.dimensions.scales, s.dimensions.units)
+        }
+        s.cross_section_scale = cross_section_scale(dims, "lon", args.zoom)
         s.cross_section_orientation = [1, 0, 0, 0]  # latitude increases northward: north up
         s.show_axis_lines = False
         s.layout = neuroglancer.row_layout(

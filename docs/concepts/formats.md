@@ -423,6 +423,12 @@ read as stored. Data whose axes are not named `z, y, x` (`time, lat, lon`) keeps
 names: the OME frontends type a time axis as `time` (by name or a time unit), and the
 viewer helpers show its last three axes as x, y and z.
 
+Unitless `z, y, x` axes are served as nanometres by every frontend (left without a unit,
+Neuroglancer would read OME axes as metres). Neuroglancer counts zoom
+(`crossSectionScale`) in the smallest scale among the viewer's dimensions, whatever their
+units, so beside a time axis in seconds a zoom of 1 is not one pixel per voxel:
+`chunkmirage.neuroglancer.cross_section_scale(dims, axis, voxels_per_pixel)` converts.
+
 `offset`/`translate` are in world units. Anything in the spec (`voxel_size`, `units`,
 `axes`, `translation`) overrides what was read. The spec's `select` pins non-spatial axes
 to one index each, `{"c": 1, "t": 0}` (`--select c=1,t=0`), so the ops see one channel of

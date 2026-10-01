@@ -71,6 +71,7 @@ def main() -> None:
 
     from chunkmirage.cache import LRUCache
     from chunkmirage.netutil import free_port, is_loopback, public_host_for, serving_address
+    from chunkmirage.neuroglancer import cross_section_scale
     from chunkmirage.server import DatasetRegistry, create_app
     from chunkmirage.viewer import Viewer
 
@@ -82,12 +83,15 @@ def main() -> None:
     registry = DatasetRegistry(
         LRUCache(int(args.cache_gb * 2**30)), source_cache_bytes=int(args.source_cache_gb * 2**30)
     )
+    # The store says nothing of its axes: a frame every 6 minutes (within a day), and AIA's
+    # 0.6 arcsec pixels binned 8 times, about 3480 km on the sun's disk
+    grid = {"voxel_size": [360, 3480, 3480], "units": ["s", "km", "km"], "chunk_shape": chunk}
     print("opening the store (its attributes are 221 MB of FITS headers)...", flush=True)
-    registry.add("sun", {"source": source, "chunk_shape": chunk})
+    registry.add("sun", {"source": source, **grid})
 
     def load() -> None:
         ops = [{"op": "diff", "axis": 0, "lag": settings["lag"]}]
-        registry.add("difference", {"source": source, "chunk_shape": chunk, "ops": ops})
+        registry.add("difference", {"source": source, "ops": ops, **grid})
 
     load()
     https = not (args.no_https or is_loopback(args.host))
@@ -106,8 +110,14 @@ def main() -> None:
         s.layers["sun"].shader = LOG
         s.layers["difference"].shader = DIFFERENCE
         s.position = [where[n] for n in s.dimensions.names]
-        s.cross_section_scale = args.zoom
+        dims = {
+            n: [sc, u]
+            for n, sc, u in zip(s.dimensions.names, s.dimensions.scales, s.dimensions.units)
+        }
+        s.cross_section_scale = cross_section_scale(dims, "x", args.zoom)
+        s.cross_section_background_color = "#000000"
         s.show_axis_lines = False
+        s.show_default_annotations = False  # the bounding box
         s.layout = neuroglancer.row_layout(
             [
                 neuroglancer.LayerGroupViewer(layers=["sun"], layout="xy"),

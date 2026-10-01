@@ -21,12 +21,17 @@ def multiscales(pipeline: Pipeline, version: str) -> dict:
     for name, unit in zip(info0.axes, info0.units):
         kind = "time" if unit in _TIME_UNITS else _AXIS_TYPES.get(name, "space")
         ax = {"name": name, "type": kind}
+        if not unit and name in ("z", "y", "x"):
+            # unitless z, y, x are nanometres, as the N5 and precomputed frontends and the
+            # viewer helpers take them; left out, Neuroglancer would read them as metres
+            unit = "nm"
         if unit:
             ax["unit"] = {
                 "nm": "nanometer",
                 "um": "micrometer",
                 "µm": "micrometer",
                 "m": "meter",
+                "km": "kilometer",
                 "s": "second",
             }.get(unit, unit)
         axes.append(ax)
