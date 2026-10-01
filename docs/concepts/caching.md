@@ -114,7 +114,11 @@ intermediate float32 stages are also four times the size of uint8 raw. The rule:
 stage when recomputing it costs more than storing it. Raw I/O and inference qualify; a
 threshold that takes a millisecond does not.
 
-The `cache` flag is a heuristic set by the op author and can be overridden per pipeline.
+The `cache` flag is a heuristic set by the op author, and a pipeline overrides it per op
+with a `cache` key in the op's spec: `{"op": "gaussian", "sigma": 4, "cache": true}`, or
+`--op gaussian:sigma=4,cache=true`. Editing an op after it then reruns only the stages
+after the cached one. The flag is not part of the op's identity, since it does not change
+what the op computes; `GET /api/datasets/{name}` reports each op's setting as `cached`.
 Adaptive caching based on measured compute time is on the roadmap.
 
 ## Concurrent requests for the same chunk

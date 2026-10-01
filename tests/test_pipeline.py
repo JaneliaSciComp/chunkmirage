@@ -70,6 +70,27 @@ def test_stage_cache_keys_isolate_downstream_edits(zarr2_path):
     assert p1.digest() != p2.digest()
 
 
+def test_a_pipeline_can_cache_an_op_its_class_does_not(zarr2_path):
+    """Requirement: cache the expensive op, so editing the cheap one after it reruns only
+    the cheap one."""
+    cache = LRUCache()
+    ms = open_source(zarr2_path)
+    blur = {"op": "gaussian", "sigma": 2, "cache": True}
+    p1 = Pipeline(ms, [blur, {"op": "threshold", "low": 100}], cache=cache)
+    assert p1.ops[0].cached and not p1.ops[1].cached
+    assert p1.ops[0].spec()["cache"] is True  # kept in the spec the API returns
+    p1.chunk(0, (1, 1, 1))
+    kinds = sorted(k[0].split(":")[0] for k in cache._data)  # the stages memoized
+    assert kinds.count("gaussian") == 1
+    p2 = Pipeline(ms, [blur, {"op": "threshold", "low": 150}], cache=cache)
+    hits, misses = cache.hits, cache.misses
+    p2.chunk(0, (1, 1, 1))
+    assert cache.misses == misses and cache.hits > hits  # the blur came from the cache
+    # the flag is not part of what the op computes: the same blur, uncached, has its digest
+    plain = Pipeline(ms, [{"op": "gaussian", "sigma": 2}], cache=LRUCache())
+    assert plain.ops[0].digest() == p1.ops[0].digest() and not plain.ops[0].cached
+
+
 def test_rechunk_reads_span_source_chunks(zarr2_path, volume):
     p = Pipeline(open_source(zarr2_path), [], chunk_shape=(24, 24, 24), cache_source=False)
     idx = (1, 1, 2)

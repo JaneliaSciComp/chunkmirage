@@ -197,6 +197,7 @@ def create_app(
                 {
                     "op": op.name,
                     "halo": list(op.halo_for(p.info(0).ndim)),
+                    "cached": op.cached,
                     "doc": (op.__doc__ or "").strip(),
                 }
                 for op in p.ops

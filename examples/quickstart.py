@@ -9,7 +9,7 @@ import uvicorn
 
 from chunkmirage import Pipeline, create_app, open_source
 from chunkmirage.neuroglancer import source_url, viewer_link
-from chunkmirage.ops import Gaussian, Threshold
+from chunkmirage.ops import Threshold
 
 # 1. Make some data (any zarr/n5/precomputed/hdf5 path or URL works here).
 path = "/tmp/chunkmirage-demo.zarr/s0"
@@ -28,11 +28,11 @@ arr = ts.open(
 ).result()
 arr[...] = data
 
-# 2. Build a pipeline. Gaussian has a halo and is marked cacheable in its own right if you
-#    subclass it; here the raw chunks are cached, so retuning `low` only re-thresholds.
+# 2. Build a pipeline. The blur is cached (an op's spec can turn its cache on), so retuning
+#    `low` only re-thresholds: the blurred chunks come from the cache.
 pipe = Pipeline(
     open_source(path, voxel_size=(8, 8, 8), units=("nm",) * 3),
-    [Gaussian(sigma=2), Threshold(low=110)],
+    [{"op": "gaussian", "sigma": 2, "cache": True}, Threshold(low=110)],
 )
 
 # 3. Serve through every frontend at once.

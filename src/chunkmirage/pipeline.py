@@ -184,7 +184,7 @@ class Pipeline:
             current: list[Op] = []
             for op in self.ops:
                 current.append(op)
-                if op.cache:
+                if op.cached:
                     segments.append(current)
                     current = []
             if current:
@@ -193,7 +193,7 @@ class Pipeline:
                 for op in seg:
                     h = hashlib.sha1(f"{h}|{op.digest()}".encode()).hexdigest()[:12]
                 stage = _fused_stage(
-                    stage, seg, self.cache if seg[-1].cache else None, f"{seg[-1].name}:{h}", cs
+                    stage, seg, self.cache if seg[-1].cached else None, f"{seg[-1].name}:{h}", cs
                 )
             self.levels.append(stage)  # type: ignore[arg-type]
 

@@ -53,7 +53,9 @@ and return an array without the channel axis, as `contacts` does (its `output_in
 axis). The pipeline reads every channel and pads only the spatial axes by the halo; ops after
 it in the same stage see the plain spatial block.
 
-None of the built-ins cache their output (`cache=False`); everything except `threshold`,
+None of the built-ins cache their output by default (`cache=False`); a pipeline turns it on
+for one op with `"cache": true` in its spec ([caching](../concepts/caching.md#why-not-cache-every-stage)).
+Everything except `threshold`,
 `cast` and `scale` needs the `ops` extra (scipy).
 
 ## CLI syntax
@@ -61,6 +63,7 @@ None of the built-ins cache their output (`cache=False`); everything except `thr
 ```
 --op threshold:low=120,high=200
 --op '{"op": "gaussian", "sigma": 2}'
+--op gaussian:sigma=2,cache=true
 ```
 
 Values are parsed as JSON where possible, else strings. Repeat `--op` to chain.
