@@ -39,6 +39,37 @@
         "op"
       ]
     },
+    "Contacts": {
+      "additionalProperties": false,
+      "description": "Contact sites between two structures, the first two channels of a ``stack://`` source:\nthe voxels within ``radius`` of both. A mask; follow with ``label`` to colour and\nsize-filter the sites.",
+      "properties": {
+        "op": {
+          "const": "contacts"
+        },
+        "radius": {
+          "default": 3.0,
+          "description": "Reach, in voxels: a voxel is a contact site when both structures lie within this distance of it (Euclidean). The halo is radius + 1.",
+          "exclusiveMinimum": 0,
+          "maximum": 32,
+          "type": "number"
+        },
+        "a_low": {
+          "default": 128.0,
+          "description": "Values at or above this in the first channel are the first structure: 128 for a uint8 probability map, 1 for a segmentation.",
+          "type": "number"
+        },
+        "b_low": {
+          "default": 128.0,
+          "description": "The same threshold for the second channel, the second structure.",
+          "type": "number"
+        }
+      },
+      "title": "Contacts",
+      "type": "object",
+      "required": [
+        "op"
+      ]
+    },
     "DoG": {
       "additionalProperties": false,
       "description": "Difference of Gaussians: enhances blob-like structures of a chosen size, suppresses background.",
@@ -161,6 +192,9 @@
           "$ref": "#/$defs/Cast"
         },
         {
+          "$ref": "#/$defs/Contacts"
+        },
+        {
           "$ref": "#/$defs/DoG"
         },
         {
@@ -174,6 +208,9 @@
         },
         {
           "$ref": "#/$defs/Scale"
+        },
+        {
+          "$ref": "#/$defs/Spots"
         },
         {
           "$ref": "#/$defs/Threshold"
@@ -269,6 +306,21 @@
             }
           ],
           "default": null
+        },
+        "select": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Pin non-spatial axes to one index each, e.g. {\"c\": 1, \"t\": 0}: the pipeline sees that channel of that time point, without those axes"
         }
       },
       "required": [
@@ -478,6 +530,54 @@
         }
       },
       "title": "Scale",
+      "type": "object",
+      "required": [
+        "op"
+      ]
+    },
+    "Spots": {
+      "additionalProperties": false,
+      "description": "Bright diffraction-limited spots, such as single mRNA molecules in smFISH or EASI-FISH:\na difference of Gaussians, its local maxima above ``threshold``, each drawn as a small\nball. A spot's id comes from its position in the volume, so one spot keeps its id and\ncolour whichever chunk finds it.",
+      "properties": {
+        "op": {
+          "const": "spots"
+        },
+        "sigma": {
+          "default": 1.0,
+          "description": "Spot size, in voxels along y and x: the smaller blur of the difference of Gaussians (the larger is 1.6 times it). About the spot's standard deviation.",
+          "exclusiveMinimum": 0,
+          "maximum": 8,
+          "type": "number"
+        },
+        "sigma_z": {
+          "default": 0.6,
+          "description": "The same along z, in z voxels: smaller than sigma when z voxels are coarser, as in most light microscopy.",
+          "exclusiveMinimum": 0,
+          "maximum": 8,
+          "type": "number"
+        },
+        "threshold": {
+          "default": 10.0,
+          "description": "Least difference-of-Gaussians response a spot needs, in the image's intensity units: higher finds fewer, brighter spots.",
+          "minimum": 0,
+          "type": "number"
+        },
+        "separation": {
+          "default": 2,
+          "description": "Spots closer than this, in y-x voxels, are one: the radius of the local maximum search.",
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "radius": {
+          "default": 1,
+          "description": "Radius of the ball drawn for each spot, in y-x voxels (0 marks one voxel).",
+          "maximum": 8,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "title": "Spots",
       "type": "object",
       "required": [
         "op"

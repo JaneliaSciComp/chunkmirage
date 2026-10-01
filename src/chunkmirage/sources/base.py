@@ -21,11 +21,16 @@ class Source(ABC):
     def read(self, box: Box) -> np.ndarray:
         """Return data for ``box`` (must lie within ``info.shape``), shape == box.shape."""
 
-    def read_padded(self, box: Box, fill=0) -> np.ndarray:
-        """Read ``box`` even if it pokes outside the array; out-of-range voxels are ``fill``."""
+    def read_padded(self, box: Box, fill=0, *, edge: bool = False) -> np.ndarray:
+        """Read ``box`` even if it pokes outside the array. Out-of-range voxels are ``fill``,
+        or with ``edge`` the nearest voxel inside (so a filter sees no step at the border)."""
         clipped = box.clip(self.info.shape)
         if clipped == box:
             return self.read(box)
+        if edge and not clipped.empty:
+            inner = clipped.relative_to(box)
+            pad = [(a, s - b) for a, b, s in zip(inner.start, inner.stop, box.shape)]
+            return np.pad(self.read(clipped), pad, mode="edge")
         out = np.full(box.shape, fill, dtype=self.info.dtype)
         if not clipped.empty:
             out[clipped.relative_to(box).slices()] = self.read(clipped)

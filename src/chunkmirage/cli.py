@@ -35,6 +35,7 @@ def build_registry(
     raw: bool = False,
     cache_gb: float = 2.0,
     source_cache_gb: float = 0.5,
+    select: str | None = None,
 ):
     """Build the registry the CLI serves (separated from `serve` so it can be tested)."""
     from chunkmirage.cache import LRUCache
@@ -42,14 +43,25 @@ def build_registry(
     from chunkmirage.server import DatasetRegistry
 
     chunk_shape = [int(c) for c in chunk.split(",")] if chunk else None
+    pinned = None
+    if select:
+        pinned = {k.strip(): int(v) for k, _, v in (kv.partition("=") for kv in select.split(","))}
     registry = DatasetRegistry(
         LRUCache(int(cache_gb * 1024**3)), source_cache_bytes=int(source_cache_gb * 1024**3)
     )
     if raw:
         raw_name = "raw" if name != "raw" else "source"
-        registry.add(raw_name, PipelineSpec(source=source, ops=[], chunk_shape=chunk_shape))
+        registry.add(
+            raw_name, PipelineSpec(source=source, ops=[], chunk_shape=chunk_shape, select=pinned)
+        )
     registry.add(
-        name, PipelineSpec(source=source, ops=[_parse_op(o) for o in ops], chunk_shape=chunk_shape)
+        name,
+        PipelineSpec(
+            source=source,
+            ops=[_parse_op(o) for o in ops],
+            chunk_shape=chunk_shape,
+            select=pinned,
+        ),
     )
     return registry
 
@@ -59,7 +71,7 @@ def serve(
     source: str = typer.Argument(
         ...,
         help="zarr/n5/precomputed path or URL (file, s3://, gs://, http(s)://), file.h5::/dataset, "
-        "or a synthetic://, scene:// or warp:// URL",
+        "or a synthetic://, scene://, warp://, register://, stack:// or flip:// URL",
     ),
     name: str = typer.Option("processed", help="dataset name in the served URL"),
     op: list[str] = typer.Option(
@@ -72,6 +84,11 @@ def serve(
     ),
     chunk: str | None = typer.Option(
         None, help="output chunk shape, e.g. 64,64,64 (default: source chunks)"
+    ),
+    select: str | None = typer.Option(
+        None,
+        help="pin non-spatial axes, e.g. c=1,t=0: process that channel of that time point "
+        "(ops such as spots need a z, y, x volume)",
     ),
     host: str = typer.Option("0.0.0.0"),
     port: int | None = typer.Option(
@@ -134,7 +151,14 @@ def serve(
     from chunkmirage.server import create_app
 
     registry = build_registry(
-        source, name, op, chunk, raw=raw, cache_gb=cache_gb, source_cache_gb=source_cache_gb
+        source,
+        name,
+        op,
+        chunk,
+        raw=raw,
+        cache_gb=cache_gb,
+        source_cache_gb=source_cache_gb,
+        select=select,
     )
     if port is None:
         port = free_port(host, 8000)

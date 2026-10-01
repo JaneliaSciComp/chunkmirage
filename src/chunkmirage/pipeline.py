@@ -33,6 +33,70 @@ class PipelineSpec(BaseModel):
     units: list[str] | None = None
     axes: list[str] | None = None
     translation: list[float] | None = None
+    select: dict[str, int] | None = Field(
+        None,
+        description='Pin non-spatial axes to one index each, e.g. {"c": 1, "t": 0}: the '
+        "pipeline sees that channel of that time point, without those axes",
+    )
+
+
+class SelectSource(Source):
+    """``inner`` with some axes pinned to one index each and dropped: one channel of a
+    multichannel image, one time point of a series. Reads only that index."""
+
+    def __init__(self, inner: Source, pinned: dict[int, int]):
+        self.inner = inner
+        self.pinned = pinned  # axis -> index
+        i = inner.info
+        keep = [a for a in range(i.ndim) if a not in pinned]
+        self._keep = keep
+        self._info = ArrayInfo(
+            shape=tuple(i.shape[a] for a in keep),
+            dtype=i.dtype,
+            chunk_shape=tuple(i.chunk_shape[a] for a in keep),
+            voxel_size=tuple(i.voxel_size[a] for a in keep),
+            units=tuple(i.units[a] for a in keep),
+            axes=tuple(i.axes[a] for a in keep),
+            translation=tuple(i.translation[a] for a in keep),
+        )
+        tag = ",".join(f"{i.axes[a]}={v}" for a, v in sorted(pinned.items()))
+        self._key = f"select:{tag}:{inner.cache_key()}"
+
+    @property
+    def info(self) -> ArrayInfo:
+        return self._info
+
+    def cache_key(self) -> str:
+        return self._key
+
+    def read(self, box: Box) -> np.ndarray:
+        start, stop, k = [], [], 0
+        for a in range(self.inner.info.ndim):
+            if a in self.pinned:
+                start.append(self.pinned[a])
+                stop.append(self.pinned[a] + 1)
+            else:
+                start.append(box.start[k])
+                stop.append(box.stop[k])
+                k += 1
+        return self.inner.read(Box(tuple(start), tuple(stop))).reshape(box.shape)
+
+
+def select_axes(source: MultiscaleSource, select: dict[str, int]) -> MultiscaleSource:
+    """``source`` with the axes named in ``select`` pinned to those indices, every level."""
+    info = source.levels[0].info
+    pinned = {}
+    for name, index in select.items():
+        if name not in info.axes:
+            raise ValueError(f"select {name}={index}: the source has axes {info.axes}")
+        a = info.axes.index(name)
+        if name in ("z", "y", "x"):
+            raise ValueError(f"select {name}={index}: only non-spatial axes can be pinned")
+        if not 0 <= index < info.shape[a]:
+            raise ValueError(f"select {name}={index}: the {name} axis has {info.shape[a]} entries")
+        pinned[a] = int(index)
+    levels = [SelectSource(lvl, pinned) for lvl in source.levels]
+    return MultiscaleSource(levels, name=source.name)
 
 
 def _fused_stage(
@@ -46,25 +110,41 @@ def _fused_stage(
     Values near the padded border are wrong after each op, but the padding is exactly the
     sum of halos so the cropped centre is correct.
     """
-    info = prev.info
+    prev_info = prev.info
+    info = prev_info
     for op in ops:
         info = op.output_info(info)
-    info = info.with_(chunk_shape=tuple(chunk_shape))
+    # An op may consume leading axes (the channels of a stack:// source, for `contacts`):
+    # those are read whole, and the halo pads the axes the output keeps.
+    lead = prev_info.ndim - info.ndim
+    if lead < 0:
+        raise ValueError(
+            f"ops {[op.name for op in ops]} add axes ({prev_info.ndim} -> {info.ndim}), which a"
+            " stage cannot serve yet"
+        )
     ndim = info.ndim
+    info = info.with_(chunk_shape=tuple(chunk_shape)[len(chunk_shape) - ndim :])
     total_halo = tuple(sum(op.halo_for(ndim)[a] for op in ops) for a in range(ndim))
 
     def compute(idx: tuple[int, ...]) -> np.ndarray:
         out_box = info.chunk_box(idx)
-        in_box = out_box.pad(total_halo)
-        block = prev.read_padded(in_box)
+        padded = out_box.pad(total_halo)
+        in_box = Box((0,) * lead + padded.start, prev_info.shape[:lead] + padded.stop)
+        block = prev.read_padded(in_box, edge=True)  # no step at the volume border
+        box = in_box  # where the block sits, in the axes it currently has
         for op in ops:
-            result = op.apply_at(block, in_box)
-            if result.shape[-ndim:] != block.shape[-ndim:]:
+            result = op.apply_at(block, box)
+            if result.ndim < ndim or result.shape[-ndim:] != block.shape[-ndim:]:
                 raise ValueError(
                     f"op {op.name!r} changed block shape {block.shape} -> {result.shape}"
                 )
+            if result.ndim < block.ndim:  # this op consumed the leading axes
+                drop = block.ndim - result.ndim
+                box = Box(box.start[drop:], box.stop[drop:])
             block = result
-        crop = out_box.relative_to(in_box)
+        if block.ndim != ndim:
+            raise ValueError(f"ops left a block of {block.ndim} axes for an output of {ndim}")
+        crop = out_box.relative_to(padded)
         return np.asarray(block[crop.slices()], dtype=info.dtype)
 
     return ChunkedSource(info, compute, cache, key)
@@ -88,6 +168,8 @@ class Pipeline:
         self.levels: list[ChunkedSource] = []
         for lvl_i, raw in enumerate(source.levels):
             cs = tuple(chunk_shape) if chunk_shape else raw.info.chunk_shape
+            if len(cs) < raw.info.ndim:  # spatial chunks given for a source with leading axes
+                cs = raw.info.chunk_shape[: raw.info.ndim - len(cs)] + cs
             h = hashlib.sha1(f"{raw.cache_key()}|{lvl_i}|{cs}".encode()).hexdigest()[:12]
             # Stage 0: the raw source, re-chunked to `cs` and (optionally) cached.
             stage: Source = ChunkedSource(
@@ -134,6 +216,8 @@ class Pipeline:
             axes=spec.axes,
             translation=spec.translation,
         )
+        if spec.select:
+            src = select_axes(src, spec.select)
         return cls(
             src,
             spec.ops,

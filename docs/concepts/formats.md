@@ -332,6 +332,56 @@ with nothing installed:
 [register.html with the EASI-FISH rounds](https://yuriyzubov.github.io/chunkmirage/browser/register.html?fixed=https://janelia-data-examples.s3.amazonaws.com/fly-efish/NP31_R2_20240119/NP31_R2_1_1_SS00090_Spab_546_Nplp1_647_1x_Central.zarr/0&moving=https://janelia-data-examples.s3.amazonaws.com/fly-efish/NP31_R2_20240119/NP31_R2_2_1_SS00090_FMRFa_546_Proc_647_1x_Central.zarr/0&refine=3&iterations=100,40,40,40&window=15,31,31,31)
 (it shows the two rounds; Register solves).
 
+### Stack sources (several images as one array's channels)
+
+```
+stack://<image>|<image>[|<image>...]
+```
+
+serves images that share a grid as the channels of one `(c, z, y, x)` array: channel 0 is
+the first image's first channel, channel 1 the second's, and so on. The images must agree
+level by level on shape, voxel size, translation and units (the stack has as many levels as
+the image with the fewest), and each is anything `open_source` reads, so a stack can hold a
+stored volume next to a `synthetic://` or `register://` one. Nothing is copied: a stack chunk
+reads the same box of each image, through that image's own cache.
+
+A stack exists for ops that need two images at once. Such an op takes the channel axis and
+returns an array without it; the pipeline reads every channel and pads only the spatial axes
+by the op's halo, and `--chunk` may then give just the three spatial values. The first such
+op is [`contacts`](../reference/ops.md): the voxels within a distance of both structures.
+On OpenOrganelle's published organelle predictions, mirrored back into the EM's frame (see
+below), followed by `label` to colour and size-filter the sites:
+
+```
+P=https://janelia-cosem-datasets.s3.amazonaws.com/jrc_hela-2/jrc_hela-2.n5/labels
+chunkmirage serve "stack://flip://$P/mito_pred?axes=y|flip://$P/er_pred?axes=y" \
+    --op contacts:radius=3 --op label:min_size=50 --chunk 16,128,128 --python-viewer
+```
+
+`examples/contact_sites.py` serves the same with the EM underneath and the two predictions
+tinted, opens where the two organelles touch most, and takes new settings at a prompt.
+Only the chunks on screen are computed, out of 122 gigavoxels of cell, and a change of
+radius recomputes just those, from predictions the first pass left in the cache. Like every
+op's parameters, `radius` counts voxels of the level being served, so a zoomed-out view
+reaches proportionally further.
+
+### Flip sources (images stored the other way round)
+
+```
+flip://<image>?axes=y[,x,...]
+```
+
+serves `<image>` mirrored along the named axes, every level in place: voxel `i` of a
+flipped axis of length `n` is voxel `n − 1 − i` of the image, and shape, voxel size,
+translation and chunks stay the image's. It repairs data whose orientation its metadata
+gets wrong: OpenOrganelle's N5 organelle predictions of jrc_hela-2 (`labels/*_pred`) are
+upside down in y relative to its EM, zarr and N5 alike (with the flip, every predicted
+mitochondrion voxel of a coarse slice lies on cell; without it a fifth do), though nothing
+in their attributes says so. The levels must share their centre, as OME-Zarr and COSEM
+pyramids whose extents halve evenly do, since a level mirrored about its own centre would
+otherwise drift from the others; `flip://` refuses a pyramid whose levels share their
+corner instead (as `synthetic://` levels do).
+
 ### Stored sources
 
 Sources are detected by content, not extension: `zarr.json` → zarr v3, `.zarray` → zarr v2,
@@ -349,5 +399,7 @@ Voxel size, translation, units and axes are read per level, first match wins:
 | HDF5        | `resolution`/`voxel_size` and `offset` attributes, C order                         |
 
 `offset`/`translate` are in world units. Anything in the spec (`voxel_size`, `units`,
-`axes`, `translation`) overrides what was read. HDF5 uses `file.h5::/dataset` and needs
+`axes`, `translation`) overrides what was read. The spec's `select` pins non-spatial axes
+to one index each, `{"c": 1, "t": 0}` (`--select c=1,t=0`), so the ops see one channel of
+one time point as a `z, y, x` volume; only that channel is read. HDF5 uses `file.h5::/dataset` and needs
 the `hdf5` extra.

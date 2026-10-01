@@ -14,7 +14,10 @@ def open_source(path: str, *, cache_bytes: int = 0, **kw) -> MultiscaleSource:
     coordinate transformations (see ``sources.scene``); ``warp://image?field=swirl&...``
     twists an image through a procedural deformation (see ``sources.warp``);
     ``register://moving?fixed=...`` registers one image onto another, solving the
-    deformation on a GPU when opened (see ``sources.register``).
+    deformation on a GPU when opened (see ``sources.register``); ``stack://a|b`` serves
+    images on one grid as the channels of one array, for ops over several images (see
+    ``sources.stack``); ``flip://image?axes=y`` mirrors an image stored the other way round
+    (see ``sources.flip``).
     """
     if path.startswith("synthetic://"):
         from chunkmirage.sources.synthetic import open_synthetic
@@ -32,6 +35,14 @@ def open_source(path: str, *, cache_bytes: int = 0, **kw) -> MultiscaleSource:
         from chunkmirage.sources.register import open_register
 
         return open_register(path, cache_bytes=cache_bytes)
+    if path.startswith("stack://"):
+        from chunkmirage.sources.stack import open_stack
+
+        return open_stack(path, cache_bytes=cache_bytes)
+    if path.startswith("flip://"):
+        from chunkmirage.sources.flip import open_flip
+
+        return open_flip(path, cache_bytes=cache_bytes)
     if "::" in path or path.split("::")[0].endswith((".h5", ".hdf5")):
         from chunkmirage.sources.hdf5_source import open_multiscale_hdf5
 

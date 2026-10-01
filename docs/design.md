@@ -188,10 +188,12 @@ CUDA/torch and depend on chunkmirage as a normal PyPI/git dependency.
 
 Three layers, from most to least structured:
 
-1. **Built-in ops**: pointwise (threshold, cast, scale), filters (gaussian, uniform).
-   Planned: label ops (connected components, size filter, relabel), morphology, distance
-   transform, on-the-fly downsampling, `Combine` (multi-source: mask, difference, blend).
-   Registration is a source, not an op (see below).
+1. **Built-in ops**: pointwise (threshold, cast, scale), filters (gaussian, uniform, dog),
+   morphology, connected components with a size filter (`label`), spot detection (`spots`),
+   and `contacts` over the channels of a `stack://` source, the first op over several images
+   (the stack reads them on one grid; the op drops the channel axis). Planned: distance transform, on-the-fly
+   downsampling, a `Combine` op taking another pipeline as input. Registration is a source,
+   not an op (see below).
 2. **Plugins**: subclass `Op`, declare `name`, `halo`, `cache`, register via the
    `chunkmirage.ops` entry point. cellmap-flow's models become one plugin package.
    Params are pydantic fields, so every op ships a JSON schema the UI/MCP can render.

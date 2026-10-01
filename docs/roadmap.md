@@ -21,7 +21,11 @@ describe shipped features as future work.
    served pipeline and running downstream analysis with no intermediate written.
 5. **DAG pipelines, multi-source ops.** Named stages with fan-out (one model, many
    post-processors) and a `Combine` op taking another pipeline as input. Unlocks masking,
-   model-vs-model disagreement views, registration overlays. With it, structured sources:
+   model-vs-model disagreement views, registration overlays. (The two-input case has
+   shipped in its simplest form: `stack://` serves images on one grid as channels and an
+   op such as `contacts` consumes them; see
+   [formats](concepts/formats.md#stack-sources-several-images-as-one-arrays-channels).)
+   With it, structured sources:
    a pipeline's source as a JSON object as well as a URL, such as
    `{"register": {"moving": ..., "fixed": ..., "affine": [...]}}`, typed by the same schema
    (`chunkmirage schema`) so nested sources and long parameters need no escaping and the
