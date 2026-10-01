@@ -95,11 +95,13 @@ export class Engine {
     Object.assign(this.views, views);
   }
 
-  /** View `view` with other ops, served under a new name (so clients fetch it afresh, and
-   * the old one's chunks stay as they were); returns the name. */
-  async edit(view: string, ops: Record<string, unknown>[]): Promise<string> {
+  /** View `view` with some of its spec changed (other ops, another source), served under a
+   * new name, so clients fetch it afresh and the old one's chunks stay as they were; returns
+   * the name. */
+  async edit(view: string, changes: Partial<PipelineView>): Promise<string> {
     const base = view.split("~")[0], name = `${base}~${++this.edits}`;
-    await this.plan({ [name]: { ...this.views[base], ops } });
+    this.views[base] = { ...this.views[base], ...changes };
+    await this.plan({ [name]: this.views[base] });
     return name;
   }
 

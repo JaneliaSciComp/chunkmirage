@@ -32,9 +32,9 @@ export interface PipelineCard extends Card {
 }
 /** Dates along an axis whose coordinate counts days from `start`, and what happened on some. */
 export interface Timeline { axis: string; start: string; events: { from: string; to?: string; text: string }[] }
-/** A layer of a map demo: a view the page computes, or a COG the map reads itself; drawn
- * with an OpenLayers WebGL tile style (expressions over `['band', 1]` and `['var', name]`). */
-export interface MapLayer { name: string; view?: string; cog?: string; style: Record<string, unknown>; visible?: boolean }
+/** A layer of a map demo: a view the page computes, drawn with an OpenLayers WebGL tile
+ * style (expressions over `['band', 1]` and `['var', name]`). */
+export interface MapLayer { name: string; view: string; style: Record<string, unknown>; visible?: boolean }
 /** A slider: a parameter of a view's op (the view is computed again, for what is on screen),
  * or a style variable of a layer (redrawn by the map at once). */
 export type MapControl = { label: string; unit: string; min: number; max: number; step: number }
@@ -42,11 +42,11 @@ export type MapControl = { label: string; unit: string; min: number; max: number
 export interface MapCard extends Card {
   kind: "map";
   views: Record<string, PipelineView>;
-  projection: { code: string; extent: number[] };  // the views' and COGs' own, so no reprojection
+  projection: { code: string; extent: number[] };  // the views' own, so nothing is reprojected
   layers: MapLayer[];
   controls: MapControl[];
-  center: number[];        // projection coordinates
-  resolution: number;      // projection units per screen pixel
+  /** Sources to choose between for `views` (the map fits each, and goes no further out). */
+  sites: { label: string; views: string[]; options: { name: string; url: string }[] };
 }
 export interface LinkCard extends Card { kind: "link"; href: string }
 /** A demo that runs from Python only (its data cannot be read from a browser page). */
@@ -62,8 +62,18 @@ const ROUND1 = `${EFISH}/NP31_R2_1_1_SS00090_Spab_546_Nplp1_647_1x_Central.zarr/
 const ROUND2 = `${EFISH}/NP31_R2_2_1_SS00090_FMRFa_546_Proc_647_1x_Central.zarr/0`;
 const CHUNK = [16, 128, 128];
 const SOUTH_POLE = "https://astrogeo-ard.s3.us-west-2.amazonaws.com/moon";
-const RIDGE = `${SOUTH_POLE}/lro/lola/barker_south_pole_dems/Site01/Site01.tif`;
-const WAC = `${SOUTH_POLE}/basemaps/lroc_wac_mosaic/lroc_wac_mosaic_spole60_100m_v2/lroc_wac_mosaic_spole60_100m_v2.tif`;
+const DEMS = `${SOUTH_POLE}/lro/lola/barker_south_pole_dems`;
+const SITES: [string, string][] = [  // NASA's 5 m south-pole elevation maps: id, place
+  ["Site01", "Connecting ridge (Shackleton to de Gerlache)"], ["SL3", "Connecting ridge extension"],
+  ["Site04", "Shackleton rim"], ["LM1", "Shackleton rim B"], ["Site07", "Peak near Shackleton"],
+  ["Site11", "de Gerlache rim"], ["SL2", "de Gerlache rim 2"], ["Site42", "de Gerlache-Kocher massif"],
+  ["Site23", "Malapert massif"], ["NPD", "Malapert crater"], ["Site20v2", "Leibnitz beta plateau"],
+  ["Haworth", "Haworth"], ["Shoemaker", "Shoemaker"], ["LM2", "Shoemaker rim A"], ["LM3", "Shoemaker rim B"],
+  ["LM4", "Shoemaker rim C"], ["LM5", "Shoemaker rim D"], ["LM6", "Shoemaker rim E"], ["LM8", "Shoemaker rim F"],
+  ["LM7", "Faustini rim"], ["DM1", "Amundsen rim"], ["NPB", "Amundsen"], ["Site06", "Nobile rim 1"],
+  ["DM2", "Nobile rim 2"], ["NPA", "Cabeus exterior wall"], ["NPC", "Idel'son L crater"],
+];
+const RIDGE = `${DEMS}/Site01/Site01.tif`;
 const TILE = [1, 256, 256];  // a map's tiles
 const MUR = "https://mur-sst.s3.us-west-2.amazonaws.com/zarr-v1/analysed_sst";
 const LAND = "if (isnan(v)) { emitRGB(vec3(0.18)); return; }";  // MUR has no value on land
@@ -165,27 +175,26 @@ export const CARDS: DemoCard[] = [
   {
     kind: "map", id: "moon", image: "cards/moon.jpg",
     title: "Where to land at the Moon's south pole",
-    blurb: "The ridge between Shackleton and de Gerlache craters, one of the regions NASA's Artemis astronauts may land in, mapped in 5 m elevation by the Lunar Orbiter Laser Altimeter. Its relief, lit by a sun you can move, and its slope are computed for each tile as the map asks, by chunkmirage's hillshade and slope ops in this page; the green is ground flat enough to land on, under the slope you choose. Underneath, the Lunar Reconnaissance Orbiter's 100 m image mosaic of the south pole. The map is OpenLayers, reading the page's chunks as GeoZarr: no Neuroglancer here.",
-    data: "LOLA 5 m south-pole elevation (Barker et al.) and the LROC WAC mosaic, as cloud-optimized GeoTIFFs (USGS Astrogeology, AWS Open Data)",
+    blurb: "NASA's 5 m elevation maps of 26 places at the Moon's south pole, where Artemis astronauts may land (from the Lunar Orbiter Laser Altimeter, 16 to 30 km across). Everything on the map is computed for each tile as the map asks, by chunkmirage's hillshade and slope ops in this page: the relief, lit by a sun you can move (shading only, no cast shadows), and in green the ground flat enough to land on, under the slope you choose. Pick a site to compute another. The map is OpenLayers, reading the page's chunks as GeoZarr: no Neuroglancer here.",
+    data: "LOLA 5 m south-pole elevation (Barker et al.), cloud-optimized GeoTIFFs (USGS Astrogeology, AWS Open Data)",
     views: {
       relief: { source: RIDGE, chunk: TILE, ops: [{ op: "hillshade", azimuth: 135, altitude: 10 }] },
       slope: { source: RIDGE, chunk: TILE, ops: [{ op: "slope" }] },
     },
     projection: { code: "IAU_2015:30135", extent: [-1095700, -1095700, 1095700, 1095700] },  // south polar stereographic, the Moon's sphere
     layers: [
-      { name: "Image mosaic, 100 m (LROC WAC)", cog: WAC, style: { color: ["array", ["band", 1], ["band", 1], ["band", 1], 1] } },
-      { name: "Relief, 5 m (computed)", view: "relief", style: { color: ["array", ["/", ["band", 1], 255], ["/", ["band", 1], 255], ["/", ["band", 1], 255], ["case", [">", ["band", 1], 0], 1, 0]] } },
+      { name: "Relief", view: "relief", style: { color: ["array", ["/", ["band", 1], 255], ["/", ["band", 1], 255], ["/", ["band", 1], 255], ["case", [">", ["band", 1], 0], 1, 0]] } },
       {
-        name: "Flat enough to land (computed)", view: "slope",
+        name: "Flat enough to land", view: "slope",
         style: { variables: { flat: 8 }, color: ["case", ["<", ["band", 1], ["var", "flat"]], ["color", 40, 220, 90, 0.55], ["color", 0, 0, 0, 0]] },
       },
     ],
     controls: [
       { label: "Sun from", unit: "°", min: 0, max: 345, step: 15, view: "relief", op: 0, param: "azimuth" },
       { label: "Sun height", unit: "°", min: 1, max: 45, step: 1, view: "relief", op: 0, param: "altitude" },
-      { label: "Flat: slope under", unit: "°", min: 2, max: 20, step: 1, layer: "Flat enough to land (computed)", variable: "flat", value: 8 },
+      { label: "Flat: slope under", unit: "°", min: 2, max: 20, step: 1, layer: "Flat enough to land", variable: "flat", value: 8 },
     ],
-    center: [-11000, -12000], resolution: 16,
+    sites: { label: "Site", views: ["relief", "slope"], options: SITES.map(([id, name]) => ({ name, url: `${DEMS}/${id}/${id}.tif` })) },
     command: `chunkmirage serve '${RIDGE}' \\\n  --op hillshade:azimuth=135,altitude=10 --chunk 256,256 --python-viewer`,
   },
   {

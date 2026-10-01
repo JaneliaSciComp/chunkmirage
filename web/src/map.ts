@@ -1,15 +1,15 @@
 // The map page: a demo of the gallery (cards.ts) whose views the browser engine (engine.ts)
 // computes and serves as GeoZarr, drawn by OpenLayers, a GIS web map that knows nothing of
-// chunkmirage: it reads the page's chunks as it reads any GeoZarr store, next to COGs it
-// reads itself. Sliders either recompute a view with other op parameters (for the tiles on
-// screen) or restyle a layer on the GPU.
+// chunkmirage: it reads the page's chunks as it reads any GeoZarr store. Everything on the
+// map is computed: it fits the chosen site and goes no further out. Sliders either
+// recompute a view with other op parameters (for the tiles on screen) or restyle a layer
+// on the GPU; the site picker recomputes the views from another source.
 import "ol/ol.css";
 import OlMap from "ol/Map";
 import View from "ol/View";
 import { ScaleLine, defaults as defaultControls } from "ol/control";
 import WebGLTileLayer from "ol/layer/WebGLTile";
 import { Projection, addProjection } from "ol/proj";
-import GeoTIFF from "ol/source/GeoTIFF";
 import GeoZarr from "ol/source/GeoZarr";
 import { CARDS, type MapCard, type MapControl } from "./cards";
 import { Engine } from "./engine";
@@ -55,33 +55,58 @@ async function start() {
   await engine.start(card.views, status);
   status(`Python ready in ${((performance.now() - t0) / 1000).toFixed(1)} s. Tiles are computed as the map asks for them.`);
 
-  // the data's own projection, so neither the computed views nor the COGs are reprojected
+  // the data's own projection, so nothing is reprojected
   const projection = new Projection({ code: card.projection.code, units: "m", extent: card.projection.extent });
   addProjection(projection);
   for (const v of Object.keys(card.views)) engine.proj[v] = card.projection.code;
-  const layers = card.layers.map((l) => {
-    const source = l.view ? geozarr(l.view) : new GeoTIFF({ sources: [{ url: l.cog! }], projection, transition: 0 });
-    return new WebGLTileLayer({ source, style: l.style, visible: l.visible ?? true, properties: { name: l.name } });
-  });
-  const map = new OlMap({
-    target: "map", layers, controls: defaultControls().extend([new ScaleLine()]),
-    view: new View({ projection, center: card.center, resolution: card.resolution, maxResolution: 2000, minResolution: 0.5 }),
-  });
+  const shown: Record<string, string> = Object.fromEntries(Object.keys(card.views).map((v) => [v, v]));
+  const layers = card.layers.map((l) => new WebGLTileLayer({ source: geozarr(l.view), style: l.style, visible: l.visible ?? true }));
+  const map = new OlMap({ target: "map", layers, controls: defaultControls().extend([new ScaleLine()]) });
+  /** A view of the site: all of it on screen, no further out, down to quarter pixels. */
+  const fit = () => {
+    const bbox = engine.infos[shown[card.sites.views[0]]].geo!.bbox, [w, h] = map.getSize() ?? [800, 600];
+    const whole = Math.max((bbox[2] - bbox[0]) / w, (bbox[3] - bbox[1]) / h);
+    map.setView(new View({
+      projection, extent: bbox, constrainOnlyCenter: false, showFullExtent: true,
+      center: [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2], resolution: whole, maxResolution: whole, minResolution: 1.25,
+    }));
+  };
+  fit();
   $("empty").hidden = true;
+
+  // the site: every view that reads it, computed again from the chosen source
+  const pick = document.createElement("label");
+  pick.className = "control";
+  pick.innerHTML = `<span></span><select></select>`;
+  pick.querySelector("span")!.textContent = card.sites.label;
+  const select = pick.querySelector("select")!;
+  for (const o of card.sites.options) select.append(new Option(o.name, o.url));
+  select.value = card.views[card.sites.views[0]].source;
+  let busy = Promise.resolve();
+  const recompute = (view: string, changes: Parameters<Engine["edit"]>[1]) => {
+    busy = busy.then(async () => {
+      status("Computing…");
+      shown[view] = await engine.edit(view, changes);
+      for (const [i, l] of card.layers.entries()) if (l.view === view) layers[i].setSource(geozarr(shown[view]));
+      status("Tiles are computed as the map asks for them.");
+    }).catch((e) => status(`Failed: ${(e as Error).message ?? e}`));
+    return busy;
+  };
+  select.addEventListener("change", async () => {
+    for (const v of card.sites.views) await recompute(v, { source: select.value });
+    fit();
+  });
+  $("controls").append(pick);
 
   for (const c of card.controls) {
     if ("variable" in c) {
       const layer = layers[card.layers.findIndex((l) => l.name === c.layer)];
       slider(c, c.value, true, (v) => layer.updateStyleVariables({ [c.variable]: v }));
     } else {
-      const spec = card.views[c.view], op = spec.ops![c.op] as Record<string, number>;
-      let busy = Promise.resolve();
-      slider(c, op[c.param], false, (v) => {
-        op[c.param] = v;  // the card's spec, edited: the next edit starts from it
-        busy = busy.then(async () => {
-          const name = await engine.edit(c.view, spec.ops!);
-          for (const [i, l] of card.layers.entries()) if (l.view === c.view) layers[i].setSource(geozarr(name));
-        }).catch((e) => status(`Failed: ${(e as Error).message ?? e}`));
+      const ops = structuredClone(card.views[c.view].ops!) as Record<string, number>[];
+      slider(c, ops[c.op][c.param], false, (v) => {
+        ops[c.op] = { ...ops[c.op], [c.param]: v };
+        void recompute(c.view, { ops: structuredClone(ops) });
       });
     }
   }

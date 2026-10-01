@@ -36,6 +36,7 @@
   .control { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; }
   .control input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
   .control output { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .control select { min-width: 0; max-width: 100%; font: inherit; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; }
   .layers label { display: flex; gap: 6px; align-items: center; }
   .ol-zoom { top: 8px; left: 8px; }
   .ol-scale-line { background: rgba(0,0,0,.6); }
