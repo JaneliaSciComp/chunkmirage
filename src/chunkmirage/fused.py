@@ -42,7 +42,7 @@ def run(ops: Sequence[Op], block: np.ndarray, in_box: Box, out_box: Box, out: Ar
     ndim = out.ndim
     box = in_box  # where the block sits, in the axes it currently has
     for op in ops:
-        result = op.apply_at(block, box)
+        result = op.for_level(out).apply_at(block, box)
         if result.ndim < ndim or result.shape[-ndim:] != block.shape[-ndim:]:
             raise ValueError(f"op {op.name!r} changed block shape {block.shape} -> {result.shape}")
         if result.ndim < block.ndim:  # this op consumed the leading axes

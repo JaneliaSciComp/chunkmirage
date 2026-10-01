@@ -20,7 +20,8 @@ def open_source(
     deformation on a GPU when opened (see ``sources.register``); ``stack://a|b`` serves
     images on one grid as the channels of one array, for ops over several images (see
     ``sources.stack``); ``flip://image?axes=y`` mirrors an image stored the other way round
-    (see ``sources.flip``).
+    (see ``sources.flip``); ``.tif``/``.tiff`` paths are (cloud-optimized) GeoTIFFs, read
+    tile by tile with their overviews as levels (see ``sources.geotiff``).
 
     ``cache_bytes`` is tensorstore's pool of decoded source chunks; ``cache`` is the chunk
     cache that computed sources keep their expensive intermediates in (``register://``'s
@@ -50,6 +51,12 @@ def open_source(
         from chunkmirage.sources.flip import open_flip
 
         return open_flip(path, cache_bytes=cache_bytes, cache=cache)
+    from chunkmirage.sources.geotiff import is_geotiff
+
+    if is_geotiff(path):
+        from chunkmirage.sources.geotiff import open_geotiff
+
+        return open_geotiff(path, cache_bytes=cache_bytes)
     if "::" in path or path.split("::")[0].endswith((".h5", ".hdf5")):
         from chunkmirage.sources.hdf5_source import open_multiscale_hdf5
 

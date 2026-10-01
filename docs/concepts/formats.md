@@ -50,8 +50,21 @@ the server applies `Content-Encoding: gzip` when the client accepts it.
 
 ## Edge chunks
 
-Zarr requires full-size chunks, so edge chunks are zero-padded. N5 and precomputed encode
-the clipped size.
+Zarr requires full-size chunks, so edge chunks are zero-padded (by the browser engine too).
+N5 and precomputed encode the clipped size.
+
+## GeoZarr, for map clients (browser engine)
+
+The browser engine serves each view twice: as OME-Zarr 0.5 for Neuroglancer
+(`virtual/<page>/<view>/`) and, for a view read from a georeferenced source (a GeoTIFF), as
+GeoZarr for map clients such as OpenLayers (`virtual/<page>/geo/<view>/`). The GeoZarr
+group carries the zarr-conventions `multiscales` (one `layout` entry per level, its
+`spatial:shape`), `proj:` (`proj:code`, the projection the page names: a map client must
+know it, as the Moon page registers the lunar south polar stereographic) and `spatial:`
+(`spatial:dimensions` `[y, x]`, `spatial:bbox` the pixels' corners) attributes; level `<i>`
+is a group holding the view as its one band, `<i>/<view>`, a 2-D `y, x` array (the view's
+one z plane; a map reads 2-D bands). Chunks are the same chunks, computed once whichever
+layout asks. The Python server has no GeoZarr frontend yet.
 
 ## Data types
 
@@ -398,6 +411,29 @@ in their attributes says so. The levels must share their centre, as OME-Zarr and
 pyramids whose extents halve evenly do, since a level mirrored about its own centre would
 otherwise drift from the others; `flip://` refuses a pyramid whose levels share their
 corner instead (as `synthetic://` levels do).
+
+### GeoTIFF sources (cloud-optimized GeoTIFFs)
+
+```text
+https://.../site.tif        (s3://, gs:// or a local path too; .tif or .tiff)
+```
+
+The tiled GeoTIFFs most geospatial and planetary rasters are published as, cloud-optimized
+ones (COGs) above all, read where they are looked at: the header once (a few range
+requests), then each tile a read covers, fetched by range, decoded by tifffile and kept in a
+256 MB cache. The pages of decreasing size inside a COG (its overviews) are the levels, so
+a zoomed-out view reads the small ones; masks are skipped. One sample per pixel; the axes
+are `y, x` in the projection's units (metres, unitless for a geographic raster in degrees),
+`y` counting down the image as rows do (minus the northing), voxel `(0, 0)` at the tiepoint
+(`ModelTiepoint`, `ModelPixelScale`). A float raster's `GDAL_NODATA` reads as NaN. Strip
+TIFFs (untiled) are refused: every read would fetch whole rows. Needs the `tiff` extra
+(tensorstore's own `tiff` driver reads only uint8 images). The browser engine reads them
+with geotiff.js, the same way, as `z, y, x` with one z.
+
+```bash
+chunkmirage serve 'https://astrogeo-ard.s3.us-west-2.amazonaws.com/moon/lro/lola/barker_south_pole_dems/Site01/Site01.tif' \
+  --op hillshade:azimuth=135,altitude=10 --chunk 256,256 --python-viewer
+```
 
 ### Stored sources
 

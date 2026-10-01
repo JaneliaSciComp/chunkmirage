@@ -74,7 +74,7 @@ export interface PipelineView {
 export interface ViewAxis { name: string; unit: string }
 export interface ViewLevel { shape: number[]; voxel: number[]; origin: number[] }
 /** A view's source as the reader opened it: three axes, and channels for a stack. */
-export interface SourceInfo { dtype: string; channels: number; axes: ViewAxis[]; levels: ViewLevel[] }
+export interface SourceInfo { dtype: string; channels: number; axes: ViewAxis[]; levels: ViewLevel[]; geo?: { bbox: number[] } }
 /** A view as served: its source's axes and levels, and what its ops make of them. */
 export interface ViewInfo extends SourceInfo { halo: number[]; lead: number; out: string }
 
@@ -85,7 +85,7 @@ export type ToReader =
   | { type: "sample"; reqId: number; view: string; ps: number[] };
 /** What the page asks a Pyodide worker. */
 export type ToPyWorker =
-  | { type: "plan"; reqId: number; views: Record<string, { ops: Record<string, unknown>[]; shape: number[]; dtype: string; chunk: number[] }> }
-  | { type: "compute"; reqId: number; view: string; data: ArrayBuffer; readShape: number[]; inLo: number[]; inHi: number[]; outLo: number[]; outHi: number[]; full: number[] };
+  | { type: "plan"; reqId: number; views: Record<string, { ops: Record<string, unknown>[]; shape: number[]; dtype: string; chunk: number[]; voxel: number[] }> }
+  | { type: "compute"; reqId: number; view: string; data: ArrayBuffer; readShape: number[]; inLo: number[]; inHi: number[]; outLo: number[]; outHi: number[]; full: number[]; voxel: number[] };
 /** Either's answer to request `reqId`. */
 export type Answer = { reqId: number; value: unknown } | { reqId: number; error: string };

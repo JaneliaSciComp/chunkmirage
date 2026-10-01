@@ -33,6 +33,10 @@ new op; `tests/test_docs.py` requires it.
 |             | `threshold` | 10      | least difference-of-Gaussians response, image intensity units |
 |             | `separation`| 2       | spots closer than this (y-x voxels) are one |
 |             | `radius`    | 1       | ball drawn per spot, y-x voxels (0 marks one voxel) |
+| `slope`     | `z_factor`  | 1.0     | slope of an elevation model in degrees (0 flat, 90 a cliff), on the last two axes, from each level's pixel spacing (`for_level`); output float32; halo 1; elevation units per unit of the spacing (1 when both are metres) |
+| `hillshade` | `azimuth`   | 315     | shaded relief, the terrain lit by a distant sun from this direction (degrees clockwise from the top of the image), local illumination only (no cast shadows); output uint8, 1 unlit to 255 facing the sun, 0 where the elevation is NaN; halo 1 |
+|             | `altitude`  | 45      | the sun's height above the horizon, degrees |
+|             | `z_factor`  | 1.0     | as for `slope`; above 1 exaggerates relief |
 | `contacts`  | `radius`    | 3.0     | contact sites between the first two channels of a `stack://` source: voxels within this many voxels (Euclidean) of both structures; output uint8 mask; halo = `radius + 1` |
 |             | `a_low`     | 128     | values at or above this in the first channel are the first structure (128 for a uint8 probability map, 1 for a segmentation) |
 |             | `b_low`     | 128     | the same for the second channel |
@@ -58,7 +62,12 @@ it in the same stage see the plain spatial block.
 None of the built-ins cache their output by default (`cache=False`); a pipeline turns it on
 for one op with `"cache": true` in its spec ([caching](../concepts/caching.md#why-not-cache-every-stage)).
 Everything except `threshold`,
-`cast`, `scale` and `diff` needs the `ops` extra (scipy).
+`cast`, `scale`, `diff`, `slope` and `hillshade` needs the `ops` extra (scipy).
+
+`slope` on NASA's 5 m south-pole elevation of the Moon (the ridge between Shackleton and de
+Gerlache craters, LOLA, Barker et al.) equals the slope USGS publishes with it, to 0.0°
+(median and 95th percentile over a 512 × 512 region at full resolution); the gallery's Moon
+card draws ground under a chosen slope over it, and the relief lit by a sun you move.
 
 `diff` along time is the view a hurricane's cold wake or a solar flare shows up in: each
 day's sea temperature minus the day before's (`examples/hurricane_wakes.py`, and the

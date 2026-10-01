@@ -5,6 +5,7 @@ from chunkmirage.ops.combine import Contacts
 from chunkmirage.ops.filters import Diff, Gaussian, Uniform
 from chunkmirage.ops.pointwise import Cast, Scale, Threshold
 from chunkmirage.ops.segment import DoG, Label, Morphology, Spots
+from chunkmirage.ops.terrain import Hillshade, Slope
 
 __all__ = [
     "Cast",
@@ -14,8 +15,10 @@ __all__ = [
     "Label",
     "Morphology",
     "Gaussian",
+    "Hillshade",
     "Op",
     "Scale",
+    "Slope",
     "Spots",
     "Threshold",
     "Uniform",

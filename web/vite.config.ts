@@ -15,7 +15,7 @@ export default defineConfig({
     target: "es2022",
     chunkSizeWarningLimit: 1000,  // the zstd and blosc codecs (WebAssembly), loaded only for images that use them
     rolldownOptions: {
-      input: { index: "index.html", register: "register.html", pipeline: "pipeline.html", sw: "src/sw.ts" },
+      input: { index: "index.html", register: "register.html", pipeline: "pipeline.html", map: "map.html", sw: "src/sw.ts" },
       output: { entryFileNames: (chunk) => (chunk.name === "sw" ? "sw.js" : "assets/[name]-[hash].js") },
     },
   },

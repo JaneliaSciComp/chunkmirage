@@ -8,8 +8,13 @@ import type { ViewAxis } from "./types";
 
 export interface SourceLevel { shape: number[]; voxel: number[]; origin: number[]; chunks: number[] }
 
+/** Where a source's grid sits in its map projection: the bounding box of its pixels'
+ * corners, [x min, y min, x max, y max] (a GeoTIFF's; for a map viewer). */
+export interface Geo { bbox: number[] }
+
 export interface Source {
   url: string;
+  geo?: Geo;
   dtype: string;
   axes: ViewAxis[];   // the three axes levels have, e.g. z, y, x in nanometers
   channels: number;   // 1, or the images of a stack (its leading c axis)
@@ -34,6 +39,7 @@ export async function openSource(url: string, select: Record<string, number> = {
     if (q < 0 || !axes) throw new Error("flip:// needs the axes to mirror: flip://<image>?axes=y");
     return flip(await openSource(rest.slice(0, q), select), axes.split(",").map((a) => a.trim()), url);
   }
+  if (/\.tiff?$/i.test(url.split("?")[0])) return geotiffSource(url);
   try {
     return await zarrSource(url, select);
   } catch (zarrError) {
@@ -117,6 +123,49 @@ async function xarraySource(url: string): Promise<Source> {
       for (let i = 0; i < raw.length; i++) out[i] = raw[i] === m ? NaN : raw[i] * scale + offset;
       return out;
     },
+  };
+}
+
+// ------------------------------------------------ GeoTIFF
+const SAMPLE_TYPES: Record<string, string> = {
+  "1/8": "uint8", "1/16": "uint16", "1/32": "uint32", "2/8": "int8", "2/16": "int16", "2/32": "int32", "3/32": "float32", "3/64": "float64",
+};
+
+/** A (cloud-optimized) GeoTIFF, as chunkmirage.sources.geotiff reads it: its pages of
+ * decreasing size the levels, as z, y, x with one z; tiles read by range and decoded once
+ * into the block cache; y counting down the image (minus the northing); float no-data NaN. */
+async function geotiffSource(url: string): Promise<Source> {
+  const { fromUrl } = await import("geotiff");
+  const tif = await fromUrl(url);
+  const all = await Promise.all(Array.from({ length: await tif.getImageCount() }, (_, i) => tif.getImage(i)));
+  const images = all.filter((im) => !((im.fileDirectory.getValue("NewSubfileType") ?? 0) & 4));  // no masks
+  const base = images[0];
+  if (base.getSamplesPerPixel() !== 1) throw new Error(`${url}: ${base.getSamplesPerPixel()} samples per pixel; one is read`);
+  const dtype = SAMPLE_TYPES[`${base.getSampleFormat(0)}/${base.getBitsPerSample(0)}`];
+  if (!dtype) throw new Error(`${url}: samples of format ${base.getSampleFormat(0)}, ${base.getBitsPerSample(0)} bits`);
+  const [sx, sy] = base.getResolution(), [ox, oy] = base.getOrigin(), W = base.getWidth(), H = base.getHeight();
+  const px = Math.abs(sx), py = Math.abs(sy), nodata = base.getGDALNoData();
+  const levels = images.map((im) => {
+    const vx = px * W / im.getWidth(), vy = py * H / im.getHeight();
+    return { shape: [1, im.getHeight(), im.getWidth()], voxel: [1, vy, vx], origin: [0, -oy + vy / 2, ox + vx / 2], chunks: [1, im.getTileHeight(), im.getTileWidth()] };
+  });
+  const T = TYPED[dtype], cache = new Blocks(READ_BYTES);
+  const tile = async (li: number, b: number[]) => {
+    const im = images[li], [, th, tw] = levels[li].chunks;
+    const x0 = b[2] * tw, y0 = b[1] * th, x1 = Math.min(x0 + tw, im.getWidth()), y1 = Math.min(y0 + th, im.getHeight());
+    const r = await im.readRasters({ window: [x0, y0, x1, y1], samples: [0], interleave: true });
+    const data = T === Float32Array || T === Float64Array ? new T((r as ArrayLike<number>).length) : (r as unknown as Numbers);
+    if (data !== (r as unknown)) {  // float: no-data as NaN
+      const v = r as ArrayLike<number>;
+      for (let i = 0; i < v.length; i++) data[i] = v[i] === nodata ? NaN : v[i];
+    }
+    return { data, shape: [1, y1 - y0, x1 - x0] };
+  };
+  return {
+    url, dtype, channels: 1, levels,
+    axes: [{ name: "z", unit: "m" }, { name: "y", unit: "m" }, { name: "x", unit: "m" }],
+    geo: { bbox: [ox, oy - H * py, ox + W * px, oy] },
+    read: (li, _c, lo, hi) => assemble(T, levels[li].chunks, lo, hi, (b) => cache.get(`${li}/${b.join(",")}`, () => tile(li, b))),
   };
 }
 

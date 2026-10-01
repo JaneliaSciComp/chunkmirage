@@ -13,6 +13,8 @@
     "check": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
+    "geotiff": "3.1.0-beta.0",
+    "ol": "10.10.0",
     "zarrita": "0.7.5"
   },
   "devDependencies": {

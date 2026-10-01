@@ -3,7 +3,7 @@ import { CARDS } from "./cards";
 
 const root = document.getElementById("cards")!;
 for (const c of CARDS) {
-  const href = c.kind === "pipeline" ? `pipeline.html?card=${c.id}` : c.kind === "link" ? c.href : null;
+  const href = c.kind === "pipeline" ? `pipeline.html?card=${c.id}` : c.kind === "map" ? `map.html?card=${c.id}` : c.kind === "link" ? c.href : null;
   const card = document.createElement("article");
   card.className = "card";
   card.innerHTML = `

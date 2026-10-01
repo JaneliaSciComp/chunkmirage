@@ -332,7 +332,13 @@ much of what was read came from the cache. Fed the same affine and
   worker reads in TypeScript. One reader rather than one per worker: each store chunk is
   decoded once for the page, and a piece it keeps is a whole store chunk (the inner chunk of
   a shard), since zarrita decodes all of a chunk to read any of it; a 65 MB sea-temperature
-  tile in every worker, or decoded again for each part read, would not fit. Porting the ops to TypeScript or WebGPU shaders, the plan before, would have
+  tile in every worker, or decoded again for each part read, would not fit.
+* The page's engine (`engine.ts`) is shared by the Neuroglancer page and a map page, and
+  serves each view as OME-Zarr and as GeoZarr: the map page's OpenLayers reads the latter
+  as it reads any GeoZarr store, the point being that chunkmirage's output is not tied to
+  one viewer. A map client keeps no chunk cache of its own, so the engine keeps computed
+  chunks (256 MB), and a slider that changes an op parameter serves the view under a new
+  name, which the client fetches afresh while the old chunks stay valid. Porting the ops to TypeScript or WebGPU shaders, the plan before, would have
   meant one more implementation per op and parity tests to keep them equal; Pyodide made
   the Python itself the browser's, at the cost of a 6 s start and single-threaded
   WebAssembly per worker, which the ops' 0.05 to 0.13 s per block easily afford. The

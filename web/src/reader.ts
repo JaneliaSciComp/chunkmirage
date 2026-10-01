@@ -17,7 +17,7 @@ async function open(views: Extract<ToReader, { type: "open" }>["views"]) {
     if (!opened.has(key)) opened.set(key, openSource(spec.source, spec.select ?? {}));
     const src = await opened.get(key)!;
     sources.set(id, src);
-    out[id] = { dtype: src.dtype, channels: src.channels, axes: src.axes, levels: src.levels.map(({ shape, voxel, origin }) => ({ shape, voxel, origin })) };
+    out[id] = { dtype: src.dtype, channels: src.channels, axes: src.axes, levels: src.levels.map(({ shape, voxel, origin }) => ({ shape, voxel, origin })), geo: src.geo };
   }));
   return out;
 }

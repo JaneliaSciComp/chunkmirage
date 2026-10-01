@@ -46,6 +46,7 @@ schema for free (`GET /api/ops`).
 | `output_dtype(dtype)`  | result dtype; default unchanged                                         |
 | `apply(block)`         | the computation; must return an array of the same spatial shape        |
 | `apply_at(block, box)` | optional; same but told the block's (halo-padded) position, for position-dependent results such as unique per-chunk labels |
+| `for_level(info)`      | optional; the op as it runs on a scale level, given that level's `ArrayInfo`; ops in physical units take its voxel size (`slope` and `hillshade` their pixel spacing, which doubles from level to level). Default: the op itself |
 
 Ops are discovered through the `chunkmirage.ops` entry point, so plugins ship as ordinary
 packages. See [Contributing](../contributing.md#adding-an-op) for a template and the
@@ -77,6 +78,8 @@ reads whatever source chunks cover the requested output chunk.
 ## Caveat: scale levels
 
 Ops run per level with the same parameters. That is right for thresholding and filters in
-voxel units, and wrong for models trained at a specific resolution. Until per-op level
+voxel units, and for ops that measure in physical units through `for_level` (a slope in
+degrees is a slope in degrees at every level), and wrong for models trained at a specific
+resolution. Until per-op level
 declarations land (roadmap item 2), serve only the levels your op is valid for, or apply it
 to a single-level source.

@@ -157,6 +157,40 @@
         "op"
       ]
     },
+    "Hillshade": {
+      "additionalProperties": false,
+      "description": "Shaded relief: the brightness of the terrain lit by a distant sun at ``azimuth`` and\n``altitude`` (local illumination only: no shadows cast across the terrain). Output\nuint8, 1 (unlit) to 255 (facing the sun), 0 where the elevation is NaN.",
+      "properties": {
+        "op": {
+          "const": "hillshade"
+        },
+        "azimuth": {
+          "default": 315.0,
+          "description": "Direction the sun shines from, degrees clockwise from the top of the image.",
+          "maximum": 360,
+          "minimum": 0,
+          "type": "number"
+        },
+        "altitude": {
+          "default": 45.0,
+          "description": "Height of the sun above the horizon, in degrees.",
+          "exclusiveMinimum": 0,
+          "maximum": 90,
+          "type": "number"
+        },
+        "z_factor": {
+          "default": 1.0,
+          "description": "Elevation units per unit of the pixel spacing; above 1 exaggerates relief.",
+          "exclusiveMinimum": 0,
+          "type": "number"
+        }
+      },
+      "title": "Hillshade",
+      "type": "object",
+      "required": [
+        "op"
+      ]
+    },
     "Label": {
       "additionalProperties": false,
       "description": "Connected components of a mask, coloured as segments. Labels are unique per chunk, so one\nobject spanning several chunks gets several colours; that is the honest per-chunk preview.",
@@ -231,6 +265,9 @@
           "$ref": "#/$defs/Gaussian"
         },
         {
+          "$ref": "#/$defs/Hillshade"
+        },
+        {
           "$ref": "#/$defs/Label"
         },
         {
@@ -238,6 +275,9 @@
         },
         {
           "$ref": "#/$defs/Scale"
+        },
+        {
+          "$ref": "#/$defs/Slope"
         },
         {
           "$ref": "#/$defs/Spots"
@@ -555,6 +595,26 @@
         }
       },
       "title": "Scale",
+      "type": "object",
+      "required": [
+        "op"
+      ]
+    },
+    "Slope": {
+      "additionalProperties": false,
+      "description": "Slope of an elevation model in degrees (0 flat, 90 a cliff), from the level's pixel\nspacing; output float32, NaN where the elevation is.",
+      "properties": {
+        "op": {
+          "const": "slope"
+        },
+        "z_factor": {
+          "default": 1.0,
+          "description": "Elevation units per unit of the pixel spacing (1 when both are metres).",
+          "exclusiveMinimum": 0,
+          "type": "number"
+        }
+      },
+      "title": "Slope",
       "type": "object",
       "required": [
         "op"
