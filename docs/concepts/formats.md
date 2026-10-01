@@ -224,8 +224,9 @@ at, not up front. Each gets its own control lattice, `grid` voxels apart, in blo
 fitted when a chunk it covers is first requested: from the
 solved field over the block plus `halo` voxels of context, against the fixed and moving
 voxels those reach, coarse to fine over halved copies of them (down to about the solved
-level's resolution) for that level's `iterations` per copy; then it is kept (1 GiB of
-blocks per process). Every block starts from the solved field, so no level waits on
+level's resolution) for that level's `iterations` per copy; then it is kept in the
+server's chunk cache with the computed chunks, so `--cache-gb` bounds it and
+`DELETE /api/cache` clears it (1 GiB of its own when opened from Python without a cache). Every block starts from the solved field, so no level waits on
 another's blocks. The finest fitted level's field serves every level below it. So the fit's
 detail grows with the zoom and its cost with what is viewed rather than with the volume,
 and whatever asks for chunks drives it: Neuroglancer, Fiji, webKnossos, a dask array.

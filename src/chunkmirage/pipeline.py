@@ -208,9 +208,11 @@ class Pipeline:
         from chunkmirage.sources import open_source
 
         spec = spec if isinstance(spec, PipelineSpec) else PipelineSpec.model_validate(spec)
+        cache = cache if cache is not None else LRUCache()  # the stages' and the source's
         src = open_source(
             spec.source,
             cache_bytes=source_cache_bytes,
+            cache=cache,
             voxel_size=spec.voxel_size,
             units=spec.units,
             axes=spec.axes,

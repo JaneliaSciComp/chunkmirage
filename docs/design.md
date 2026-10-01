@@ -131,8 +131,8 @@ registered volume is ever written. That split holds while the field can be coars
 it cannot, `refine=` moves the fit into the on-demand path too: the field of each finer
 level becomes a chunked source of its own, a lattice `grid` voxels apart in blocks of
 `block` voxels, fitted from the solved field over the block plus a `halo` of context when a
-chunk it covers is first requested, coarse to fine within the block, and cached like any
-stage. Blocks are sized on their own, not as the output's chunks: a chunk's field reaches
+chunk it covers is first requested, coarse to fine within the block, and kept in the
+server's chunk cache like any stage's chunks. Blocks are sized on their own, not as the output's chunks: a chunk's field reaches
 into the lattice beyond it, so a thin chunk straddles two thin blocks, and each block pays
 for its context and correlation windows on every side. On the EASI-FISH pair, blocks of
 64×128×128 voxels (the default) align full-resolution chunks better than blocks of

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from chunkmirage.cache import LRUCache
 from chunkmirage.sources.base import MultiscaleSource
 from chunkmirage.sources.tensorstore_source import open_multiscale_tensorstore
 
 
-def open_source(path: str, *, cache_bytes: int = 0, **kw) -> MultiscaleSource:
+def open_source(
+    path: str, *, cache_bytes: int = 0, cache: LRUCache | None = None, **kw
+) -> MultiscaleSource:
     """Open any supported dataset as a ``MultiscaleSource``.
 
     Dispatch is by content, not extension: zarr v2/v3, n5 and neuroglancer precomputed go
@@ -18,6 +21,10 @@ def open_source(path: str, *, cache_bytes: int = 0, **kw) -> MultiscaleSource:
     images on one grid as the channels of one array, for ops over several images (see
     ``sources.stack``); ``flip://image?axes=y`` mirrors an image stored the other way round
     (see ``sources.flip``).
+
+    ``cache_bytes`` is tensorstore's pool of decoded source chunks; ``cache`` is the chunk
+    cache that computed sources keep their expensive intermediates in (``register://``'s
+    refined blocks), normally the pipeline's.
     """
     if path.startswith("synthetic://"):
         from chunkmirage.sources.synthetic import open_synthetic
@@ -34,15 +41,15 @@ def open_source(path: str, *, cache_bytes: int = 0, **kw) -> MultiscaleSource:
     if path.startswith("register://"):
         from chunkmirage.sources.register import open_register
 
-        return open_register(path, cache_bytes=cache_bytes)
+        return open_register(path, cache_bytes=cache_bytes, cache=cache)
     if path.startswith("stack://"):
         from chunkmirage.sources.stack import open_stack
 
-        return open_stack(path, cache_bytes=cache_bytes)
+        return open_stack(path, cache_bytes=cache_bytes, cache=cache)
     if path.startswith("flip://"):
         from chunkmirage.sources.flip import open_flip
 
-        return open_flip(path, cache_bytes=cache_bytes)
+        return open_flip(path, cache_bytes=cache_bytes, cache=cache)
     if "::" in path or path.split("::")[0].endswith((".h5", ".hdf5")):
         from chunkmirage.sources.hdf5_source import open_multiscale_hdf5
 

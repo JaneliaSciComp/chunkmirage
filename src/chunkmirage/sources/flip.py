@@ -50,7 +50,7 @@ def _centre(info: ArrayInfo, a: int) -> float:
     return info.translation[a] + info.voxel_size[a] * (info.shape[a] - 1) / 2
 
 
-def open_flip(url: str, *, cache_bytes: int = 0) -> MultiscaleSource:
+def open_flip(url: str, *, cache_bytes: int = 0, cache=None) -> MultiscaleSource:
     from chunkmirage.sources.registry import open_source
 
     location, _, query = url[len("flip://") :].rpartition("?")
@@ -59,7 +59,7 @@ def open_flip(url: str, *, cache_bytes: int = 0) -> MultiscaleSource:
         raise ValueError("flip:// needs an image and the axes to mirror: flip://<image>?axes=y")
     if extra := set(q) - {"axes"}:
         raise ValueError(f"flip:// takes only axes=..., not {sorted(extra)}")
-    image = open_source(location, cache_bytes=cache_bytes)
+    image = open_source(location, cache_bytes=cache_bytes, cache=cache)
     names = image.levels[0].info.axes
     wanted = [a.strip() for a in q["axes"].split(",") if a.strip()]
     if not wanted or any(a not in names for a in wanted):

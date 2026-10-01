@@ -66,13 +66,13 @@ def _same_grid(a: ArrayInfo, na: int, b: ArrayInfo, nb: int) -> bool:
     )
 
 
-def open_stack(url: str, *, cache_bytes: int = 0) -> MultiscaleSource:
+def open_stack(url: str, *, cache_bytes: int = 0, cache=None) -> MultiscaleSource:
     from chunkmirage.sources.registry import open_source
 
     urls = [u for u in url[len("stack://") :].split("|") if u]
     if len(urls) < 2:
         raise ValueError("stack:// needs two or more images separated by '|': stack://<a>|<b>")
-    images = [open_source(u, cache_bytes=cache_bytes) for u in urls]
+    images = [open_source(u, cache_bytes=cache_bytes, cache=cache) for u in urls]
     leads = [_n_lead(ms, u) for ms, u in zip(images, urls)]
     n_levels = min(len(ms.levels) for ms in images)
     first = images[0]

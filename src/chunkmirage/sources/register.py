@@ -19,8 +19,9 @@ resolution is served without anything being written. Solved fields are kept per 
 With ``refine``, the field of the levels below the solved ones is fitted where it is
 looked at: each has its own control lattice, in blocks of ``block`` voxels, and a block is
 fitted when a chunk it covers is first requested, starting from the solved field over the
-block plus ``halo`` voxels of context, coarse to fine within the block, then kept
-(``_blocks``). So the fit's detail grows with the zoom, its cost with what is viewed rather
+block plus ``halo`` voxels of context, coarse to fine within the block, then kept in the
+chunk cache of whoever opened it (a server's, so ``--cache-gb`` bounds them and clearing
+the cache clears them; ``_blocks`` when opened from Python without one). So the fit's detail grows with the zoom, its cost with what is viewed rather
 than with the volume, and any client asking for chunks drives it.
 
 Query parameters:
@@ -240,13 +241,13 @@ class RegisterParams(BaseModel):
 MAX_SOLVE_VOXELS = 1 << 25  # finest default level: its whole volume sits on the GPU
 MIN_SOLVE_SIZE = 16  # coarsest default level: at least this many voxels on every axis
 KEEP = 8  # solved fields remembered per process
-BLOCK_CACHE_BYTES = 1 << 30  # blocks of refined fields remembered per process
+BLOCK_CACHE_BYTES = 1 << 30  # blocks of refined fields kept when no cache is given
 _solved: OrderedDict[str, list[Grid]] = OrderedDict()
 _affines: dict[str, np.ndarray] = {}  # found affines, per image pair
 _ranges: dict[str, tuple[tuple[float, float], tuple[float, float]]] = {}  # per solve key
 _blocks: LRUCache[np.ndarray] = LRUCache(BLOCK_CACHE_BYTES)
 # fits of refined blocks: three at once (they read while one holds the GPU), the finest level
-# and latest requests first, dropped if every request for one gives up before it starts
+# first, dropped if every request for one gives up before it starts
 _block_queue = demand.queues["refined blocks"] = demand.Queue(slots=3)
 _solve_lock = threading.Lock()  # one solve at a time: they share the GPU
 
@@ -371,13 +372,14 @@ def _refined_field(
     ranges,
     device: str,
     level: int,
+    blocks: LRUCache,
 ) -> VectorField:
     """The field of a fixed level below the solved ones: a control lattice ``settings.grid``
     voxels apart, in blocks of ``block_voxels``. A block is fitted when first read,
     from ``parent``'s values (the solved field) over the block plus ``halo`` voxels of
     context, against the fixed and moving voxels those reach, coarse to fine over
     ``stages`` halvings of them (so the block's coarsest copy is about as coarse as the
-    solved level), and kept in ``_blocks``, context included. Neighbouring blocks overlap
+    solved level), and kept in ``blocks``, context included. Neighbouring blocks overlap
     there, and a lattice point's value is the average of the blocks covering it, each
     weighted 1 over its own block and less the further into its context (``_tent``), so the
     field turns smoothly from one block's fit to the next's across the overlap instead of
@@ -475,15 +477,15 @@ def _refined_field(
         return grid.values
 
     def fitted(index: tuple[int, ...]) -> np.ndarray:
-        """Block ``index``'s fit: kept in ``_blocks``, fitted once through ``_block_queue``
+        """Block ``index``'s fit: kept in ``blocks``, fitted once through ``_block_queue``
         however many requests want it, and dropped unfitted if they all give up first."""
-        hit = _blocks.get((key, index))
+        hit = blocks.get((key, index))
         if hit is not None:
             return hit
 
         def fit() -> np.ndarray:
             values = np.ascontiguousarray(compute(index), dtype=np.float32)
-            _blocks.put((key, index), values)
+            blocks.put((key, index), values)
             return values
 
         return _block_queue.run((key, index), level, fit)
@@ -542,7 +544,9 @@ def _prepend(space: ArrayInfo, lead: ArrayInfo) -> ArrayInfo:
     )
 
 
-def open_register(url: str, *, cache_bytes: int = 0) -> MultiscaleSource:
+def open_register(
+    url: str, *, cache_bytes: int = 0, cache: LRUCache | None = None
+) -> MultiscaleSource:
     from chunkmirage.sources.registry import open_source
 
     location, _, query = url[len("register://") :].rpartition("?")
@@ -554,8 +558,8 @@ def open_register(url: str, *, cache_bytes: int = 0) -> MultiscaleSource:
         )
     p = RegisterParams.from_query(q)
 
-    mov = open_source(location, cache_bytes=cache_bytes)
-    fix = open_source(p.fixed, cache_bytes=cache_bytes)
+    mov = open_source(location, cache_bytes=cache_bytes, cache=cache)
+    fix = open_source(p.fixed, cache_bytes=cache_bytes, cache=cache)
     nm, nf = _n_lead(mov, location), _n_lead(fix, p.fixed)
     minfo, finfo = mov.levels[0].info, fix.levels[0].info
     if tuple(minfo.axes[nm:]) != tuple(finfo.axes[nf:]):
@@ -727,6 +731,7 @@ def open_register(url: str, *, cache_bytes: int = 0) -> MultiscaleSource:
                 ranges,
                 p.device,
                 i,
+                _blocks if cache is None else cache,
             )
 
     def field_for(i: int, k: int) -> VectorField:

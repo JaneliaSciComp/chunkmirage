@@ -167,6 +167,36 @@ def test_refine_fits_finer_levels_where_they_are_read(monkeypatch):
     assert u.shape == (3, 32, 64, 64) and np.isfinite(u).all()
 
 
+def test_refined_blocks_live_in_the_pipelines_cache(monkeypatch):
+    # a served register:// pipeline keeps its blocks with its chunks: --cache-gb bounds them,
+    # clearing the cache clears them, and the process-wide fallback stays empty
+    from chunkmirage.cache import LRUCache
+    from chunkmirage.pipeline import Pipeline
+
+    real = register.solve
+
+    def constant(fixed, moving, affine, settings, *, box, label="", **kw):
+        if "block" not in label:
+            return real(fixed, moving, affine, settings, box=box, label=label, **kw)
+        from chunkmirage.registration import Grid, _control_shape
+
+        lo, hi = (np.asarray(b, dtype=float) for b in box)
+        shape = _control_shape(lo, hi, fixed[-1].voxel_size, settings.grid)
+        return [Grid(np.zeros((*shape, 3), np.float32), lo, (hi - lo) / (np.asarray(shape) - 1))]
+
+    monkeypatch.setattr(register, "solve", constant)
+    fallback = type(register._blocks)(register.BLOCK_CACHE_BYTES)
+    monkeypatch.setattr(register, "_blocks", fallback)
+    cache = LRUCache()
+    spec = {"source": _url("levels=1&refine=1&iterations=0,5&halo=8&block=32,32,32")}
+    p = Pipeline.from_spec(spec, cache=cache)
+    p.chunk(0, (0, 0, 0))
+    blocks = [k for k in cache._data if isinstance(k[0], str) and k[0].startswith("register:")]
+    assert blocks and len(fallback) == 0
+    cache.invalidate()
+    assert len(cache) == 0
+
+
 def test_neighbouring_blocks_blend_across_their_overlap(monkeypatch):
     # every block fits a constant field, 64 nm (a voxel) times its x index: the field steps by
     # a whole block's difference from one block to the next, and blending spreads each step
