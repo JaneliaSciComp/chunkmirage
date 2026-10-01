@@ -23,6 +23,11 @@
 ::: chunkmirage.core.ArrayInfo
 ::: chunkmirage.core.Box
 ::: chunkmirage.cache.LRUCache
+::: chunkmirage.demand.Claim
+::: chunkmirage.demand.Cancelled
+::: chunkmirage.demand.claimed
+::: chunkmirage.demand.Slots
+::: chunkmirage.demand.Queue
 
 ## Coordinate transformations
 

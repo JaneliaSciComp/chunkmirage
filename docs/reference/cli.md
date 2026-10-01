@@ -28,7 +28,7 @@ precomputed; local, `s3://`, `gs://`, `http(s)://`), `file.h5::/dataset`, or a c
 | `--source-cache-gb`   | `0.5`                                     | tensorstore raw-byte cache |
 | `--viewer`            | `https://neuroglancer-demo.appspot.com`   | viewer for the printed link |
 | `--format`            | `zarr3`                                   | format used in the printed link |
-| `--threads`           | `2 × CPUs` (min 40)                       | threadpool computing chunks; numpy/scipy/tensorstore release the GIL so this is the effective parallelism |
+| `--threads`           | `2 × CPUs` (min 40)                       | chunk requests computing at once; numpy/scipy/tensorstore release the GIL so this is the effective parallelism. The thread pool itself is larger, so requests waiting on queued work (GPU fits) hold no slot ([caching](../concepts/caching.md#order-of-work-and-requests-given-up-on)) |
 | `--workers`           | `1`                                       | uvicorn worker processes; each has its own registry and cache, so live edits reach only one: fixed pipelines only |
 | `--server`            | `uvicorn`                                 | `uvicorn` is HTTP/1.1; `hypercorn` adds HTTP/2 over https (lifts the browser's 6-connections-per-host limit) but is experimental: check that chunks load in your browser |
 | `--python-viewer`     | off                                       | also start a python-neuroglancer viewer whose layers follow live edits (needs the `viewer` extra) |

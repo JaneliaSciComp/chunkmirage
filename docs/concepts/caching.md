@@ -76,6 +76,27 @@ Two requests for the same chunk that arrive while it is being computed share one
 computation (the second waits for the first, then reads the cache). Viewers retry and
 re-request aggressively, so without this a slow chunk would be computed several times.
 
+## Order of work, and requests given up on
+
+Whatever a pipeline computes, the server bounds the work, shares it, and drops what clients
+stop waiting for (`chunkmirage.demand`); nothing of it is specific to one viewer, op or
+source. At most `--threads` requests compute at once; the rest wait their turn on a plain
+semaphore, in no particular order. Every chunk request holds a claim on the work it needs,
+cancelled when its client disconnects; a request whose client left before its turn came
+costs nothing. Of the clients that read chunkmirage, Neuroglancer is the one that aborts
+requests, and it does so when a chunk it still wants needs a download slot (100 at once by
+default) held by one that scrolled out of view, so the claim earns its keep on expensive
+chunks; Fiji, napari, webKnossos, dask and tensorstore never abort, they simply stop
+asking, and for them the bound, the shared computation above and the cache are what keep
+the server responsive. Expensive work inside a request goes through a queue of its own
+with a few slots (`demand.Queue`; a GPU-bound one has as many as the GPU fits at once): a
+job is shared by every request that needs it, dropped unrun once none of them waits any
+more, and kept if it had started. Among waiting jobs the finest level goes first, then the
+latest burst of requests, then the client's own order within it. A request waiting on
+queued work gives its compute slot up meanwhile, so requests that need nothing expensive
+never wait behind ones that do. Work asked for from Python, with no request behind it, is
+never dropped. `GET /api/queue` reports what runs, waits and was dropped, per level.
+
 ## Inspecting and clearing
 
 ```bash
