@@ -195,9 +195,7 @@ def solve(
     return out
 
 
-def find_affine(
-    fixed: Level, moving: Level, device: str = "auto"
-) -> tuple[np.ndarray, dict]:
+def find_affine(fixed: Level, moving: Level, device: str = "auto") -> tuple[np.ndarray, dict]:
     """The fixed-to-moving affine (4x4, physical units) to start from when none is given,
     as the browser page's ``affine.ts`` finds it. The images' intensity moments are
     matched first, centre to centre and principal axis to principal axis, which leaves
