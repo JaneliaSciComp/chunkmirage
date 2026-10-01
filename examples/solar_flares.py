@@ -9,7 +9,7 @@ A python Neuroglancer viewer opens with two panels that move together: the sun (
 brightness) and the running difference (white brighter, black dimmer than ``lag`` frames
 before), the view solar physicists use to spot what changes. It opens on the X1.6 flare of
 10 September 2014 at 17:36, erupting from the active region at the centre of the disk; scroll
-to step through the frames (time is the third axis). Type ``lag=10`` at the prompt to
+to step through the frames (time is the third axis, a frame per step). Type ``lag=10`` at the prompt to
 compare with an hour before.
 
 The frames are in time order within each day, but the days are stored out of order (the
@@ -85,7 +85,12 @@ def main() -> None:
     )
     # The store says nothing of its axes: a frame every 6 minutes (within a day), and AIA's
     # 0.6 arcsec pixels binned 8 times, about 3480 km on the sun's disk
-    grid = {"voxel_size": [360, 3480, 3480], "units": ["s", "km", "km"], "chunk_shape": chunk}
+    grid = {
+        "axes": ["time", "y", "x"],
+        "voxel_size": [360, 3480, 3480],
+        "units": ["s", "km", "km"],
+        "chunk_shape": chunk,
+    }
     print("opening the store (its attributes are 221 MB of FITS headers)...", flush=True)
     registry.add("sun", {"source": source, **grid})
 
@@ -105,7 +110,7 @@ def main() -> None:
         public_host=public_host_for(args.host),
     )
     shape = registry.get("sun").info(0).shape
-    where = {"z": args.frame + 0.5, "y": shape[1] / 2, "x": shape[2] / 2}
+    where = {"time": args.frame + 0.5, "y": shape[1] / 2, "x": shape[2] / 2}
     with viewer.viewer.txn() as s:
         s.layers["sun"].shader = LOG
         s.layers["difference"].shader = DIFFERENCE

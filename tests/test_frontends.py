@@ -176,3 +176,22 @@ def test_zoom_is_in_voxels_of_the_axis_asked_for():
     dims = {"z": [360.0, "s"], "y": [3.48e6, "m"], "x": [3.48e6, "m"]}
     assert cross_section_scale(dims, "x", 1.0) == pytest.approx(3.48e6 / 360)
     assert cross_section_scale({"y": [4e-9, "m"], "x": [4e-9, "m"]}, "x", 2.0) == 2.0
+
+
+def test_images_over_time_scroll_through_time():
+    """y, x images over a time axis display x, y and time, so scrolling steps the frames."""
+    from chunkmirage.core import ArrayInfo
+    from chunkmirage.neuroglancer import global_dimensions
+
+    info = ArrayInfo(
+        shape=(100, 512, 512),
+        dtype=np.float32,
+        chunk_shape=(1, 512, 512),
+        voxel_size=(360.0, 3480.0, 3480.0),
+        units=("s", "km", "km"),
+        axes=("time", "y", "x"),
+    )
+    dims, position, display = global_dimensions(info)
+    assert display == ["x", "y", "time"]
+    assert dims["time"] == [360.0, "s"] and dims["x"] == [3480e3, "m"]
+    assert position == [50.0, 256.0, 256.0]

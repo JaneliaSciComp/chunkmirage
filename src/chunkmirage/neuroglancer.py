@@ -136,10 +136,14 @@ def global_dimensions(info: ArrayInfo) -> tuple[dict[str, list], list[float], li
     """Viewer dimensions, position and display dimensions for a dataset: the spatial
     axes, then the others (time last) except the layer-local channel; centred in space and
     at the first index of other axes, with the spatial axes displayed (x, y, z). Data
-    without z, y, x axes (time, lat, lon) shows its last three in their place."""
+    without z, y, x axes (time, lat, lon) shows its last three in their place; images in y, x
+    over another axis (time) scroll through that one as z."""
     spatial = [a for a in info.axes if a in _SPATIAL]
+    others = [a for a in info.axes if a not in _SPATIAL and a != "c"]
     if not spatial:
         spatial = [a for a in info.axes if a != "c"][-3:]
+    elif len(spatial) == 2 and others:
+        spatial = [a for a in info.axes if a in spatial or a == others[-1]]
     dims = {n: v for n, v in dimensions(info).items() if n in spatial}
     dims |= {n: v for n, v in dimensions(info).items() if n not in dims and not n.endswith("'")}
     shape = dict(zip(info.axes, info.shape))
