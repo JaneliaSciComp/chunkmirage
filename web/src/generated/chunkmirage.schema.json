@@ -218,6 +218,46 @@
         "op"
       ]
     },
+    "MeshSpec": {
+      "description": "What a dataset's ``mesh`` frontend meshes.",
+      "properties": {
+        "kind": {
+          "default": "surface",
+          "description": "surface: an isosurface of the volume; terrain: an elevation model",
+          "enum": [
+            "surface",
+            "terrain"
+          ],
+          "type": "string"
+        },
+        "level": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The level meshed; default the finest whose longest side is at most 512"
+        },
+        "threshold": {
+          "default": 128.0,
+          "description": "surface: values at or above this are inside",
+          "type": "number"
+        },
+        "exaggeration": {
+          "default": 1.0,
+          "description": "terrain: the elevation's scale",
+          "exclusiveMinimum": 0,
+          "type": "number"
+        }
+      },
+      "title": "MeshSpec",
+      "type": "object"
+    },
     "Morphology": {
       "additionalProperties": false,
       "description": "Binary morphology on a mask: remove specks (open), fill holes (close), shrink or grow.",
@@ -391,6 +431,18 @@
           ],
           "default": null,
           "description": "Pin non-spatial axes to one index each, e.g. {\"c\": 1, \"t\": 0}: the pipeline sees that channel of that time point, without those axes"
+        },
+        "mesh": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeshSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What the dataset's mesh frontend meshes (default: a surface at 128)"
         }
       },
       "required": [

@@ -27,7 +27,7 @@ def test_index_and_api(client):
     assert r.status_code == 200
     body = r.json()
     assert set(body["datasets"]) == {"thr", "raw"}
-    assert set(body["formats"]) == {"n5", "zarr", "zarr3", "precomputed"}
+    assert set(body["formats"]) == {"n5", "zarr", "zarr3", "precomputed", "mesh"}
     assert "threshold" in client.get("/api/ops").json()
     ng = client.get("/api/datasets/thr/neuroglancer?format=n5").json()
     assert ng["source"].startswith("n5://http://testserver/thr/@")

@@ -9,7 +9,7 @@ export interface CardLayer {
   name: string;
   view?: string;             // one of the card's views, served by the page
   url?: string;              // or a store the viewer reads itself, e.g. zarr://https://...
-  type: "image" | "segmentation";
+  type: "image" | "segmentation" | "mesh";  // mesh: the view's surface, from its mesh spec
   colour?: string;           // image layers: tint; segmentation layers: every segment's colour
   range?: [number, number];  // image layers: display limits
   percentiles?: [number, number];  // or limits from a sample of the view's data
@@ -186,6 +186,28 @@ export const CARDS: DemoCard[] = [
     panels: [["slice"], ["bulb"]], layouts: ["xz", "3d"], turn: [0.28, 0.2, 0.06, 0.94],
     position: [SIDE / 2, SIDE / 2, SIDE / 2], zoom: SIDE / 700,
     command: `chunkmirage serve '${BULB}' --chunk 256,1,256 --python-viewer`,
+  },
+  {
+    kind: "pipeline", id: "mesh-bulb", image: "cards/mesh-bulb.jpg",
+    title: "The Mandelbulb as a solid surface, meshed as the viewer asks for it",
+    blurb: "The same 3-D fractal, now as a surface: each piece of mesh is made when Neuroglancer fetches it, by marching cubes over a chunk of chunkmirage's synthetic Mandelbulb, in this page. 64 pieces, each its chunk plus one voxel so they meet without seams; nothing is stored. Turn it in the 3-D panel.",
+    data: "Computed: the power-8 Mandelbulb, synthetic://mandelbulb, its 256³ level meshed by scikit-image's marching cubes",
+    views: { bulb: { source: BULB, chunk: [64, 64, 64], mesh: { threshold: 255, level: 20 } } },
+    layers: [{ name: "surface", view: "bulb", type: "mesh", colour: "#f2c46d" }],
+    panels: [["surface"]], layouts: ["3d"], turn: [0.28, 0.2, 0.06, 0.94],
+    position: [SIDE / 2, SIDE / 2, SIDE / 2], zoom: SIDE / 700,
+    command: `chunkmirage serve '${BULB}' --mesh threshold=255,level=20 --chunk 64,64,64 --python-viewer`,
+  },
+  {
+    kind: "pipeline", id: "mesh-moon", image: "cards/mesh-moon.jpg",
+    title: "Shackleton crater's rim in 3-D, meshed from its elevation as you look",
+    blurb: "NASA's 5 m elevation map of the rim of Shackleton crater at the Moon's south pole, 16 km across, turned into a surface in 3-D: each piece of terrain is made when Neuroglancer fetches it, two triangles per 20 m cell, by chunkmirage in this page. Heights are real, not exaggerated: from the rim the ground falls 4.6 km into the crater.",
+    data: "LOLA 5 m south-pole elevation (Barker et al.), Shackleton rim, cloud-optimized GeoTIFF (USGS Astrogeology)",
+    views: { rim: { source: `${DEMS}/Site04/Site04.tif`, chunk: [1, 200, 200], mesh: { kind: "terrain", level: 2 } } },
+    layers: [{ name: "terrain", view: "rim", type: "mesh", colour: "#c9c4b8" }],
+    panels: [["terrain"]], layouts: ["3d"], turn: [0.5, 0, 0, 0.866],
+    position: [0, 1600, 1600], zoom: 4,
+    command: `chunkmirage serve '${DEMS}/Site04/Site04.tif' --mesh kind=terrain,level=2 --chunk 200,200 --python-viewer`,
   },
   {
     kind: "map", id: "moon", image: "cards/moon.jpg",

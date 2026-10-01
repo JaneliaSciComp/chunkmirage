@@ -41,6 +41,9 @@ async function viewerState(card: PipelineCard) {
   const url = (view: string) => `zarr3://${engine.url(view)}`;
   const layers = await Promise.all(card.layers.map(async (l) => {
     const source = l.view ? url(l.view) : l.url!;
+    if (l.type === "mesh") {  // the view's surface: chunkmirage's mesh layout, segment 1
+      return { type: "segmentation", name: l.name, source: `precomputed://${engine.url(l.view!)}mesh`, segments: ["1"], ...(l.colour ? { segmentDefaultColor: l.colour } : {}) };
+    }
     if (l.type === "segmentation") {
       return { type: "segmentation", name: l.name, source, selectedAlpha: l.alpha ?? 0.9, ...(l.colour ? { segmentDefaultColor: l.colour } : {}) };
     }

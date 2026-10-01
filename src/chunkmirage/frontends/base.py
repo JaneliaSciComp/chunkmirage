@@ -43,6 +43,13 @@ class Frontend(ABC):
     def encode(self, info: ArrayInfo, index: tuple[int, ...], block: np.ndarray) -> bytes:
         """Encode the (edge-clipped) block for chunk ``index`` in this format."""
 
+    def compute(self, pipeline: Pipeline, req: ChunkRequest) -> bytes:
+        """The body for ``req``: its chunk, encoded. Frontends that serve something made from
+        the data rather than its chunks (meshes) override this."""
+        return self.encode(
+            pipeline.info(req.level), req.index, pipeline.chunk(req.level, req.index)
+        )
+
     root_keys: ClassVar[tuple[str, ...]] = ()  # metadata keys of the group
     level_keys: ClassVar[tuple[str, ...]] = ()  # metadata keys of each level
 

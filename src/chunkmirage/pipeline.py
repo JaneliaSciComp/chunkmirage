@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from chunkmirage import fused
 from chunkmirage.cache import LRUCache
 from chunkmirage.core import ArrayInfo, Box
+from chunkmirage.meshes import MeshSpec
 from chunkmirage.ops.base import Op, ops_from_specs
 from chunkmirage.sources.base import ChunkedSource, MultiscaleSource, Source
 
@@ -38,6 +39,9 @@ class PipelineSpec(BaseModel):
         None,
         description='Pin non-spatial axes to one index each, e.g. {"c": 1, "t": 0}: the '
         "pipeline sees that channel of that time point, without those axes",
+    )
+    mesh: MeshSpec | None = Field(
+        None, description="What the dataset's mesh frontend meshes (default: a surface at 128)"
     )
 
 

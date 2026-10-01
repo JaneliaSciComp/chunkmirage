@@ -166,11 +166,20 @@ export class Engine {
     };
   }
 
+  /** The level a view's mesh is made from (chunkmirage.meshes.mesh_level). */
+  meshLevel(view: string): number {
+    const v = this.infos[view], spec = this.views[view].mesh ?? {};
+    if (spec.level !== undefined) return spec.level;
+    const small = v.levels.findIndex((l) => Math.max(...l.shape.slice(-3)) <= 512);
+    return small < 0 ? v.levels.length - 1 : small;
+  }
+
   /** Chunk `index` of a view's level: its input region from the reader (clipped to the
-   * level; the worker pads it at the edges as a server stage does), computed by a worker. */
-  private async compute(view: string, level: number, index: number[]): Promise<ArrayBuffer> {
-    const v = this.infos[view], l = v.levels[level], C = this.views[view].chunk, halo = v.halo;
-    const outLo = index.map((i, a) => i * C[a]), outHi = outLo.map((o, a) => Math.min(o + C[a], l.shape[a]));
+   * level; the worker pads it at the edges as a server stage does), computed by a worker.
+   * With `mesh`, the chunk's mesh fragment instead: one voxel more on its high sides. */
+  private async compute(view: string, level: number, index: number[], mesh = false): Promise<ArrayBuffer> {
+    const v = this.infos[view], l = v.levels[level], C = this.views[view].chunk, halo = v.halo, more = mesh ? 1 : 0;
+    const outLo = index.map((i, a) => i * C[a]), outHi = outLo.map((o, a) => Math.min(o + C[a] + more, l.shape[a]));
     const inLo = outLo.map((o, a) => o - halo[a]), inHi = outHi.map((o, a) => o + halo[a]);
     const lo = inLo.map((o) => Math.max(o, 0)), hi = inHi.map((o, a) => Math.min(o, l.shape[a]));
     const data = computedSource(this.views[view].source) ? null : await this.reader!.call<ArrayBuffer>({ type: "read", view, level, lo, hi });
@@ -178,7 +187,8 @@ export class Engine {
     const worker = this.pool[this.turn++ % this.pool.length];
     return worker.call<ArrayBuffer>({
       type: "compute", view, level, data, readShape: [...lead, ...hi.map((h, a) => h - lo[a])],
-      inLo, inHi, outLo, outHi, full: [...lead, ...l.shape], voxel: l.voxel,
+      inLo, inHi, outLo, outHi, full: [...lead, ...l.shape], voxel: l.voxel, origin: l.origin,
+      unit: v.axes[v.axes.length - 1].unit, ...(mesh ? { mesh: { kind: "surface", ...this.views[view].mesh } } : {}),
     }, data ? [data] : []);
   }
 
@@ -192,8 +202,8 @@ export class Engine {
     }
   }
 
-  private chunk(view: string, level: number, index: number[]): Answered {
-    const key = `${view}/${level}/${index.join(".")}`, done = this.kept.get(key);
+  private chunk(view: string, level: number, index: number[], mesh = false): Answered {
+    const key = `${view}/${mesh ? "mesh" : level}/${index.join(".")}`, done = this.kept.get(key);
     if (done) {
       this.kept.delete(key); this.kept.set(key, done);
       return { status: 200, body: done.slice(0), type: "application/octet-stream" };
@@ -202,7 +212,7 @@ export class Engine {
     let pending = this.inflight.get(key);
     if (pending) chunks.claim(key);  // another request waits for it too
     else {
-      pending = chunks.submit(key, level, () => this.compute(view, level, index), () => { this.counts.dropped++; })
+      pending = chunks.submit(key, level, () => this.compute(view, level, index, mesh), () => { this.counts.dropped++; })
         .then((b) => { this.counts.computed++; this.keep(key, b); return b; }, (e) => {
           if (!(e instanceof Cancelled)) { this.counts.failed++; console.error(`chunk ${key}: ${String((e as Error).message ?? e).trim().split("\n").slice(-3).join(" / ")}`); }
           throw e;
@@ -242,12 +252,35 @@ export class Engine {
       rest = rest.slice(1);
       if (!this.infos[view]) return notFound;
       if (rest.length === 1 && rest[0] === "zarr.json") return asJson(this.omeGroup(view));
+      if (rest[0] === "mesh" && this.views[view].mesh) return this.mesh(view, rest.slice(1).join("/"));
     }
     const level = Number(rest[0]);
     if (!this.infos[view].levels[level]) return notFound;
     if (rest.length === 2 && rest[1] === "zarr.json") return asJson(this.array(view, level, map));
     if (rest[1] !== "c" || rest.length !== 2 + this.infos[view].levels[level].shape.length) return notFound;
     return this.chunk(view, level, rest.slice(2).map(Number));
+  }
+
+  /** A view's mesh, as chunkmirage's mesh frontend serves it: info, the manifest (every
+   * chunk of the mesh level a fragment), and fragments, each meshed when fetched. */
+  private mesh(view: string, path: string): Answered {
+    const level = this.meshLevel(view), l = this.infos[view].levels[level], C = this.views[view].chunk;
+    if (path === "info") return asJson({ "@type": "neuroglancer_legacy_mesh" });
+    const grid = l.shape.map((n, a) => Math.ceil(n / C[a]));
+    if (path === "1:0") {
+      const fragments: string[] = [];
+      const walk = (prefix: number[]) => {
+        if (prefix.length === grid.length) { fragments.push(`1:0:${prefix.join("_")}`); return; }
+        for (let i = 0; i < grid[prefix.length]; i++) walk([...prefix, i]);
+      };
+      walk([]);
+      return asJson({ fragments });
+    }
+    const m = /^1:0:(\d+(?:_\d+)*)$/.exec(path);
+    if (!m) return notFound;
+    const index = m[1].split("_").map(Number);
+    if (index.length !== grid.length || index.some((i, a) => i >= grid[a])) return notFound;
+    return this.chunk(view, level, index, true);
   }
 
   private listen() {

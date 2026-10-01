@@ -46,6 +46,31 @@ export interface PipelineSpec {
   select?: {
     [k: string]: number;
   } | null;
+  /**
+   * What the dataset's mesh frontend meshes (default: a surface at 128)
+   */
+  mesh?: MeshSpec | null;
+}
+/**
+ * What a dataset's ``mesh`` frontend meshes.
+ */
+export interface MeshSpec {
+  /**
+   * surface: an isosurface of the volume; terrain: an elevation model
+   */
+  kind?: "surface" | "terrain";
+  /**
+   * The level meshed; default the finest whose longest side is at most 512
+   */
+  level?: number | null;
+  /**
+   * surface: values at or above this are inside
+   */
+  threshold?: number;
+  /**
+   * terrain: the elevation's scale
+   */
+  exaggeration?: number;
 }
 /**
  * The query of a ``register://`` URL. The one definition of it: the browser engine

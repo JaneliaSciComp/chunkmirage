@@ -9,6 +9,7 @@ Every dataset is served through every frontend simultaneously. Given a dataset n
 | `zarr`        | `zarr2://http://localhost:8000/em/zarr`                | Zarr v2 + OME-NGFF 0.4 `multiscales`; consolidated `.zmetadata` too |
 | `zarr3`       | `zarr3://http://localhost:8000/em/zarr3`               | Zarr v3 + OME-NGFF 0.5 in group attributes       |
 | `precomputed` | `precomputed://http://localhost:8000/em/precomputed`   | `raw` encoding, 3-D or 4-D (c,z,y,x) only; HTTP gzip when accepted |
+| `mesh`        | `precomputed://http://localhost:8000/em/mesh`          | a surface of the dataset as Neuroglancer (legacy) meshes, segment `1`, each fragment meshed when fetched; see [Meshes](#meshes-computed-when-fetched) |
 
 A cache-busting token may be inserted after the name: `/em/@{digest}/zarr3`. The API always
 hands out this form; the plain form always serves the current pipeline.
@@ -65,6 +66,27 @@ know it, as the Moon page registers the lunar south polar stereographic) and `sp
 is a group holding the view as its one band, `<i>/<view>`, a 2-D `y, x` array (the view's
 one z plane; a map reads 2-D bands). Chunks are the same chunks, computed once whichever
 layout asks. The Python server has no GeoZarr frontend yet.
+
+## Meshes, computed when fetched
+
+The `mesh` frontend serves a dataset's surface in Neuroglancer's precomputed (legacy) mesh
+format, for a segmentation layer whose source is `precomputed://.../<name>/mesh`: `info`
+(`{"@type": "neuroglancer_legacy_mesh"}`), the manifest `1:0` listing one fragment per chunk
+of one level, and each fragment `1:0:i_j_k`, meshed when it is fetched (`uint32` vertex
+count, `float32` x, y, z per vertex in nanometres, `uint32` triangle corners). The legacy
+format suits computing on demand: its manifest names fragments without their sizes, while
+the multi-resolution format needs every fragment's byte offsets before any is fetched. A
+fragment is its chunk plus one voxel on its high sides, so neighbouring fragments meet
+exactly (the surface is watertight across them), and closed at the array's edges.
+
+The spec's `mesh` (CLI `--mesh`) says what is meshed: `kind: surface` (default) is the
+boundary of the voxels at or above `threshold` (128), by marching cubes (scikit-image, the
+`mesh` extra); `kind: terrain` is an elevation model (`y, x`, or `z, y, x` with one z) as
+two triangles per cell, its elevation times `exaggeration` as height, cells with a NaN
+corner left out. `level` picks the level (default: the finest whose longest side is at most
+512 voxels); Neuroglancer fetches every fragment of the manifest, so the level bounds the
+work. The browser engine serves the same at `virtual/<page>/<view>/mesh`, its workers
+running the same module (`chunkmirage.meshes`).
 
 ## Data types
 

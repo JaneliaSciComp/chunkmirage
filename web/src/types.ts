@@ -69,6 +69,7 @@ export interface PipelineView {
   select?: Record<string, number>;   // pin non-spatial axes, e.g. {c: 1, t: 0}
   ops?: Record<string, unknown>[];   // op specs, as the CLI and REST API take them
   chunk: number[];                   // output chunks, one per axis
+  mesh?: { kind?: "surface" | "terrain"; level?: number; threshold?: number; exaggeration?: number };  // served at <view>/mesh
 }
 /** An axis of a view: its name (z, or time, lat, ...) and the unit of its voxel size. */
 export interface ViewAxis { name: string; unit: string }
@@ -88,6 +89,6 @@ export type ToPyWorker =
   | { type: "describe"; reqId: number; source: string }  // a source computed in the worker (synthetic://)
   | { type: "plan"; reqId: number; views: Record<string, { ops: Record<string, unknown>[]; shape: number[]; dtype: string; chunk: number[]; voxel: number[]; source?: string }> }
   // data: the input region read by the reader, or null for a source the worker computes
-  | { type: "compute"; reqId: number; view: string; level: number; data: ArrayBuffer | null; readShape: number[]; inLo: number[]; inHi: number[]; outLo: number[]; outHi: number[]; full: number[]; voxel: number[] };
+  | { type: "compute"; reqId: number; view: string; level: number; data: ArrayBuffer | null; readShape: number[]; inLo: number[]; inHi: number[]; outLo: number[]; outHi: number[]; full: number[]; voxel: number[]; origin: number[]; unit?: string; mesh?: PipelineView["mesh"] };
 /** Either's answer to request `reqId`. */
 export type Answer = { reqId: number; value: unknown } | { reqId: number; error: string };

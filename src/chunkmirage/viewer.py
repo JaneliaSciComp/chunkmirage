@@ -154,6 +154,16 @@ class Viewer:
                     s.layers[name] = self._ng.ImageLayer(
                         source=url, **({"shader": shader} if shader else {})
                     )
+                # a dataset with a mesh spec: its surface too, from the mesh frontend
+                mesh = f"{name} mesh"
+                if p.spec is not None and p.spec.mesh is not None:
+                    murl = source_url(self.public_url, name, "mesh", "precomputed", p.digest())
+                    if mesh in s.layers:
+                        s.layers[mesh].source = murl
+                    else:
+                        s.layers[mesh] = self._ng.SegmentationLayer(source=murl, segments=[1])
+                elif mesh in s.layers:
+                    del s.layers[mesh]
 
     def close(self) -> None:
         self._unsubscribe()

@@ -159,7 +159,9 @@ Early, but working:
   the other way round. Arrays xarray wrote (geo, climate, solar) read with their own axes
   (`time, lat, lon`), coordinates and CF packing; (cloud-optimized) GeoTIFFs tile by tile,
   their overviews as levels.
-* **Frontends:** N5, Zarr v2, Zarr v3 and precomputed, all served at once.
+* **Frontends:** N5, Zarr v2, Zarr v3 and precomputed, all served at once, and meshes
+  (Neuroglancer's precomputed meshes, each fragment made when fetched: isosurfaces or
+  terrain from an elevation model).
 * **Ops:** threshold, cast, scale, Gaussian, uniform and difference-of-Gaussians filters,
   morphology, connected components, FISH spot detection, contact sites between two
   stacked images, change along an axis (`diff`, e.g. day to day), slope and hillshade of an

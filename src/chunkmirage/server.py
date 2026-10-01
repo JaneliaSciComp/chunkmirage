@@ -470,8 +470,7 @@ async def _watch_disconnect(request: Request, claim: demand.Claim) -> None:
 
 
 def _compute_and_encode(p: Pipeline, fe: Frontend, req: ChunkRequest) -> bytes:
-    block = p.chunk(req.level, req.index)
-    return fe.encode(p.info(req.level), req.index, block)
+    return fe.compute(p, req)
 
 
 __all__: list[Any] = ["DatasetRegistry", "create_app", "event_stream", "event_payload"]

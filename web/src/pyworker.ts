@@ -14,6 +14,7 @@ import pyTerrain from "../../src/chunkmirage/ops/terrain.py?raw";
 import pyCache from "../../src/chunkmirage/cache.py?raw";
 import pySourceBase from "../../src/chunkmirage/sources/base.py?raw";
 import pySynthetic from "../../src/chunkmirage/sources/synthetic.py?raw";
+import pyMeshes from "../../src/chunkmirage/meshes.py?raw";
 import type { Answer, ToPyWorker } from "./types";
 
 export const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/";
@@ -25,6 +26,7 @@ const FILES: Record<string, string> = {
   // the sources the worker computes itself (synthetic://), not read by the page's reader
   "chunkmirage/cache.py": pyCache, "chunkmirage/sources/__init__.py": '"""The computed sources, for the browser engine."""\n',
   "chunkmirage/sources/base.py": pySourceBase, "chunkmirage/sources/synthetic.py": pySynthetic,
+  "chunkmirage/meshes.py": pyMeshes,  // meshes of a view, made where a fragment is fetched
 };
 const GLUE = `
 import json
@@ -46,11 +48,12 @@ def describe(url):
         "levels": [{"shape": list(l.info.shape), "voxel": list(l.info.voxel_size), "origin": list(l.info.translation)} for l in ms],
     })
 
-def _info(shape, dtype, chunk, voxel):
+def _info(shape, dtype, chunk, voxel, origin=None, unit=""):
     n = len(shape)
     axes = (("c",) if n == 4 else ()) + ("z", "y", "x")
     return ArrayInfo(shape=tuple(shape), dtype=np.dtype(dtype), chunk_shape=tuple(shape[: n - 3]) + tuple(chunk),
-                     voxel_size=(1.0,) * (n - 3) + tuple(voxel), units=("",) * n, axes=axes)
+                     voxel_size=(1.0,) * (n - 3) + tuple(voxel), units=(unit,) * n, axes=axes,
+                     translation=(0.0,) * (n - 3) + tuple(origin or (0.0,) * 3))
 
 def plan(view, ops, shape, dtype, chunk, voxel, source=None):
     ops = [op_from_spec(s) for s in json.loads(ops)]
@@ -60,7 +63,7 @@ def plan(view, ops, shape, dtype, chunk, voxel, source=None):
     VIEWS[view] = (ops, dtype, list(chunk), source)
     return json.dumps({"dtype": out.dtype.name, "lead": lead, "halo": list(halo), "ndim": out.ndim})
 
-def compute(view, level, data, read_shape, in_lo, in_hi, out_lo, out_hi, full_shape, voxel):
+def compute(view, level, data, read_shape, in_lo, in_hi, out_lo, out_hi, full_shape, voxel, origin=None, mesh=None, unit=""):
     ops, dtype, chunk, source = VIEWS[view]
     full = tuple(full_shape)
     lead = len(full) - 3
@@ -72,6 +75,10 @@ def compute(view, level, data, read_shape, in_lo, in_hi, out_lo, out_hi, full_sh
         block = fused.pad_edge(block, in_box, full)
     out = fused.plan(_info(full, dtype, chunk, list(voxel)), ops)[0]  # the level's voxels: for_level
     result = fused.run(ops, block, in_box, Box(tuple(out_lo), tuple(out_hi)), out)
+    if mesh is not None:  # a mesh fragment of these voxels, not a chunk
+        from chunkmirage import meshes
+        info = _info(full[lead:], out.dtype.name, chunk, list(voxel), list(origin), unit)
+        return meshes.fragment(meshes.MeshSpec(**json.loads(mesh)), result, Box(tuple(out_lo), tuple(out_hi)), info)
     # a zarr chunk is always whole: one at the edge of the array is padded with the fill value
     result = np.pad(result, [(0, c - n) for c, n in zip(chunk, result.shape)])
     return np.ascontiguousarray(result).astype(result.dtype.newbyteorder("<"), copy=False).tobytes()
@@ -104,9 +111,14 @@ async function plan(views: Extract<ToPyWorker, { type: "plan" }>["views"]) {
   return out;
 }
 
-/** A chunk, as zarr v3 bytes (little endian, C order), from its input region. */
-function compute(m: Extract<ToPyWorker, { type: "compute" }>): ArrayBuffer {
-  const bytes = py.globals.get("compute")(m.view, m.level, m.data ? new Uint8Array(m.data) : undefined, m.readShape, m.inLo, m.inHi, m.outLo, m.outHi, m.full, m.voxel);
+let meshing: Promise<void> | null = null;  // scikit-image, loaded when a mesh is first asked for
+
+/** A chunk, as zarr v3 bytes (little endian, C order), from its input region; or with
+ * `mesh`, a mesh fragment of the region (Neuroglancer's legacy encoding). */
+async function compute(m: Extract<ToPyWorker, { type: "compute" }>): Promise<ArrayBuffer> {
+  if (m.mesh && m.mesh.kind !== "terrain") await (meshing ??= py.loadPackage(["scikit-image"]));
+  const mesh = m.mesh ? JSON.stringify(m.mesh) : undefined;
+  const bytes = py.globals.get("compute")(m.view, m.level, m.data ? new Uint8Array(m.data) : undefined, m.readShape, m.inLo, m.inHi, m.outLo, m.outHi, m.full, m.voxel, m.origin, mesh, m.unit ?? "");
   const out = bytes.toJs() as Uint8Array;
   bytes.destroy();
   return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer;
@@ -116,7 +128,7 @@ ctx.onmessage = async ({ data: m }: MessageEvent<ToPyWorker>) => {
   try {
     if (m.type === "describe") { if (!py) await load(); ctx.postMessage({ reqId: m.reqId, value: JSON.parse(py.globals.get("describe")(m.source)) } satisfies Answer); }
     else if (m.type === "plan") ctx.postMessage({ reqId: m.reqId, value: await plan(m.views) } satisfies Answer);
-    else if (m.type === "compute") { const body = compute(m); ctx.postMessage({ reqId: m.reqId, value: body } satisfies Answer, [body]); }
+    else if (m.type === "compute") { const body = await compute(m); ctx.postMessage({ reqId: m.reqId, value: body } satisfies Answer, [body]); }
   } catch (e) {
     // Pyodide's file-system errors are objects without a message: say what they are
     const message = (e as Error)?.message ?? (e as { name?: string })?.name ?? JSON.stringify(e);
