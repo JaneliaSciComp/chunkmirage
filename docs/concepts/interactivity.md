@@ -47,7 +47,8 @@ the new URL into the viewer, from least to most convenient:
    and embeds it by default, so sliders and viewer sit on one page with the camera
    preserved. The viewer's dimensions come from the first dataset by name, or from
    `Viewer.set_dimensions(name)`: spatial axes first, then the rest (time last), with x, y
-   and z displayed. `Viewer.rename_dimensions(name, {"c'": "c^"})` renames a dataset's
+   and z displayed (data with none named so, such as `time, lat, lon`, displays its last
+   three in their place: the map, with time to scroll through). `Viewer.rename_dimensions(name, {"c'": "c^"})` renames a dataset's
    dimensions in its layer (here, the channel axis becomes a shader channel); the rename
    is rebuilt from the dataset's axes on every edit. A source that says how to show its
    channels (a `MultiscaleSource` with a `shader`, as `register://`'s `show=pair` and

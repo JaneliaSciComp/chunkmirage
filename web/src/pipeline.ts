@@ -1,60 +1,47 @@
 // The pipeline page: one demo of the gallery (cards.ts), its views served to Neuroglancer
 // as zarr v3 from this page, through the service worker (sw.ts), as a chunkmirage server
-// would serve them. Each chunk is computed by a Pyodide worker (pyworker.ts) running
-// chunkmirage's own ops; chunks the viewer gives up on before their turn are dropped.
+// would serve them. Each chunk's input region is read by the page's one reader (reader.ts)
+// and computed by a Pyodide worker (pyworker.ts) running chunkmirage's own ops; chunks the
+// viewer gives up on before their turn are dropped.
 import { CARDS, type CardLayer, type PipelineCard } from "./cards";
 import { Cancelled, Claim, Queue } from "./demand";
-import type { FromPyWorker, Later, Reply, ToPyWorker, ViewInfo } from "./types";
+import type { Answer, Later, Reply, SourceInfo, ToPyWorker, ToReader, ViewAxis, ViewInfo } from "./types";
 
 const PAGE = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
-const TO_METRES: Record<string, number> = { nanometer: 1e-9, nm: 1e-9, micrometer: 1e-6, um: 1e-6, millimeter: 1e-3, meter: 1 };
+const TO_METRES: Record<string, number> = { nanometer: 1e-9, nm: 1e-9, micrometer: 1e-6, um: 1e-6, millimeter: 1e-3, meter: 1, m: 1 };
+const TO_SECONDS: Record<string, number> = { s: 1, second: 1, millisecond: 1e-3, ms: 1e-3, minute: 60, hour: 3600, day: 86400 };
+const OME_UNIT: Record<string, string> = { nm: "nanometer", um: "micrometer", m: "meter", s: "second" };
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
-type Answer = null | { status: number; body: string | ArrayBuffer; type: string }
+type Request<R> = R extends unknown ? Omit<R, "reqId"> : never;
+type Answered = null | { status: number; body: string | ArrayBuffer; type: string }
   | { status: number; type: string; pending: Promise<ArrayBuffer>; claim: Claim };
 
-class Pool {
-  private workers: Worker[] = [];
+/** A worker answering requests by reqId. */
+class Rpc<Req extends { reqId: number }> {
   private pending = new Map<number, { resolve: (v: never) => void; reject: (e: Error) => void }>();
   private seq = 0;
-  private next = 0;
-  constructor(n: number) {
-    for (let i = 0; i < n; i++) {
-      const w = new Worker(new URL("./pyworker.ts", import.meta.url), { type: "module" });
-      w.onmessage = ({ data: m }: MessageEvent<FromPyWorker>) => {
-        if (m.type === "ready" || !("reqId" in m) || m.reqId === undefined) return;
-        const p = this.pending.get(m.reqId);
-        if (!p) return;
-        this.pending.delete(m.reqId);
-        if (m.type === "error") p.reject(new Error(m.message));
-        else p.resolve((m.type === "chunk" ? m.body : m.values) as never);
-      };
-      this.workers.push(w);
-    }
+  constructor(private worker: Worker) {
+    worker.onmessage = ({ data: m }: MessageEvent<Answer>) => {
+      const p = this.pending.get(m.reqId);
+      if (!p) return;
+      this.pending.delete(m.reqId);
+      if ("error" in m) p.reject(new Error(m.error)); else p.resolve(m.value as never);
+    };
+    worker.onerror = (e) => { for (const p of this.pending.values()) p.reject(new Error(e.message || "a worker failed")); this.pending.clear(); };
   }
-  get size() { return this.workers.length; }
-  /** Every worker set up with the card's views; the views' metadata. */
-  setup(views: PipelineCard["views"]): Promise<Record<string, ViewInfo>> {
-    return Promise.all(this.workers.map((w) => new Promise<Record<string, ViewInfo>>((resolve, reject) => {
-      const done = ({ data: m }: MessageEvent<FromPyWorker>) => {
-        if (m.type === "ready") { w.removeEventListener("message", done); resolve(m.views); }
-        else if (m.type === "error" && m.reqId === undefined) { w.removeEventListener("message", done); reject(new Error(m.message)); }
-      };
-      w.addEventListener("message", done);
-      w.onerror = (e) => reject(new Error(e.message || "a worker failed to start"));
-      w.postMessage({ type: "setup", views } satisfies ToPyWorker);
-    }))).then((all) => all[0]);
-  }
-  ask<T>(msg: { type: "chunk"; view: string; level: number; index: number[] } | { type: "sample"; view: string; ps: number[] }): Promise<T> {
-    const reqId = ++this.seq, w = this.workers[this.next++ % this.workers.length];
+  call<T>(msg: Request<Req>, transfer: Transferable[] = []): Promise<T> {
+    const reqId = ++this.seq;
     return new Promise<T>((resolve, reject) => {
       this.pending.set(reqId, { resolve: resolve as (v: never) => void, reject });
-      w.postMessage({ ...msg, reqId } as ToPyWorker);
+      this.worker.postMessage({ ...msg, reqId }, transfer);
     });
   }
 }
 
-let pool: Pool | null = null;
+let reader: Rpc<ToReader> | null = null;
+let pool: Rpc<ToPyWorker>[] = [];
+let turn = 0;
 let infos: Record<string, ViewInfo> = {};
 let chunks: Queue<ArrayBuffer> | null = null;
 const inflight = new Map<string, Promise<ArrayBuffer>>();
@@ -68,12 +55,15 @@ function showCounts() {
     + ` · given up by the viewer before their turn: ${counts.dropped}${counts.failed ? ` · failed ${counts.failed}` : ""}`;
 }
 
+const isTime = (a: ViewAxis) => a.unit in TO_SECONDS;
+
 function groupMetadata(view: string) {
   const v = infos[view];
   return {
     zarr_format: 3, node_type: "group",
     attributes: { ome: { version: "0.5", multiscales: [{
-      name: view, axes: ["z", "y", "x"].map((name) => ({ name, type: "space", unit: v.unit || undefined })),
+      name: view,
+      axes: v.axes.map((a) => ({ name: a.name, type: isTime(a) ? "time" : "space", unit: OME_UNIT[a.unit] ?? (a.unit || undefined) })),
       datasets: v.levels.map((l, i) => ({ path: String(i), coordinateTransformations: [
         { type: "scale", scale: l.voxel }, { type: "translation", translation: l.origin },
       ] })),
@@ -84,17 +74,33 @@ function groupMetadata(view: string) {
 function arrayMetadata(card: PipelineCard, view: string, level: number) {
   const v = infos[view];
   return {
-    zarr_format: 3, node_type: "array", shape: v.levels[level].shape, data_type: v.dtype, fill_value: 0,
+    zarr_format: 3, node_type: "array", shape: v.levels[level].shape, data_type: v.out, fill_value: 0,
     chunk_grid: { name: "regular", configuration: { chunk_shape: card.views[view].chunk } },
     chunk_key_encoding: { name: "default", configuration: { separator: "/" } },
     codecs: [{ name: "bytes", configuration: { endian: "little" } }],
-    dimension_names: ["z", "y", "x"], attributes: {},
+    dimension_names: v.axes.map((a) => a.name), attributes: {},
   };
 }
 
 const asJson = (o: unknown) => ({ status: 200, body: JSON.stringify(o), type: "application/json" });
 
-function answer(card: PipelineCard, path: string): Answer {
+/** Chunk `index` of a view's level: its input region from the reader (clipped to the
+ * level; the worker pads it at the edges as a server stage does), computed by a worker. */
+async function computeChunk(card: PipelineCard, view: string, level: number, index: number[]): Promise<ArrayBuffer> {
+  const v = infos[view], shape = v.levels[level].shape, C = card.views[view].chunk, halo = v.halo;
+  const outLo = index.map((i, a) => i * C[a]), outHi = outLo.map((o, a) => Math.min(o + C[a], shape[a]));
+  const inLo = outLo.map((o, a) => o - halo[a]), inHi = outHi.map((o, a) => o + halo[a]);
+  const lo = inLo.map((o) => Math.max(o, 0)), hi = inHi.map((o, a) => Math.min(o, shape[a]));
+  const data = await reader!.call<ArrayBuffer>({ type: "read", view, level, lo, hi });
+  const lead = v.lead ? [v.channels] : [];
+  const worker = pool[turn++ % pool.length];
+  return worker.call<ArrayBuffer>({
+    type: "compute", view, data, readShape: [...lead, ...hi.map((h, a) => h - lo[a])],
+    inLo, inHi, outLo, outHi, full: [...lead, ...shape],
+  }, [data]);
+}
+
+function answer(card: PipelineCard, path: string): Answered {
   const parts = path.split("/virtual/")[1]?.split("/");
   if (!parts || parts[0] !== PAGE) return null;
   const [, view, ...rest] = parts;
@@ -110,7 +116,7 @@ function answer(card: PipelineCard, path: string): Answer {
   let pending = inflight.get(key);
   if (pending) chunks.claim(key);  // another request waits for it too
   else {
-    pending = chunks.submit(key, level, () => pool!.ask<ArrayBuffer>({ type: "chunk", view, level, index }), () => { counts.dropped++; })
+    pending = chunks.submit(key, level, () => computeChunk(card, view, level, index), () => { counts.dropped++; })
       .then((b) => { counts.computed++; return b; }, (e) => { if (!(e instanceof Cancelled)) counts.failed++; throw e; })
       .finally(() => { inflight.delete(key); showCounts(); });
     inflight.set(key, pending);
@@ -126,7 +132,7 @@ function listen(card: PipelineCard) {
   navigator.serviceWorker.addEventListener("message", async (e: MessageEvent<{ path: string }>) => {
     const port = e.ports[0];
     if (!port) return;
-    let a: Answer;
+    let a: Answered;
     try { a = answer(card, e.data.path); } catch (err) { a = { status: 500, body: String(err), type: "text/plain" }; }
     if (!a || !("pending" in a)) return port.postMessage(a, a && a.body instanceof ArrayBuffer ? [a.body] : []);
     // a chunk: the head now, the body once computed; the viewer may give up in between
@@ -148,27 +154,41 @@ function shader(l: CardLayer, range: [number, number]): string {
       : "void main() { emitRGB(colour * normalized()); }\n");
 }
 
+/** Neuroglancer's [scale, unit] for an axis: lengths in metres, times in seconds, anything
+ * else (degrees of latitude, say) unitless. */
+function dimension(a: ViewAxis, voxel: number): [number, string] {
+  if (a.unit in TO_METRES) return [voxel * TO_METRES[a.unit], "m"];
+  if (a.unit in TO_SECONDS) return [voxel * TO_SECONDS[a.unit], "s"];
+  return [voxel, ""];
+}
+
 async function viewerState(card: PipelineCard) {
   const first = infos[Object.keys(card.views)[0]], l0 = first.levels[0];
-  const toM = TO_METRES[first.unit] ?? 1;
-  const dims = { x: [l0.voxel[2] * toM, "m"], y: [l0.voxel[1] * toM, "m"], z: [l0.voxel[0] * toM, "m"] };
+  const order = [2, 1, 0];  // shown x, y, z: the last axis across
+  const names = order.map((a) => first.axes[a].name);
+  const dims = Object.fromEntries(order.map((a) => [first.axes[a].name, dimension(first.axes[a], l0.voxel[a])]));
   const url = (view: string) => `zarr3://${new URL(`virtual/${PAGE}/${view}/`, location.href).href}`;
   const layers = await Promise.all(card.layers.map(async (l) => {
     const source = l.view ? url(l.view) : l.url!;
-    if (l.type === "segmentation") return { type: "segmentation", name: l.name, source, selectedAlpha: 0.9 };
+    if (l.type === "segmentation") {
+      return { type: "segmentation", name: l.name, source, selectedAlpha: l.alpha ?? 0.9, ...(l.colour ? { segmentDefaultColor: l.colour } : {}) };
+    }
     let range = l.range;
-    if (!range && l.percentiles && l.view) range = (await pool!.ask<number[]>({ type: "sample", view: l.view, ps: l.percentiles })) as [number, number];
+    if (!range && l.percentiles && l.view) range = (await reader!.call<number[]>({ type: "sample", view: l.view, ps: l.percentiles })) as [number, number];
+    const glsl = l.shader ?? (range ? shader(l, range) : undefined);
     return {
       type: "image", name: l.name, source,
-      ...(range ? { shader: shader(l, range) } : {}),
+      ...(glsl ? { shader: glsl } : {}),
       ...(l.additive ? { blend: "additive" } : {}),
     };
   }));
   const main = document.querySelector("main")!;
   return {
-    dimensions: dims, position: [card.position[2] + 0.5, card.position[1] + 0.5, card.position[0] + 0.5],
-    displayDimensions: ["x", "y", "z"], crossSectionScale: card.zoom,
-    crossSectionBackgroundColor: "#000000", layers,
+    // the viewer's position is physical, in voxels: the source's origin is part of it
+    dimensions: dims, position: order.map((a) => card.position[a] + 0.5 + l0.origin[a] / l0.voxel[a]),
+    displayDimensions: names, crossSectionScale: card.zoom,
+    ...(card.orientation ? { crossSectionOrientation: card.orientation } : {}),
+    crossSectionBackgroundColor: "#000000", showAxisLines: false, layers,
     layout: card.panels.length === 1
       ? { type: "viewer", layers: card.panels[0], layout: "xy" }
       : { type: "row", children: card.panels.map((names) => ({ type: "viewer", layers: names, layout: "xy" })) },
@@ -194,8 +214,15 @@ async function start() {
   const n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 2));
   status(`Loading Python (Pyodide, numpy, scipy) and chunkmirage's ops in ${n} worker${n > 1 ? "s" : ""}…`);
   const t0 = performance.now();
-  pool = new Pool(n);
-  infos = await pool.setup(card.views);
+  reader = new Rpc<ToReader>(new Worker(new URL("./reader.ts", import.meta.url), { type: "module" }));
+  pool = Array.from({ length: n }, () => new Rpc<ToPyWorker>(new Worker(new URL("./pyworker.ts", import.meta.url), { type: "module" })));
+  const opened = await reader.call<Record<string, SourceInfo>>({ type: "open", views: card.views });
+  const specs = Object.fromEntries(Object.entries(card.views).map(([v, spec]) => {
+    const s = opened[v], shape = [...(s.channels > 1 ? [s.channels] : []), ...s.levels[0].shape];
+    return [v, { ops: spec.ops ?? [], shape, dtype: s.dtype, chunk: spec.chunk }];
+  }));
+  const plans = await Promise.all(pool.map((w) => w.call<Record<string, { dtype: string; lead: number; halo: number[] }>>({ type: "plan", views: specs })));
+  infos = Object.fromEntries(Object.entries(opened).map(([v, s]) => [v, { ...s, out: plans[0][v].dtype, lead: plans[0][v].lead, halo: plans[0][v].halo }]));
   chunks = new Queue<ArrayBuffer>(n);
   status(`Python ready in ${((performance.now() - t0) / 1000).toFixed(1)} s. Chunks are computed as the viewer asks for them.`);
   const ng = $<HTMLIFrameElement>("ng");

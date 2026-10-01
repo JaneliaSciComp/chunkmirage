@@ -134,3 +134,35 @@ def test_precomputed_resolution_is_in_nanometres():
     url = "synthetic://blobs?shape=32,32,32&levels=1&voxel_size=0.5&unit=micrometer"
     client = TestClient(create_app({"um": Pipeline.from_spec({"source": url})}))
     assert client.get("/um/precomputed/info").json()["scales"][0]["resolution"] == [500.0] * 3
+
+
+def test_time_lat_lon_data_shows_the_map_and_scrolls_time():
+    """Data without z, y, x axes (an xarray time, lat, lon series) displays its last three
+    in their place, x first, and its time axis is typed as time for OME readers."""
+    from chunkmirage.core import ArrayInfo
+    from chunkmirage.frontends._ome import multiscales
+    from chunkmirage.neuroglancer import global_dimensions
+
+    info = ArrayInfo(
+        shape=(10, 20, 30),
+        dtype=np.float32,
+        chunk_shape=(5, 20, 30),
+        voxel_size=(86400.0, 0.25, 0.25),
+        units=("s", "", ""),
+        axes=("time", "lat", "lon"),
+    )
+    dims, position, display = global_dimensions(info)
+    assert display == ["lon", "lat", "time"]
+    assert dims == {"time": [86400.0, "s"], "lat": [0.25, ""], "lon": [0.25, ""]}
+    assert position == [5.0, 10.0, 15.0]
+
+    class _P:
+        num_levels = 1
+        source = type("S", (), {"name": "sst"})()
+
+        def info(self, level):
+            return info
+
+    axes = multiscales(_P(), "0.5")["axes"]
+    assert [a["type"] for a in axes] == ["time", "space", "space"]
+    assert axes[0]["unit"] == "second"

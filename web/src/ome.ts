@@ -82,25 +82,22 @@ export const TYPED: Record<string, TypedCtor> = {
   uint8: Uint8Array, uint16: Uint16Array, uint32: Uint32Array, int8: Int8Array, int16: Int16Array, int32: Int32Array,
   float32: Float32Array, float64: Float64Array,
 };
-const MAX_PIECE = 1 << 22;  // voxels: a store chunk bigger than this (a shard, say) is read in 64³ pieces
-
 interface Piece { data: Numbers; shape: number[] }
 
 /** Regions of an image's levels, one channel at a time, assembled from pieces aligned to the
  * store's own chunks and kept (least recently used out past `maxBytes`), so each chunk is
  * decoded once however many regions overlap it: neighbouring chunks and blocks, their
- * halos, different outputs. One per image in each context (the page, each chunk worker);
- * the service worker below them keeps the fetched bytes for all of them. */
+ * halos, different outputs. A piece is a whole store chunk (the inner chunk of a shard),
+ * since reading part of one decodes all of it, and at least two are kept however large
+ * (a sea-temperature tile is 65 MB). One per image in each context (the page, each chunk
+ * worker); the service worker below them keeps the fetched bytes for all of them. */
 export class RegionReader {
   readonly Typed: TypedCtor;
   private pieces = new Map<string, Promise<Piece>>();  // in use order
   private bytes = 0;
   constructor(readonly img: Image, private maxBytes: number) { this.Typed = TYPED[img.dtype] ?? Float32Array; }
 
-  private pieceShape(li: number): number[] {
-    const c = this.img.levels[li].arr.chunks.slice(-3);
-    return prod(c) <= MAX_PIECE ? c : [64, 64, 64];
-  }
+  private pieceShape(li: number): number[] { return this.img.levels[li].arr.chunks.slice(-3); }
 
   private piece(li: number, channel: number, b: number[], P: number[]): Promise<Piece> {
     const key = `${li}/${channel}/${b.join(",")}`;
@@ -113,7 +110,7 @@ export class RegionReader {
       .catch((e) => { this.pieces.delete(key); throw e; });  // a failed read is retried next time
     this.pieces.set(key, hit);
     this.bytes += prod(P) * this.Typed.BYTES_PER_ELEMENT;
-    while (this.bytes > this.maxBytes && this.pieces.size > 1) {
+    while (this.bytes > this.maxBytes && this.pieces.size > 2) {
       const [oldest] = this.pieces.keys();
       this.pieces.delete(oldest);
       this.bytes -= prod(this.pieceShape(Number(oldest.split("/")[0]))) * this.Typed.BYTES_PER_ELEMENT;

@@ -410,10 +410,18 @@ Voxel size, translation, units and axes are read per level, first match wins:
 
 | Format      | Metadata, in order of precedence                                                   |
 |-------------|------------------------------------------------------------------------------------|
-| zarr v2/v3  | parent OME-NGFF `multiscales` entry whose `path` is this array, composed with the multiscale-level `coordinateTransformations` if present (0.4/0.5; in 0.6 those lead to other coordinate systems and are applied only through a [`scene://`](#scene-sources-ome-zarr-06-transformations) source, and axes come from the intrinsic coordinate system); else the array's own `resolution`/`voxel_size`, `offset`, `units`, `axis_names` (funlib) or `transform` (COSEM), C order |
+| zarr v2/v3  | parent OME-NGFF `multiscales` entry whose `path` is this array, composed with the multiscale-level `coordinateTransformations` if present (0.4/0.5; in 0.6 those lead to other coordinate systems and are applied only through a [`scene://`](#scene-sources-ome-zarr-06-transformations) source, and axes come from the intrinsic coordinate system); else, for an array xarray wrote (geo, climate and solar data), its dimension names (`_ARRAY_DIMENSIONS`, or zarr v3 `dimension_names`) as the axes and the 1-D coordinate array named after each dimension as its spacing and origin, where evenly spaced and increasing (`days since …` and other CF time units become seconds, degrees unitless); else the array's own `resolution`/`voxel_size`, `offset`, `units`, `axis_names` (funlib) or `transform` (COSEM), C order |
 | N5          | the array's `transform` (COSEM, C order); the parent's `multiscales[].datasets[].transform` for this path; `pixelResolution`/`resolution` (array, else group) × `downsamplingFactors`, plus `offset`, x-first |
 | precomputed | `resolution` (nm) and `voxel_offset` × `resolution` as the translation             |
 | HDF5        | `resolution`/`voxel_size` and `offset` attributes, C order                         |
+
+A zarr array with CF packing attributes (`scale_factor`, `add_offset`) is read as float32
+in its units, `stored × scale_factor + add_offset`, and its `_FillValue` (else the array's
+fill value) as NaN: NASA's MUR sea temperature, stored as int16 hundredths of a degree
+offset from 298.15 K, reads as kelvin with land NaN. Arrays without those attributes are
+read as stored. Data whose axes are not named `z, y, x` (`time, lat, lon`) keeps its own
+names: the OME frontends type a time axis as `time` (by name or a time unit), and the
+viewer helpers show its last three axes as x, y and z.
 
 `offset`/`translate` are in world units. Anything in the spec (`voxel_size`, `units`,
 `axes`, `translation`) overrides what was read. The spec's `select` pins non-spatial axes

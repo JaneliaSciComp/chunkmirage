@@ -62,24 +62,30 @@ export interface StoreStats { requests: number; hits: number; fetches: number; f
 export type Reply = { status: number; body: string | ArrayBuffer; type: string } | { status: number; type: string; stream: true } | null;
 export type Later = { body: ArrayBuffer } | { error: string };
 
-// ------------------------------------------------ the pipeline page and its Pyodide workers
+// ------------------------------------------------ the pipeline page, its reader and its Pyodide workers
 /** One view a pipeline page serves: chunkmirage's PipelineSpec, as far as the browser goes. */
 export interface PipelineView {
-  source: string;                    // stack://, flip://, an OME-Zarr or N5 group
+  source: string;                    // stack://, flip://, an OME-Zarr or N5 group, an xarray array
   select?: Record<string, number>;   // pin non-spatial axes, e.g. {c: 1, t: 0}
   ops?: Record<string, unknown>[];   // op specs, as the CLI and REST API take them
-  chunk: number[];                   // output chunks, z, y, x
+  chunk: number[];                   // output chunks, one per axis
 }
-export interface ViewInfo {
-  dtype: string; halo: number[]; lead: number; unit: string;
-  levels: { shape: number[]; voxel: number[]; origin: number[] }[];
-}
-export type ToPyWorker =
-  | { type: "setup"; views: Record<string, PipelineView> }
-  | { type: "chunk"; reqId: number; view: string; level: number; index: number[] }
+/** An axis of a view: its name (z, or time, lat, ...) and the unit of its voxel size. */
+export interface ViewAxis { name: string; unit: string }
+export interface ViewLevel { shape: number[]; voxel: number[]; origin: number[] }
+/** A view's source as the reader opened it: three axes, and channels for a stack. */
+export interface SourceInfo { dtype: string; channels: number; axes: ViewAxis[]; levels: ViewLevel[] }
+/** A view as served: its source's axes and levels, and what its ops make of them. */
+export interface ViewInfo extends SourceInfo { halo: number[]; lead: number; out: string }
+
+/** What the page asks the reader, which opens the views' sources once for the page. */
+export type ToReader =
+  | { type: "open"; reqId: number; views: Record<string, PipelineView> }
+  | { type: "read"; reqId: number; view: string; level: number; lo: number[]; hi: number[] }
   | { type: "sample"; reqId: number; view: string; ps: number[] };
-export type FromPyWorker =
-  | { type: "ready"; views: Record<string, ViewInfo> }
-  | { type: "chunk"; reqId: number; body: ArrayBuffer }
-  | { type: "sample"; reqId: number; values: number[] }
-  | { type: "error"; reqId?: number; message: string };
+/** What the page asks a Pyodide worker. */
+export type ToPyWorker =
+  | { type: "plan"; reqId: number; views: Record<string, { ops: Record<string, unknown>[]; shape: number[]; dtype: string; chunk: number[] }> }
+  | { type: "compute"; reqId: number; view: string; data: ArrayBuffer; readShape: number[]; inLo: number[]; inHi: number[]; outLo: number[]; outHi: number[]; full: number[] };
+/** Either's answer to request `reqId`. */
+export type Answer = { reqId: number; value: unknown } | { reqId: number; error: string };

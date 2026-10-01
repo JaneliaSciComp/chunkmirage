@@ -66,3 +66,40 @@ class Uniform(Op):
         from scipy.ndimage import uniform_filter
 
         return uniform_filter(block.astype(np.float32), self.size, mode="nearest")
+
+
+@register
+class Diff(Op):
+    """Change along one axis: each voxel minus the one ``lag`` steps before it on ``axis``
+    (float32). Along time, what changed since the frame or day before: a hurricane's cold
+    wake in sea temperature, a flare brightening the sun. The first ``lag`` steps of the
+    array compare against its first."""
+
+    name = "diff"
+    axis: int = Field(
+        0,
+        ge=0,
+        description="The axis to difference along, counted from the first (0: time in a t, y, x series).",
+    )
+    lag: int = Field(1, ge=1, le=64, description="How many steps back to compare with.")
+
+    @property
+    def halo(self):  # type: ignore[override]
+        return self.lag
+
+    def halo_for(self, ndim: int) -> tuple[int, ...]:
+        if self.axis >= ndim:
+            raise ValueError(f"diff axis={self.axis}: the data has {ndim} axes")
+        return tuple(self.lag if a == self.axis else 0 for a in range(ndim))
+
+    def output_dtype(self, in_dtype):
+        return np.dtype("float32")
+
+    def apply(self, block: np.ndarray) -> np.ndarray:
+        a = self.axis
+        b = block.astype(np.float32)
+        out = np.zeros_like(b)
+        now, before = [slice(None)] * b.ndim, [slice(None)] * b.ndim
+        now[a], before[a] = slice(self.lag, None), slice(None, -self.lag)
+        out[tuple(now)] = b[tuple(now)] - b[tuple(before)]
+        return out

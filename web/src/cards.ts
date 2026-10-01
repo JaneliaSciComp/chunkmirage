@@ -10,11 +10,12 @@ export interface CardLayer {
   view?: string;             // one of the card's views, served by the page
   url?: string;              // or a store the viewer reads itself, e.g. zarr://https://...
   type: "image" | "segmentation";
-  colour?: string;           // image layers: tint
+  colour?: string;           // image layers: tint; segmentation layers: every segment's colour
   range?: [number, number];  // image layers: display limits
   percentiles?: [number, number];  // or limits from a sample of the view's data
-  alpha?: number;            // image layers drawn over others: opacity at full intensity
+  alpha?: number;            // image layers drawn over others: opacity at full intensity; segmentations: opacity
   additive?: boolean;        // image layers: add to what is below (channels of one image)
+  shader?: string;           // image layers: a Neuroglancer shader of its own, over the above
 }
 
 interface Card { id: string; title: string; blurb: string; image: string; data: string; command: string }
@@ -23,8 +24,9 @@ export interface PipelineCard extends Card {
   views: Record<string, PipelineView>;
   layers: CardLayer[];
   panels: string[][];        // layer names per panel, side by side, each an x-y slice
-  position: number[];        // z, y, x, full-resolution voxels of the first view
+  position: number[];        // full-resolution voxels of the first view, along its axes
   zoom: number;              // full-resolution voxels per screen pixel
+  orientation?: number[];    // the slices' rotation (a quaternion), e.g. north up for a map
 }
 export interface LinkCard extends Card { kind: "link"; href: string }
 export type DemoCard = PipelineCard | LinkCard;
@@ -37,16 +39,26 @@ const EFISH = "https://janelia-data-examples.s3.amazonaws.com/fly-efish/NP31_R2_
 const ROUND1 = `${EFISH}/NP31_R2_1_1_SS00090_Spab_546_Nplp1_647_1x_Central.zarr/0`;
 const ROUND2 = `${EFISH}/NP31_R2_2_1_SS00090_FMRFa_546_Proc_647_1x_Central.zarr/0`;
 const CHUNK = [16, 128, 128];
+const MUR = "https://mur-sst.s3.us-west-2.amazonaws.com/zarr-v1/analysed_sst";
+const LAND = "if (isnan(v)) { emitRGB(vec3(0.18)); return; }";  // MUR has no value on land
+const KELVIN = `#uicontrol invlerp temperature(range=[298, 305])
+void main() { float v = getDataValue(); ${LAND} emitRGB(colormapJet(clamp(temperature(), 0.0, 1.0))); }`;
+const CHANGE = `#uicontrol invlerp change(range=[-2, 2])
+void main() {
+  float v = getDataValue(); ${LAND}
+  float t = clamp(change(), 0.0, 1.0) * 2.0 - 1.0;
+  emitRGB(t < 0.0 ? mix(vec3(1.0), vec3(0.15, 0.35, 0.85), -t) : mix(vec3(1.0), vec3(0.85, 0.2, 0.15), t));
+}`;
 
 export const CARDS: DemoCard[] = [
   {
     kind: "pipeline", id: "contacts", image: "cards/contacts.jpg",
     title: "Organelle contact sites, computed where you look",
-    blurb: "Where mitochondria and the ER come within 12 nm of each other in a whole HeLa cell (122 gigavoxels of FIB-SEM), from OpenOrganelle's published predictions. Each chunk on screen is computed as you pan, by chunkmirage's own contacts and label ops running in this page; nothing is precomputed.",
+    blurb: "Where mitochondria and the ER come within 12 nm of each other in a whole HeLa cell (122 gigavoxels of FIB-SEM). The organelles are OpenOrganelle's published predictions thresholded at 128, where the predicted distance to their boundary crosses zero (the first step of its own segmentations): mitochondria labelled as objects in green, the ER in magenta, and the contact sites between them as objects of their own. Each chunk on screen is computed as you pan, by chunkmirage's threshold, label and contacts ops running in this page; nothing is precomputed.",
     data: "OpenOrganelle jrc_hela-2 (Heinrich et al., Nature 2021): EM and the COSEM mitochondria and ER predictions",
     views: {
-      mito: { source: MITO, chunk: CHUNK },
-      er: { source: ER, chunk: CHUNK },
+      mito: { source: MITO, chunk: CHUNK, ops: [{ op: "threshold", low: 128 }, { op: "label", min_size: 50 }] },
+      er: { source: ER, chunk: CHUNK, ops: [{ op: "threshold", low: 128 }] },
       contacts: {
         source: `stack://${MITO}|${ER}`, chunk: CHUNK,
         ops: [{ op: "contacts", radius: 3, a_low: 128, b_low: 128 }, { op: "label", min_size: 50 }],
@@ -54,9 +66,9 @@ export const CARDS: DemoCard[] = [
     },
     layers: [
       { name: "em", url: `zarr://${COSEM}/jrc_hela-2.zarr/recon-1/em/fibsem-uint8`, type: "image" },
-      { name: "mito", view: "mito", type: "image", colour: "#33e64d", range: [64, 255], alpha: 0.35 },
-      { name: "er", view: "er", type: "image", colour: "#e64de6", range: [64, 255], alpha: 0.35 },
-      { name: "contacts", view: "contacts", type: "segmentation" },
+      { name: "mito", view: "mito", type: "segmentation", colour: "#33e64d", alpha: 0.3 },
+      { name: "er", view: "er", type: "segmentation", colour: "#e64de6", alpha: 0.3 },
+      { name: "contacts", view: "contacts", type: "segmentation", colour: "#ffd21f", alpha: 0.9 },
     ],
     panels: [["em", "mito", "er", "contacts"]],
     position: [2156, 596, 3028], zoom: 1,
@@ -84,6 +96,24 @@ export const CARDS: DemoCard[] = [
     panels: [["structure", "channel 1", "channel 2"], ["channel 1", "channel 2", "spots 1", "spots 2"]],
     position: [465, 960, 960], zoom: 0.4,
     command: `chunkmirage serve '${ROUND1}' --select c=1,t=0 \\\n  --op spots:threshold=10,radius=2 --chunk 16,128,128 --python-viewer`,
+  },
+  {
+    kind: "pipeline", id: "hurricanes", image: "cards/hurricanes.jpg",
+    title: "Hurricanes' cold wakes, day by day",
+    blurb: "NASA's daily sea-surface temperature of all the oceans since 2002, a kilometre apart: 4 trillion values, read straight from their public store. The change from the day before is computed for each chunk as you look, by chunkmirage's diff op running in this page. On 29 August 2005 Katrina leaves a cold swath across the Gulf of Mexico; scroll on through the days to Rita's, a month later. Left, the temperature (25 to 32 °C); right, its change since the day before (±2 °C).",
+    data: "MUR sea-surface temperature, v4.1 (NASA JPL; AWS Open Data)",
+    views: {
+      sst: { source: MUR, chunk: [1, 256, 256] },
+      change: { source: MUR, chunk: [1, 256, 256], ops: [{ op: "diff", axis: 0, lag: 1 }] },
+    },
+    layers: [
+      { name: "temperature", view: "sst", type: "image", shader: KELVIN },
+      { name: "change", view: "change", type: "image", shader: CHANGE },
+    ],
+    panels: [["temperature"], ["change"]],
+    position: [1185, 11500, 9100], zoom: 2,
+    orientation: [1, 0, 0, 0],  // latitude increases northward: turn the map north up
+    command: `chunkmirage serve '${MUR}' --op diff:axis=0,lag=1 --chunk 1,256,256 --python-viewer`,
   },
   {
     kind: "link", id: "register-fly", image: "cards/register-fly.jpg",

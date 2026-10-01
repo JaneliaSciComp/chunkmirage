@@ -260,6 +260,62 @@ def _zarr_array_metadata(attrs: dict, ndim: int) -> dict:
     return {k: v for k, v in meta.items() if v is not None}
 
 
+_SECONDS = {"day": 86400.0, "hour": 3600.0, "minute": 60.0, "second": 1.0}
+
+
+def _cf_unit(units: str) -> tuple[str, float]:
+    """A CF coordinate's ``units`` as (unit, factor to it): ``days since ...`` and the like
+    become seconds, degrees of latitude or longitude unitless (no viewer has degrees)."""
+    u = units.strip().lower()
+    if m := re.match(r"(day|hour|minute|second)s?\s+since\b", u):
+        return "s", _SECONDS[m.group(1)]
+    if u.startswith("degree"):
+        return "", 1.0
+    return units.strip(), 1.0
+
+
+def _sig(v: float, digits: int) -> float:
+    return float(f"{v:.{digits}g}")
+
+
+def _cf_coordinates(parent: str, dims: list[str], shape: tuple[int, ...]) -> dict:
+    """Voxel size, translation and units from an xarray-style group's coordinate arrays:
+    the 1-D array named after each dimension, where it is evenly spaced and increasing
+    (checked end to end from its first two and last values, so a long one costs two chunk
+    reads). Other dimensions keep the defaults."""
+    vs, tr, un = [1.0] * len(dims), [0.0] * len(dims), [""] * len(dims)
+    for a, (dim, n) in enumerate(zip(dims, shape)):
+        try:
+            kv = _open_kvstore(f"{parent}/{dim}")
+            coord = open_tensorstore(f"{parent}/{dim}", context=shared_context(0))
+        except Exception:
+            continue
+        if coord.rank != 1 or coord.shape[0] != n or n < 2:
+            continue
+        first = np.asarray(coord[0:2].read().result(), dtype=np.float64)
+        last = float(np.asarray(coord[n - 1].read().result()))
+        step = (last - first[0]) / (n - 1)  # the whole span: float32 coordinates are coarse
+        if step <= 0 or abs(first[1] - first[0] - step) > 0.01 * step:
+            continue
+        unit, f = _cf_unit(str(_node_attrs(kv).get("units", "")))
+        # to the coordinates' own precision: float32 degrees 0.01 apart are not 0.0099999998
+        digits = 6 if coord.dtype.numpy_dtype.itemsize <= 4 else 12
+        vs[a], tr[a], un[a] = _sig(step * f, digits), _sig(first[0] * f, digits), unit
+    return {"voxel_size": tuple(vs), "translation": tuple(tr), "units": tuple(un)}
+
+
+def _cf_decoding(attrs: dict, store: ts.TensorStore) -> tuple[float, float, float | None] | None:
+    """(scale_factor, add_offset, missing value) of a CF-packed array (stored integers that
+    mean ``value * scale_factor + add_offset``), else None. The missing value is
+    ``_FillValue``, else the array's fill value."""
+    if "scale_factor" not in attrs and "add_offset" not in attrs:
+        return None
+    fill = attrs.get("_FillValue", attrs.get("missing_value"))
+    if fill is None and store.fill_value is not None:
+        fill = np.asarray(store.fill_value).item()
+    return float(attrs.get("scale_factor", 1.0)), float(attrs.get("add_offset", 0.0)), fill
+
+
 def _precomputed_scale_metadata(info: dict, scale_index: int | None, ndim: int) -> dict:
     """``resolution`` (nm) and ``voxel_offset`` (voxels) of one scale, x-first -> C order."""
     try:
@@ -277,10 +333,20 @@ def _precomputed_scale_metadata(info: dict, scale_index: int | None, ndim: int) 
 
 
 class TensorStoreSource(Source):
-    def __init__(self, store: ts.TensorStore, info: ArrayInfo, key: str):
+    """One array. ``decode`` is a CF-packed array's (scale, offset, missing value): reads
+    then return ``stored * scale + offset`` as float32, the missing value as NaN."""
+
+    def __init__(
+        self,
+        store: ts.TensorStore,
+        info: ArrayInfo,
+        key: str,
+        decode: tuple[float, float, float | None] | None = None,
+    ):
         self.store = store
         self._info = info
         self._key = key
+        self.decode = decode
 
     @property
     def info(self) -> ArrayInfo:
@@ -289,11 +355,21 @@ class TensorStoreSource(Source):
     def cache_key(self) -> str:
         return self._key
 
+    def _decoded(self, raw) -> np.ndarray:
+        if self.decode is None:
+            return np.asarray(raw, dtype=self._info.dtype)
+        scale, offset, missing = self.decode
+        raw = np.asarray(raw)
+        out = raw.astype(np.float32) * np.float32(scale) + np.float32(offset)
+        if missing is not None:
+            out[raw == missing] = np.nan
+        return out
+
     def read(self, box: Box) -> np.ndarray:
-        return np.asarray(self.store[box.slices()].read().result(), dtype=self._info.dtype)
+        return self._decoded(self.store[box.slices()].read().result())
 
     async def read_async(self, box: Box) -> np.ndarray:
-        return np.asarray(await self.store[box.slices()].read(), dtype=self._info.dtype)
+        return self._decoded(await self.store[box.slices()].read())
 
     @classmethod
     def from_path(
@@ -335,24 +411,36 @@ class TensorStoreSource(Source):
             meta = _n5_scale_metadata(attrs, ndim, group_attrs, name)
         elif driver == "neuroglancer_precomputed":
             meta = _precomputed_scale_metadata(_read_json(kv, "info") or {}, scale_index, ndim)
-        else:  # zarr v2 / v3: OME-NGFF on the parent group, else legacy per-array attributes
+        decode = None
+        if driver in ("zarr", "zarr3"):
+            # OME-NGFF on the parent group, else xarray's dimension names and coordinate
+            # arrays (geo and climate data), else legacy per-array attributes
+            attrs = _node_attrs(kv)
+            decode = _cf_decoding(attrs, store)
+            dims = attrs.get("_ARRAY_DIMENSIONS") or (_read_json(kv, "zarr.json") or {}).get(
+                "dimension_names"
+            )
             meta = _ome_scale_metadata(group_attrs, name, ndim)
+            if meta is None and isinstance(dims, list) and len(dims) == ndim and all(dims):
+                meta = {"axes": tuple(str(d) for d in dims)}
+                if parent is not None:
+                    meta |= _cf_coordinates(parent, [str(d) for d in dims], shape)
             if meta is None:
-                meta = _zarr_array_metadata(_node_attrs(kv), ndim)
+                meta = _zarr_array_metadata(attrs, ndim)
 
         def pick(override, key, default):
             return tuple(override) if override is not None else meta.get(key, default)
 
         info = ArrayInfo(
             shape=shape,
-            dtype=store.dtype.numpy_dtype,
+            dtype=np.dtype(np.float32) if decode else store.dtype.numpy_dtype,
             chunk_shape=chunk_shape,
             voxel_size=pick(voxel_size, "voxel_size", (1.0,) * ndim),
             units=pick(units, "units", ("",) * ndim),
             axes=pick(axes, "axes", ArrayInfo.default_axes(ndim)),
             translation=pick(translation, "translation", (0.0,) * ndim),
         )
-        return cls(store, info, key=f"ts:{path}")
+        return cls(store, info, key=f"ts:{path}", decode=decode)
 
 
 def open_multiscale_tensorstore(path: str, *, cache_bytes: int = 0, **kw) -> MultiscaleSource:

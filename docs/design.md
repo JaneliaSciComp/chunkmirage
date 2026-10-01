@@ -328,8 +328,11 @@ much of what was read came from the cache. Fed the same affine and
 * Pipelines of ops run in the page without a second implementation: `pipeline.html` loads
   Pyodide in a few web workers, writes the package's ops and `chunkmirage.fused` (the code
   a pipeline stage runs, which imports nothing beyond numpy and the ops) into its file
-  system, and has them compute each chunk from a padded block the worker reads in
-  TypeScript. Porting the ops to TypeScript or WebGPU shaders, the plan before, would have
+  system, and has them compute each chunk from a padded block the page's one reader
+  worker reads in TypeScript. One reader rather than one per worker: each store chunk is
+  decoded once for the page, and a piece it keeps is a whole store chunk (the inner chunk of
+  a shard), since zarrita decodes all of a chunk to read any of it; a 65 MB sea-temperature
+  tile in every worker, or decoded again for each part read, would not fit. Porting the ops to TypeScript or WebGPU shaders, the plan before, would have
   meant one more implementation per op and parity tests to keep them equal; Pyodide made
   the Python itself the browser's, at the cost of a 6 s start and single-threaded
   WebAssembly per worker, which the ops' 0.05 to 0.13 s per block easily afford. The

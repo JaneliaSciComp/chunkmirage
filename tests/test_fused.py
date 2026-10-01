@@ -37,3 +37,23 @@ def test_a_chunk_computed_the_browsers_way_is_the_pipelines(source, specs):
         clipped = in_box.clip(src.info.shape)
         block = fused.pad_edge(src.read(clipped), in_box, src.info.shape)
         np.testing.assert_array_equal(fused.run(ops, block, in_box, out_box, out), p.chunk(0, idx))
+
+
+def test_diff_reads_back_along_its_axis_only(tmp_path):
+    """A chunk of diff along time is exactly the whole array's difference: the halo reaches
+    back lag steps on that axis and on no other."""
+    import tensorstore as ts
+
+    from chunkmirage.core import Box
+    from chunkmirage.ops import Diff
+
+    vol = np.random.default_rng(0).normal(size=(12, 8, 9)).astype(np.float32)
+    spec = {"driver": "zarr", "kvstore": {"driver": "file", "path": str(tmp_path / "v")}}
+    spec["metadata"] = {"shape": list(vol.shape), "chunks": [3, 8, 9], "dtype": "<f4"}
+    ts.open(spec, create=True).result().write(vol).result()
+    op = Diff(axis=0, lag=2)
+    assert op.halo_for(3) == (2, 0, 0)
+    p = Pipeline(open_source(str(tmp_path / "v")), [op], chunk_shape=(4, 8, 9))
+    whole = p.read(0, Box((0, 0, 0), vol.shape))
+    np.testing.assert_allclose(whole[2:], vol[2:] - vol[:-2], atol=1e-6)
+    np.testing.assert_allclose(whole[:2], vol[:2] - vol[0], atol=1e-6)  # the first, repeated

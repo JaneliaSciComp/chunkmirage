@@ -1,25 +1,27 @@
 // The images a pipeline reads, in the browser, as chunkmirage's sources read them in Python:
-// OME-Zarr (v2 or v3) and N5 groups, and the stack://, flip:// and select wrappers. Each is a
-// pyramid of z, y, x levels, with channels only for a stack; reads go through the service
-// worker's store cache like every other fetch on the page.
-import { openImage, prod, RegionReader, TYPED, type Numbers, type TypedCtor } from "./ome";
+// OME-Zarr (v2 or v3) and N5 groups, xarray-style zarr arrays (geo and climate data), and the
+// stack://, flip:// and select wrappers. Each is a pyramid of three-axis levels (z, y, x, or
+// an xarray array's own, such as time, lat, lon), with channels only for a stack; reads go
+// through the service worker's store cache like every other fetch on the page.
+import { openImage, prod, RegionReader, TYPED, zarr, type Image, type Numbers, type TypedCtor } from "./ome";
+import type { ViewAxis } from "./types";
 
 export interface SourceLevel { shape: number[]; voxel: number[]; origin: number[]; chunks: number[] }
 
 export interface Source {
   url: string;
   dtype: string;
-  unit: string;       // of the spatial axes, e.g. "nanometer"
+  axes: ViewAxis[];   // the three axes levels have, e.g. z, y, x in nanometers
   channels: number;   // 1, or the images of a stack (its leading c axis)
   levels: SourceLevel[];
   /** Voxels [lo, hi) of level `li` (z, y, x; within the level), channel `c`. */
   read(li: number, c: number, lo: number[], hi: number[]): Promise<Numbers>;
 }
 
-const READ_BYTES = 96 * 2 ** 20;  // decoded pieces kept per image, per context
+const READ_BYTES = 384 * 2 ** 20;  // decoded pieces kept per image (the page's reader holds them all)
 
-/** Any source URL: stack://a|b, flip://image?axes=y, an OME-Zarr or an N5 group. `select`
- * pins non-spatial axes, as a spec's select does ({c: 1, t: 0}). */
+/** Any source URL: stack://a|b, flip://image?axes=y, an OME-Zarr or N5 group, or an
+ * xarray-style zarr array. `select` pins non-spatial axes, as a spec's select does ({c: 1, t: 0}). */
 export async function openSource(url: string, select: Record<string, number> = {}): Promise<Source> {
   if (url.startsWith("stack://")) {
     const parts = url.slice("stack://".length).split("|").filter(Boolean);
@@ -35,6 +37,7 @@ export async function openSource(url: string, select: Record<string, number> = {
   try {
     return await zarrSource(url, select);
   } catch (zarrError) {
+    try { return await xarraySource(url); } catch { /* not one either */ }
     try { return await n5Source(url); } catch { throw zarrError; }
   }
 }
@@ -47,9 +50,73 @@ async function zarrSource(url: string, select: Record<string, number>): Promise<
   }
   const reader = new RegionReader(img, READ_BYTES), channel = select.c ?? 0;
   return {
-    url, dtype: img.dtype, unit: img.axes[img.axes.length - 1].unit ?? "", channels: 1,
+    url, dtype: img.dtype, axes: img.axes.slice(-3).map((a) => ({ name: a.name, unit: a.unit ?? "" })), channels: 1,
     levels: img.levels.map((l) => ({ shape: l.shape, voxel: l.voxel, origin: l.origin, chunks: l.arr.chunks.slice(-3) })),
     read: async (li, _c, lo, hi) => (await reader.read(li, channel, lo, hi)).data,
+  };
+}
+
+// ------------------------------------------------ xarray-style zarr
+const SECONDS: Record<string, number> = { day: 86400, hour: 3600, minute: 60, second: 1 };
+
+/** A CF coordinate's units as [unit, factor to it]: "days since ..." and the like become
+ * seconds, degrees unitless (chunkmirage.sources.tensorstore_source._cf_unit). */
+function cfUnit(units: string): [string, number] {
+  const u = units.trim().toLowerCase(), m = /^(day|hour|minute|second)s?\s+since\b/.exec(u);
+  if (m) return ["s", SECONDS[m[1]]];
+  return u.startsWith("degree") ? ["", 1] : [units.trim(), 1];
+}
+
+const num = (v: unknown) => Number(v as number | bigint);
+
+/** Spacing, origin and unit of the coordinate array named `dim` beside the array, where it
+ * is evenly spaced and increasing (from its first two and last values); else 1, 0, "". */
+async function coordinate(parent: string, dim: string, n: number): Promise<{ step: number; first: number; unit: string }> {
+  const none = { step: 1, first: 0, unit: "" };
+  try {
+    const c = await zarr.open(zarr.root(new zarr.FetchStore(`${parent}/${dim}`)), { kind: "array" });
+    if (c.shape.length !== 1 || c.shape[0] !== n || n < 2) return none;
+    const head = (await zarr.get(c, [zarr.slice(0, 2)])).data as ArrayLike<unknown>;
+    const tail = (await zarr.get(c, [zarr.slice(n - 1, n)])).data as ArrayLike<unknown>;
+    const first = num(head[0]), step = (num(tail[0]) - first) / (n - 1);
+    if (!(step > 0) || Math.abs(num(head[1]) - first - step) > 0.01 * step) return none;
+    const [unit, f] = cfUnit(String((c.attrs as { units?: string }).units ?? ""));
+    // to the coordinates' own precision: float32 degrees 0.01 apart are not 0.0099999998
+    const sig = (v: number) => Number(v.toPrecision(c.dtype === "float32" ? 6 : 12));
+    return { step: sig(step * f), first: sig(first * f), unit };
+  } catch { return none; }
+}
+
+/** A zarr array as xarray writes it: its axes named by _ARRAY_DIMENSIONS (or zarr v3's
+ * dimension_names), voxel size and origin from its coordinate arrays, and CF-packed
+ * integers (scale_factor, add_offset) read as float32 in their units, missing ones NaN. */
+async function xarraySource(url: string): Promise<Source> {
+  const base = url.replace(/\/+$/, ""), parent = base.slice(0, base.lastIndexOf("/"));
+  const arr = await zarr.open(zarr.root(new zarr.FetchStore(base)), { kind: "array" });
+  const attrs = arr.attrs as Record<string, unknown>;
+  const dims = (attrs._ARRAY_DIMENSIONS as string[] | undefined) ?? arr.dimensionNames;
+  if (!dims || dims.length !== 3 || arr.shape.length !== 3) throw new Error(`${url}: not a three-axis array with dimension names`);
+  const coords = await Promise.all(dims.map((d, a) => coordinate(parent, d, arr.shape[a])));
+  const voxel = coords.map((c) => c.step), origin = coords.map((c) => c.first);
+  const img: Image = {
+    url: base, axes: dims.map((name) => ({ name })), names: dims, dtype: arr.dtype, lead: 0,
+    levels: [{ arr, fullShape: arr.shape, scale: voxel, shift: origin, shape: arr.shape, voxel, origin }],
+  };
+  const reader = new RegionReader(img, READ_BYTES);
+  const packed = "scale_factor" in attrs || "add_offset" in attrs;
+  const scale = num(attrs.scale_factor ?? 1), offset = num(attrs.add_offset ?? 0);
+  const missing = attrs._FillValue ?? attrs.missing_value ?? arr.fillValue;
+  return {
+    url, dtype: packed ? "float32" : arr.dtype, channels: 1,
+    axes: dims.map((name, a) => ({ name, unit: coords[a].unit })),
+    levels: [{ shape: arr.shape, voxel, origin, chunks: arr.chunks }],
+    read: async (li, _c, lo, hi) => {
+      const raw = (await reader.read(li, 0, lo, hi)).data;
+      if (!packed) return raw;
+      const out = new Float32Array(raw.length), m = missing == null ? NaN : num(missing);
+      for (let i = 0; i < raw.length; i++) out[i] = raw[i] === m ? NaN : raw[i] * scale + offset;
+      return out;
+    },
   };
 }
 
@@ -94,10 +161,11 @@ async function n5Source(url: string): Promise<Source> {
     }
     return { path: p, dims: [...a.dimensions].reverse(), block: [...a.blockSize].reverse(), dtype: a.dataType, gzip: kind === "gzip", voxel, origin };
   }));
-  const unit = root.multiscales?.[0]?.datasets[0]?.transform?.units?.[0] ?? root.units?.[0] ?? "";
+  const u = root.multiscales?.[0]?.datasets[0]?.transform?.units?.[0] ?? root.units?.[0] ?? "";
+  const unit = u === "nm" ? "nanometer" : u === "um" ? "micrometer" : u;
   const cache = new Blocks(READ_BYTES);
   return {
-    url, dtype: levels[0].dtype, unit: unit === "nm" ? "nanometer" : unit === "um" ? "micrometer" : unit, channels: 1,
+    url, dtype: levels[0].dtype, axes: ["z", "y", "x"].map((name) => ({ name, unit })), channels: 1,
     levels: levels.map((l) => ({ shape: l.dims, voxel: l.voxel, origin: l.origin, chunks: l.block })),
     read: (li, _c, lo, hi) => {
       const l = levels[li];
@@ -185,8 +253,8 @@ async function assemble(T: TypedCtor, block: number[], lo: number[], hi: number[
 // ------------------------------------------------ wrappers
 /** `inner` mirrored along `axes`, every level in place (chunkmirage.sources.flip). */
 function flip(inner: Source, axes: string[], url: string): Source {
-  const which = axes.map((a) => ["z", "y", "x"].indexOf(a));
-  if (which.some((k) => k < 0)) throw new Error(`flip:// axes=${axes}: spatial axes only (z, y, x)`);
+  const names = inner.axes.map((a) => a.name), which = axes.map((a) => names.indexOf(a));
+  if (which.some((k) => k < 0)) throw new Error(`flip:// axes=${axes}: ${inner.url} has axes ${names}`);
   return {
     ...inner, url,
     read: async (li, c, lo, hi) => {
@@ -214,7 +282,7 @@ function stack(parts: Source[], url: string): Source {
   for (const p of parts.slice(1)) for (let i = 0; i < levels; i++)
     if (p.levels[i].shape.join() !== a.levels[i].shape.join()) throw new Error(`stack:// level ${i}: ${p.url} is on a different grid from ${a.url}`);
   return {
-    url, dtype: a.dtype, unit: a.unit, channels: parts.length, levels: a.levels.slice(0, levels),
+    url, dtype: a.dtype, axes: a.axes, channels: parts.length, levels: a.levels.slice(0, levels),
     read: (li, c, lo, hi) => parts[c].read(li, 0, lo, hi),
   };
 }

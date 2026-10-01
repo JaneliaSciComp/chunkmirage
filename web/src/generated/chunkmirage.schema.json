@@ -70,6 +70,33 @@
         "op"
       ]
     },
+    "Diff": {
+      "additionalProperties": false,
+      "description": "Change along one axis: each voxel minus the one ``lag`` steps before it on ``axis``\n(float32). Along time, what changed since the frame or day before: a hurricane's cold\nwake in sea temperature, a flare brightening the sun. The first ``lag`` steps of the\narray compare against its first.",
+      "properties": {
+        "op": {
+          "const": "diff"
+        },
+        "axis": {
+          "default": 0,
+          "description": "The axis to difference along, counted from the first (0: time in a t, y, x series).",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lag": {
+          "default": 1,
+          "description": "How many steps back to compare with.",
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "title": "Diff",
+      "type": "object",
+      "required": [
+        "op"
+      ]
+    },
     "DoG": {
       "additionalProperties": false,
       "description": "Difference of Gaussians: enhances blob-like structures of a chosen size, suppresses background.",
@@ -193,6 +220,9 @@
         },
         {
           "$ref": "#/$defs/Contacts"
+        },
+        {
+          "$ref": "#/$defs/Diff"
         },
         {
           "$ref": "#/$defs/DoG"

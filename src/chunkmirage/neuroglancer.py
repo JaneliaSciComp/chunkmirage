@@ -33,6 +33,8 @@ _TIME_TO_S = {
     "minute": 60.0,
     "h": 3600.0,
     "hour": 3600.0,
+    "d": 86400.0,
+    "day": 86400.0,
 }
 _SPATIAL = ("z", "y", "x")
 DEFAULT_VIEWER = "https://neuroglancer-demo.appspot.com"
@@ -121,12 +123,16 @@ def dimensions(info: ArrayInfo) -> dict[str, list]:
 def global_dimensions(info: ArrayInfo) -> tuple[dict[str, list], list[float], list[str]]:
     """Viewer dimensions, position and display dimensions for a dataset: the spatial
     axes, then the others (time last) except the layer-local channel; centred in space and
-    at the first index of other axes, with the spatial axes displayed (x, y, z)."""
-    dims = {n: v for n, v in dimensions(info).items() if n in _SPATIAL}
+    at the first index of other axes, with the spatial axes displayed (x, y, z). Data
+    without z, y, x axes (time, lat, lon) shows its last three in their place."""
+    spatial = [a for a in info.axes if a in _SPATIAL]
+    if not spatial:
+        spatial = [a for a in info.axes if a != "c"][-3:]
+    dims = {n: v for n, v in dimensions(info).items() if n in spatial}
     dims |= {n: v for n, v in dimensions(info).items() if n not in dims and not n.endswith("'")}
     shape = dict(zip(info.axes, info.shape))
-    position = [shape[n] / 2 if n in _SPATIAL else 0.5 for n in dims]
-    return dims, position, [a for a in _SPATIAL[::-1] if a in dims]
+    position = [shape[n] / 2 if n in spatial else 0.5 for n in dims]
+    return dims, position, spatial[::-1]
 
 
 def viewer_state(pipelines: Mapping[str, Pipeline], sources: Mapping[str, str]) -> dict:

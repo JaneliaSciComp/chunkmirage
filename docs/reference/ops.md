@@ -22,6 +22,8 @@ new op; `tests/test_docs.py` requires it.
 | `dog`       | `sigma`     | 2.0     | difference of Gaussians: enhances blobs of about this size; halo = `ceil(3 × sigma × ratio)` |
 |             | `ratio`     | 1.6     | larger blur = `sigma × ratio` |
 |             | `gain`      | 4.0     | scales the difference into 0..255 (output uint8, 128 = zero) |
+| `diff`      | `axis`      | 0       | change along one axis: each voxel minus the one `lag` steps before it on `axis` (0: time in a `t, y, x` series); output float32; halo = `lag` on that axis only; the first `lag` steps compare against the first |
+|             | `lag`       | 1       | how many steps back to compare with |
 | `morphology`| `operation` | open    | `open`, `close`, `erode`, `dilate` on a mask (input > 0); output uint8 |
 |             | `radius`    | 2       | spherical structuring element radius in voxels; halo = `2 × radius + 1` |
 | `label`     | `min_size`  | 0       | connected components of a mask, output uint32 segment ids; drop components smaller than this |
@@ -56,7 +58,12 @@ it in the same stage see the plain spatial block.
 None of the built-ins cache their output by default (`cache=False`); a pipeline turns it on
 for one op with `"cache": true` in its spec ([caching](../concepts/caching.md#why-not-cache-every-stage)).
 Everything except `threshold`,
-`cast` and `scale` needs the `ops` extra (scipy).
+`cast`, `scale` and `diff` needs the `ops` extra (scipy).
+
+`diff` along time is the view a hurricane's cold wake or a solar flare shows up in: each
+day's sea temperature minus the day before's (`examples/hurricane_wakes.py`, and the
+gallery's hurricanes card), each 6-minute image of the sun minus the one before
+(`examples/solar_flares.py`, the running difference solar physicists use).
 
 ## CLI syntax
 
