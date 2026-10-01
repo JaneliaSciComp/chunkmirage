@@ -18,6 +18,8 @@ _CHUNK_RE = re.compile(r"^s(\d+)/(\d+(?:[./]\d+)*)$")
 class Zarr2Frontend(Frontend):
     name = "zarr"
     neuroglancer_scheme = "zarr2"
+    root_keys = (".zgroup", ".zattrs", ".zmetadata")
+    level_keys = (".zarray", ".zattrs")
 
     def __init__(self, compressor: str = "gzip", level: int | None = None, separator: str = "/"):
         self.compressor = Compressor(compressor, level)

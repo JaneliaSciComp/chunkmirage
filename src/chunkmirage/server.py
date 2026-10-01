@@ -319,6 +319,18 @@ def create_app(
         fe = fronts.get(fmt)
         if p is None or fe is None:
             return Response("not found", 404)
+        # A group or level asked for as a directory (a trailing /) or as a page (HTML first in
+        # Accept, as browsers and Java's HTTP client send) gets a listing: that is how Fiji's
+        # N5 viewer finds the levels. Metadata clients (Neuroglancer, tensorstore, zarr-python)
+        # ask for */* and get the metadata, as before.
+        directory = request.url.path.endswith("/")
+        page = request.headers.get("accept", "").lstrip().startswith("text/html")
+        if directory or page:
+            entries = fe.listing(p, rest)
+            if entries is not None:
+                return HTMLResponse(_listing_html(request.url.path, entries))
+            if directory:
+                return Response("not found", 404)
         try:
             resolved = fe.resolve(p, rest)
         except ValueError as e:
@@ -435,6 +447,19 @@ async def event_stream(
             yield ": keepalive\n\n"
             last_beat = time.monotonic()
         await asyncio.sleep(poll_seconds)
+
+
+def _listing_html(path: str, entries: list[str]) -> str:
+    """A directory listing as Python's http.server writes one, which HTTP clients that browse
+    a store (n5-universe's, so Fiji's) parse: one link per entry, directories ending in /."""
+    from html import escape
+
+    items = "".join(f'<li><a href="{escape(e)}">{escape(e)}</a></li>' for e in entries)
+    title = f"Directory listing for {escape(path)}"
+    return (
+        f'<!DOCTYPE HTML><html><head><meta charset="utf-8"><title>{title}</title></head>'
+        f"<body><h1>{title}</h1><hr><ul>{items}</ul><hr></body></html>\n"
+    )
 
 
 async def _watch_disconnect(request: Request, claim: demand.Claim) -> None:

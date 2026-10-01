@@ -25,6 +25,23 @@ hands out this form; the plain form always serves the current pipeline.
 Internally arrays are numpy C order `(z, y, x)`. N5 and precomputed list axes x-first, so
 their metadata and keys are reversed relative to zarr.
 
+The group and each level also answer as directories, for clients that browse a store
+rather than name its keys: a path ending in `/`, or a group or level path asked for with
+HTML first in `Accept` (as browsers and Java's HTTP client send), gets a listing in the
+form Python's `http.server` writes, with the metadata keys and one `sN/` per level, never
+the chunks. That is how Fiji's N5 viewer finds the levels (n5's HTTP access lists them;
+checked with n5 4.0.1 and n5-zarr 2.0.1 for N5, zarr v2 and v3). Clients that ask for
+`*/*`, as Neuroglancer, tensorstore and zarr-python do, get the metadata at those paths as
+before. Precomputed has no directories.
+
+| client | reads | checked |
+| ------ | ----- | ------- |
+| Neuroglancer | all four formats | the docs' demos |
+| Fiji / BigDataViewer (n5-universe) | N5, zarr v2, zarr v3, and browses the levels | n5's HTTP access reading every format and listing the levels; the Fiji application itself not run |
+| zarr-python, dask, napari's zarr reader | zarr v2, v3 | zarr-python 3.4 and dask reading a pipeline over HTTP |
+| tensorstore | all four formats | `tests/test_clients.py`, against a running server |
+| webKnossos | zarr v2, v3, N5, precomputed | not run; it asks for byte ranges only of sharded data, which the server does not produce |
+
 ## Compression
 
 `Zarr2Frontend`, `Zarr3Frontend` accept `compressor="gzip" | "zstd" | "blosc" | "none"`;

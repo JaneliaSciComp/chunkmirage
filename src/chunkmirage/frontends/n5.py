@@ -21,6 +21,8 @@ _LEVEL_ATTR_RE = re.compile(r"^s(\d+)/attributes\.json$")
 class N5Frontend(Frontend):
     name = "n5"
     neuroglancer_scheme = "n5"
+    root_keys = ("attributes.json",)
+    level_keys = ("attributes.json",)
 
     def __init__(self, compressor: str = "gzip", level: int | None = None):
         if compressor not in ("gzip", "raw", "none"):
