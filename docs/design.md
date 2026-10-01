@@ -272,11 +272,12 @@ blocks still wanted, the finest level goes first: a viewer asks for coarser leve
 same place to show while the fine chunks compute, and those placeholders are worth fitting
 only once nothing finer waits (on the EASI-FISH zoom the full-resolution chunks on screen
 were answered after a median 103 s instead of 166 s, the same blocks fitted in all). Within
-a level the latest burst of requests goes first, in the order the client sent them, which is
-its own priority; a block asked for again joins the current burst. Three run at once, so the
-GPU fits one while the next ones read, and the rest cannot flood the network. The page reports the queue as it goes: blocks fitting and waiting per level, those dropped
-  because nobody waits for them any more, fitted per level, and how much of what was read
-  came from the cache. Fed the same affine and
+a level the first asked for goes first. (Taking the latest burst of requests first was tried
+and removed: nothing measured it, and a client that stops wanting a block cancels its claim
+anyway.) Three run at once, so the GPU fits one while the next ones read, and the rest
+cannot flood the network. The page reports the queue as it goes: blocks fitting and waiting
+per level, those dropped because nobody waits for them any more, fitted per level, and how
+much of what was read came from the cache. Fed the same affine and
   levels (the page's "same in Python" command carries them), its refined
   full-resolution chunks of the fly templates match Python's to a median 0.005 µm in the
   field (0.03 µm at the 95th percentile), as close as PyTorch on CUDA and on the CPU come

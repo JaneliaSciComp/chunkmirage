@@ -139,7 +139,7 @@ the server responsive. Expensive work inside a request goes through a queue of i
 with a few slots (three for `register://`'s refined blocks, whose fits share the GPU): a
 job is shared by every request that needs it, dropped unrun once none of them waits any
 more, and kept if it had started. Among waiting jobs the finest level goes first, then the
-latest burst of requests, then the client's own order within it. A request waiting on
+first asked for. A request waiting on
 queued work gives its compute slot up meanwhile, so requests that need nothing expensive
 never wait behind ones that do. Work asked for from Python, with no request behind it, is
 never dropped. Ten requests for

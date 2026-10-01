@@ -46,18 +46,17 @@ def _settle():
     time.sleep(0.05)
 
 
-def test_the_finest_level_goes_first_then_the_latest_burst():
+def test_the_finest_level_goes_first_then_the_first_asked():
     queue, order = demand.Queue(slots=1), []
     release = _blocked(queue)
-    threads = [_ask(queue, "level 2", 2, order), _ask(queue, "level 1", 1, order)]
-    _settle()
-    time.sleep(demand.BURST_S + 0.05)  # a later burst of requests, at levels 0 and 1
-    threads += [_ask(queue, "level 0", 0, order), _ask(queue, "level 1, later", 1, order)]
-    _settle()
+    threads = []
+    for key, level in (("level 2", 2), ("level 1", 1), ("level 0", 0), ("level 1, later", 1)):
+        threads.append(_ask(queue, key, level, order))
+        _settle()  # asked in this order
     release.set()
     for t in threads:
         t.join(5)
-    assert order == ["level 0", "level 1, later", "level 1", "level 2"]
+    assert order == ["level 0", "level 1", "level 1, later", "level 2"]
 
 
 def test_work_nobody_waits_for_is_dropped_unrun():
