@@ -276,12 +276,10 @@ chunkmirage serve "register://$E/NP31_R2_2_1_SS00090_FMRFa_546_Proc_647_1x_Centr
 turn about y) and tilted about 22° in the z-y plane. Level 3 (the default, 54 M voxels)
 solves in 20 s on an RTX 2080 Ti, and levels 2 to 0 are fitted as you zoom. Whether round 2
 is instead a mirror image (z alone reversed, as a stack taken the other way round would be)
-the images cannot say: the brain is nearly symmetric, so with `mirrored=true` the search
-finds a tilted mirror that correlates as well (0.826 against 0.822), and full-resolution
-chunks split between the two. The half turn needs the smaller field afterwards (a median
-0.2 µm against 0.5 µm), and the acquisition metadata fits it (both stacks scanned in the
-same direction, the sample moved on the stage), so it is kept here; `mirrored=true` is
-there for whoever knows otherwise.
+the images cannot say: the brain is nearly symmetric, and a tilted mirror, given as the
+affine, correlates as well (0.826 against 0.822), full-resolution chunks splitting between
+the two. The half turn needs the smaller field afterwards (a median 0.2 µm against 0.5 µm),
+so the search's rotation is kept; whoever knows the round was a mirror gives its affine.
 Three full-resolution chunks in the tissue correlate with the fixed image at 0.75, 0.64 and
 0.86 through the level-3 field, and at 0.85, 0.77 and 0.87 through blocks fitted with the
 command above. Measured with blocks of 128³ voxels, the window matters most: 7 gives 0.79,
@@ -297,13 +295,15 @@ faster the longer it is looked at.
 `affine=auto` finds the starting affine from the images (the coarsest solved level of
 each, halved to a few hundred thousand voxels): their intensity moments are matched, centre
 to centre and principal axis to principal axis, the best-correlated of the orientations
-that do not mirror the image is kept (with `mirrored=true`, of those that do), and the 12
+that do not mirror the image is kept, and the 12
 numbers are then fitted by gradient ascent
 on the normalized cross-correlation at two resolutions, as the browser page does. The
 moments assume both images show the same whole object; a crop of one needs an affine given.
-Handedness is the caller's to say, not the search's: on a nearly symmetric specimen a mirror
-correlates as well as the right rotation while swapping left and right (on the fly
-templates exactly as well, 0.872, and 226 µm from the published affine). A found affine is
+A mirror image is not searched for: on a nearly symmetric specimen a mirror correlates as
+well as the right rotation while swapping left and right (on the fly templates exactly as
+well, 0.872, and 226 µm from the published affine), and a fit cannot reach one from a
+rotation (it would pass through a matrix that flattens the volume). An affine with a
+negative determinant, such as z reversed, is used as given. A found affine is
 remembered per image pair, like the solves.
 
 `show=pair` serves a `(c, z, y, x)` volume whose two channels are the fixed image's
@@ -321,7 +321,6 @@ re-solves when you type new settings, the viewer keeping its camera.
 | --------- | ------- | ------- |
 | `fixed` | (required) | the fixed image: anything `open_source` reads, with the same spatial units as `<moving>`; percent-encode it if it has a query |
 | `affine` | identity | fixed-to-moving affine in physical units, C order: a `.npy` or text file with a 4×4 or 3×4 matrix, or its 12 or 16 values inline, row by row; `auto` finds one from the images |
-| `mirrored` | `false` | the moving image is a mirror image of the fixed one (one axis reversed, as when a stack is taken the other way round): `affine=auto` then tries only mirrored orientations. Correlation cannot tell handedness on a nearly symmetric specimen |
 | `fixed_channel`, `moving_channel` | `0` | the channel each image is matched on, for images with a `c` axis |
 | `levels` | from the coarsest with ≥ 16 voxels on every axis to the finest with ≤ 2²⁵ | fixed-image levels to solve on, coarse to fine, e.g. `6,5,4`; each is matched with the moving level nearest its voxel size |
 | `iterations` | `100` | Adam steps per level: one value, one per level, or one per level with the refined ones; `0` leaves the affine alone (no GPU needed) |

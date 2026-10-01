@@ -49,10 +49,6 @@ export interface RegisterParams {
    */
   affine?: string | null;
   /**
-   * The moving image is a mirror image of the fixed one (one axis reversed, as when a stack is acquired the other way round), for affine=auto: the search then tries only mirrored orientations. Correlation cannot tell handedness on a nearly symmetric specimen.
-   */
-  mirrored?: boolean;
-  /**
    * The fixed image's channel to match on, for images with a c axis.
    */
   fixed_channel?: number;

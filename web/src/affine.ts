@@ -1,6 +1,6 @@
 // The affine to start a registration from when none is given. The images' centres and
 // principal axes are matched first (their intensity moments), which leaves each axis's sign
-// open: of the orientations that do not mirror the image (with `mirrored`, of those that do), the one that correlates best is
+// open: of the orientations that do not mirror the image, the one that correlates best is
 // kept. Then the 12 numbers are fitted by gradient ascent on the normalized cross-correlation,
 // coarse to fine. A few hundred thousand voxels are enough, so this runs on the CPU.
 // Images are {norm, shape, voxel, origin} (C order z, y, x, physical units), as the page
@@ -30,7 +30,7 @@ const pause = () => new Promise<void>((r) => setTimeout(r, 0));  // let the page
 
 /** The affine as rows [A | t], and the correlation (on the fit's finest copy) with no
  * affine, after the moments, and after the fit. */
-export async function findAffine(fixed: Volume, moving: Volume, onProgress: (p: Progress) => void = () => {}, mirrored = false): Promise<FoundAffine> {
+export async function findAffine(fixed: Volume, moving: Volume, onProgress: (p: Progress) => void = () => {}): Promise<FoundAffine> {
   const t0 = performance.now();
   const fs = [fixed], ms = [moving];
   // stages: the finest copy within MAX_FIT_VOXELS, after one coarser if that is big enough
@@ -47,7 +47,7 @@ export async function findAffine(fixed: Volume, moving: Volume, onProgress: (p: 
     // A = Vm sqrt(em) S / sqrt(ef) Vf^T: takes the fixed image's second moments to the moving one's
     const D = [0, 1, 2].map((k) => (Math.sqrt(em[k] / ef[k]) * s[k]));
     const A = [0, 1, 2].map((r) => [0, 1, 2].map((c) => Vm[r][0] * D[0] * Vf[c][0] + Vm[r][1] * D[1] * Vf[c][1] + Vm[r][2] * D[2] * Vf[c][2]));
-    if ((det(A) < 0) !== mirrored) continue;  // the other handedness (the caller's to say: correlation cannot tell)
+    if (det(A) < 0) continue;  // a mirror: not searched for (images cannot tell it on a symmetric specimen; give it as an affine)
     const v = ncc(F0, M0, A, cm, cf).value;  // the fixed centre goes to the moving centre
     if (!best || v > best.v) best = { v, A };
   }

@@ -349,11 +349,6 @@
           "default": null,
           "description": "The fixed-to-moving affine in physical units, C order: a .npy or text file holding a 4x4 or 3x4 matrix, or its 12 or 16 values inline, row by row; or auto, to find one from the images' intensity moments and a correlation fit. Default: identity."
         },
-        "mirrored": {
-          "default": false,
-          "description": "The moving image is a mirror image of the fixed one (one axis reversed, as when a stack is acquired the other way round), for affine=auto: the search then tries only mirrored orientations. Correlation cannot tell handedness on a nearly symmetric specimen.",
-          "type": "boolean"
-        },
         "fixed_channel": {
           "default": 0,
           "description": "The fixed image's channel to match on, for images with a c axis.",

@@ -307,11 +307,12 @@ much of what was read came from the cache. Fed the same affine and
 * With the affine left empty the page finds one before the field (`affine.ts`, on the CPU:
   a few hundred thousand voxels are enough). It matches the two images' intensity
   moments, centre to centre and principal axis to principal axis, which leaves the axes'
-  signs open; of the four orientations that do not mirror the image (with the page's
-  "mirrored" box, `mirrored=true` in Python, of the four that do), the best correlated is
-  kept. Handedness is left to the user because correlation cannot tell it on a nearly
+  signs open; of the four orientations that do not mirror the image, the best correlated is
+  kept. Mirrors are not searched for, since correlation cannot tell handedness on a nearly
   symmetric specimen: on the fly templates a mirror scores exactly as well (0.872) while
-  226 µm from the published affine. Then it fits the 12 numbers by gradient ascent on the normalized
+  226 µm from the published affine. (A switch to search mirrors instead was tried and
+  removed: nothing tells a user when to turn it on.) A mirror image is registered by giving
+  its affine. Then it fits the 12 numbers by gradient ascent on the normalized
   cross-correlation, at two resolutions. On the fly templates, which start 58 µm apart
   (mean distance from where the published affine puts each voxel), that takes the
   correlation from 0.14 to 0.84 (moments) and 0.87 (fit), and ends 2 µm from the published
