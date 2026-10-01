@@ -61,3 +61,25 @@ export interface StoreStats { requests: number; hits: number; fetches: number; f
  * gives up first. */
 export type Reply = { status: number; body: string | ArrayBuffer; type: string } | { status: number; type: string; stream: true } | null;
 export type Later = { body: ArrayBuffer } | { error: string };
+
+// ------------------------------------------------ the pipeline page and its Pyodide workers
+/** One view a pipeline page serves: chunkmirage's PipelineSpec, as far as the browser goes. */
+export interface PipelineView {
+  source: string;                    // stack://, flip://, an OME-Zarr or N5 group
+  select?: Record<string, number>;   // pin non-spatial axes, e.g. {c: 1, t: 0}
+  ops?: Record<string, unknown>[];   // op specs, as the CLI and REST API take them
+  chunk: number[];                   // output chunks, z, y, x
+}
+export interface ViewInfo {
+  dtype: string; halo: number[]; lead: number; unit: string;
+  levels: { shape: number[]; voxel: number[]; origin: number[] }[];
+}
+export type ToPyWorker =
+  | { type: "setup"; views: Record<string, PipelineView> }
+  | { type: "chunk"; reqId: number; view: string; level: number; index: number[] }
+  | { type: "sample"; reqId: number; view: string; ps: number[] };
+export type FromPyWorker =
+  | { type: "ready"; views: Record<string, ViewInfo> }
+  | { type: "chunk"; reqId: number; body: ArrayBuffer }
+  | { type: "sample"; reqId: number; values: number[] }
+  | { type: "error"; reqId?: number; message: string };

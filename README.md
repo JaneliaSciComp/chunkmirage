@@ -140,6 +140,8 @@ class MyModel(Op):
         return run_my_network(block)
 ```
 
+Demos that run in the browser with nothing to install: **https://yuriyzubov.github.io/chunkmirage/browser/** (see [Demos](docs/demos.md)).
+
 Full documentation: **https://yuriyzubov.github.io/chunkmirage/** (built from `docs/` with MkDocs; run `uv run mkdocs serve` locally).
 
 See [docs/design.md](docs/design.md) for the architecture, language/stack rationale,

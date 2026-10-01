@@ -55,22 +55,20 @@ describe shipped features as future work.
    `register://`'s deformable registration on the viewer's GPU, reading OME-Zarr straight
    from its URLs (see the [design notes](design.md#client-side-browser-roadmap)), and
    serves the registered volume to Neuroglancer through a service worker, computed by web
-   workers. The docs site hosts it with its own Neuroglancer build. What remains, in order:
-    * A gallery. An index page of cards, each a JSON pipeline spec plus viewer settings,
-      opened by one generic page that builds its form from the schema, embeds Neuroglancer
-      and shows the same pipeline as a `chunkmirage serve` command. The registration page
-      becomes a card. This is the first, smallest piece of structured sources (item 5).
+   workers. The docs site hosts it with its own Neuroglancer build, and a gallery of demos
+   whose pipelines run chunkmirage's own ops in the page through Pyodide (see
+   [Demos](demos.md)). What remains, in order:
+    * Cards built from the schema: a form for each card's parameters, so a visitor edits the
+      pipeline as the control page edits a server's.
     * Ops on data nobody hosts. `synthetic://` ported to TypeScript (a hash of world
       coordinates, exact at every scale), the pointwise and filter ops as WebGPU compute
       shaders, `label` on the CPU, each with a parity test against Python on seeded synthetic
       data. Cards: a filter chain, morphology on shells, the same volume served as zarr v2,
       v3, N5 and precomputed by the service worker, a 4096³ pyramid that costs nothing.
-    * Real public data: OpenOrganelle's bucket allows any origin, so a card can run a live
-      filter chain on jrc_hela-2 with nothing copied at deploy time.
     * A layer of where `refine` has fitted the field and how well (each block's
       correlation before and after), in both engines.
     * User code, in two tiers. A `python` op holding a block-to-block function runs in the
-      page through Pyodide (numpy, scipy and scikit-image ship with it) and natively in
+      page through Pyodide (as the built-in ops already do there) and natively in
       Python, where the server takes it only from the command line or a spec file, never
       through the REST API. Array functions exported to ONNX run on the GPU in both engines
       (ONNX Runtime and ONNX Runtime Web).

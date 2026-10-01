@@ -22,15 +22,17 @@ export class Claim {
 
 export class Cancelled extends Error { constructor() { super("cancelled: no request wants this any more"); } }
 
-interface Job {
-  run: () => Promise<Float32Array>; level: number; seq: number;  // seq: when first asked for
+interface Job<T> {
+  run: () => Promise<T>; level: number; seq: number;  // seq: when first asked for
   demand: number;  // requests holding a claim on it
-  resolve: (v: Float32Array) => void; reject: (e: unknown) => void; onDrop: () => void;
+  resolve: (v: T) => void; reject: (e: unknown) => void; onDrop: () => void;
 }
 
-/** Jobs waiting, in the order described at the top. */
-class Queue {
-  private waiting = new Map<string, Job>();
+/** Jobs waiting, in the order described at the top; `slots` of them run at once. */
+export class Queue<T = Float32Array> {
+  private slots: number;
+  constructor(slots = SLOTS) { this.slots = slots; }
+  private waiting = new Map<string, Job<T>>();
   private active = new Map<string, number>();  // running: key -> level
   dropped = 0;  // waiting fits no request wanted any more, never run
   onChange: () => void = () => {};  // a fit waiting, started, done or dropped
@@ -44,9 +46,9 @@ class Queue {
   }
 
   /** A new fit, wanted by one request; `onDrop` runs, synchronously, if it is dropped unrun. */
-  submit(key: string, level: number, run: () => Promise<Float32Array>, onDrop: () => void): Promise<Float32Array> {
+  submit(key: string, level: number, run: () => Promise<T>, onDrop: () => void): Promise<T> {
     return new Promise((resolve, reject) => {
-      const job: Job = { run, level, resolve, reject, onDrop, seq: ++this.seq, demand: 1 };
+      const job: Job<T> = { run, level, resolve, reject, onDrop, seq: ++this.seq, demand: 1 };
       this.waiting.set(key, job);
       this.pump();
       this.onChange();
@@ -68,8 +70,8 @@ class Queue {
   }
 
   private pump() {
-    while (this.active.size < SLOTS && this.waiting.size) {
-      let best: [string, Job] | null = null;
+    while (this.active.size < this.slots && this.waiting.size) {
+      let best: [string, Job<T>] | null = null;
       for (const e of this.waiting) if (!best || before(e[1], best[1])) best = e;
       const [key, job] = best!;
       this.waiting.delete(key);
@@ -82,7 +84,7 @@ class Queue {
 /** Which of two waiting fits goes first: the finer level (a client asking for one place at
  * two levels, as a viewer does to show a coarse placeholder while the fine chunk computes,
  * wants the finer one; coarser fits run when nothing finer waits), then the first asked for. */
-function before(a: Job, b: Job): boolean {
+function before<T>(a: Job<T>, b: Job<T>): boolean {
   return a.level !== b.level ? a.level < b.level : a.seq < b.seq;
 }
 

@@ -4,5 +4,5 @@
     "lib": ["ES2023", "WebWorker"],
     "types": []
   },
-  "include": ["src/sw.ts", "src/chunks.ts"]
+  "include": ["src/sw.ts", "src/chunks.ts", "src/pyworker.ts", "src/raw.d.ts"]
 }

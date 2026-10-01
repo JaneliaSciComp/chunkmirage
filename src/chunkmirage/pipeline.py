@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 from pydantic import BaseModel, Field
 
+from chunkmirage import fused
 from chunkmirage.cache import LRUCache
 from chunkmirage.core import ArrayInfo, Box
 from chunkmirage.ops.base import Op, ops_from_specs
@@ -111,41 +112,17 @@ def _fused_stage(
     sum of halos so the cropped centre is correct.
     """
     prev_info = prev.info
-    info = prev_info
-    for op in ops:
-        info = op.output_info(info)
     # An op may consume leading axes (the channels of a stack:// source, for `contacts`):
-    # those are read whole, and the halo pads the axes the output keeps.
-    lead = prev_info.ndim - info.ndim
-    if lead < 0:
-        raise ValueError(
-            f"ops {[op.name for op in ops]} add axes ({prev_info.ndim} -> {info.ndim}), which a"
-            " stage cannot serve yet"
-        )
-    ndim = info.ndim
-    info = info.with_(chunk_shape=tuple(chunk_shape)[len(chunk_shape) - ndim :])
-    total_halo = tuple(sum(op.halo_for(ndim)[a] for op in ops) for a in range(ndim))
+    # those are read whole, and the halo pads the axes the output keeps (chunkmirage.fused,
+    # which the browser engine runs too).
+    info, lead, total_halo = fused.plan(prev_info, ops)
+    info = info.with_(chunk_shape=tuple(chunk_shape)[len(chunk_shape) - info.ndim :])
 
     def compute(idx: tuple[int, ...]) -> np.ndarray:
         out_box = info.chunk_box(idx)
-        padded = out_box.pad(total_halo)
-        in_box = Box((0,) * lead + padded.start, prev_info.shape[:lead] + padded.stop)
+        in_box = fused.input_box(prev_info, out_box, lead, total_halo)
         block = prev.read_padded(in_box, edge=True)  # no step at the volume border
-        box = in_box  # where the block sits, in the axes it currently has
-        for op in ops:
-            result = op.apply_at(block, box)
-            if result.ndim < ndim or result.shape[-ndim:] != block.shape[-ndim:]:
-                raise ValueError(
-                    f"op {op.name!r} changed block shape {block.shape} -> {result.shape}"
-                )
-            if result.ndim < block.ndim:  # this op consumed the leading axes
-                drop = block.ndim - result.ndim
-                box = Box(box.start[drop:], box.stop[drop:])
-            block = result
-        if block.ndim != ndim:
-            raise ValueError(f"ops left a block of {block.ndim} axes for an output of {ndim}")
-        crop = out_box.relative_to(padded)
-        return np.asarray(block[crop.slices()], dtype=info.dtype)
+        return fused.run(ops, block, in_box, out_box, info)
 
     return ChunkedSource(info, compute, cache, key)
 
