@@ -95,3 +95,23 @@ def test_label_unique_per_chunk_and_size_filter(synth):
         synth, [{"op": "threshold", "low": 120}, {"op": "label"}], chunk_shape=(32, 32, 32)
     )
     assert len(np.unique(p0.chunk(0, ia_idx))) >= len(np.unique(a))
+
+
+def test_the_mandelbulb_is_inside_at_its_centre_and_reaches_deep_levels():
+    """synthetic://mandelbulb: 255 (inside) at the centre, a small escape time at the
+    corners, 4 x 256 voxels per level down to its finest, and float64 coordinates, so a
+    level of an array 2^40 voxels across still computes."""
+    from chunkmirage.sources.synthetic import _mandelbulb
+
+    full = (256, 256, 256)
+    assert _mandelbulb((128, 128, 128), (129, 129, 129), 1, full).item() == 255
+    assert 0 < _mandelbulb((0, 0, 0), (1, 1, 1), 1, full).item() < 20
+    ms = open_source("synthetic://mandelbulb?shape=1048576,1048576,1048576&chunk=32,32,32")
+    assert len(ms) == 13 and ms[-1].info.shape == (256, 256, 256)
+    d = 2**40
+    row = _mandelbulb(
+        (d // 2, d // 2, int(d * 0.6)), (d // 2 + 1, d // 2 + 1, int(d * 0.6) + 64), 1, (d,) * 3
+    )
+    assert (
+        row.dtype == np.float32 and row.shape == (1, 1, 64) and 0 <= row.min() <= row.max() <= 255
+    )

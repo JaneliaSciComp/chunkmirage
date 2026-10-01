@@ -16,6 +16,7 @@ export interface CardLayer {
   alpha?: number;            // image layers drawn over others: opacity at full intensity; segmentations: opacity
   additive?: boolean;        // image layers: add to what is below (channels of one image)
   shader?: string;           // image layers: a Neuroglancer shader of its own, over the above
+  volume?: boolean;          // image layers: volume rendered in 3-D panels
 }
 
 interface Card { id: string; title: string; blurb: string; image: string; data: string; command: string }
@@ -24,6 +25,8 @@ export interface PipelineCard extends Card {
   views: Record<string, PipelineView>;
   layers: CardLayer[];
   panels: string[][];        // layer names per panel, side by side, each an x-y slice
+  layouts?: string[];        // or each its own: "xy", "xz", "yz", "3d"
+  turn?: number[];           // 3-D panels: the view's rotation (a quaternion)
   position: number[];        // full-resolution voxels of the first view, along its axes
   zoom: number;              // full-resolution voxels per screen pixel
   orientation?: number[];    // the slices' rotation (a quaternion), e.g. north up for a map
@@ -75,6 +78,24 @@ const SITES: [string, string][] = [  // NASA's 5 m south-pole elevation maps: id
 ];
 const RIDGE = `${DEMS}/Site01/Site01.tif`;
 const TILE = [1, 256, 256];  // a map's tiles
+const SIDE = 2 ** 28;  // the Mandelbulb's array: 2^28 voxels across, 21 levels (2^30 overflows Neuroglancer's stack)
+const BULB = `synthetic://mandelbulb?shape=${SIDE},${SIDE},${SIDE}&voxel_size=1&unit=nm`;
+const BULB_SLICE = `#uicontrol float period slider(min=4, max=200, default=48)
+void main() {
+  float v = toNormalized(getDataValue()) * 255.0;  // 4 x the escape iteration; 255 inside
+  if (v > 254.5) { emitRGB(vec3(0.02)); return; }
+  emitRGB(0.5 + 0.5 * cos(6.2832 * (v / period + vec3(0.0, 0.33, 0.67))));
+}`;
+const BULB_VOLUME = `#uicontrol float period slider(min=4, max=200, default=48)
+#uicontrol float skin slider(min=0, max=1, default=0.5)
+#uicontrol float core slider(min=0, max=0.2, default=0)
+void main() {
+  float v = toNormalized(getDataValue()) * 255.0;  // 4 x the escape iteration; 255 inside
+  if (v > 254.5) { emitRGBA(vec4(0.98, 0.85, 0.55, core)); return; }  // inside: a faint core
+  if (v < 32.0) { emitTransparent(); return; }  // well outside: clear
+  // just outside the surface, where points take longest to escape: the bulb's skin
+  emitRGBA(vec4(0.5 + 0.5 * cos(6.2832 * (v / period + vec3(0.0, 0.33, 0.67))), skin * (v - 32.0) / 223.0));
+}`;
 const MUR = "https://mur-sst.s3.us-west-2.amazonaws.com/zarr-v1/analysed_sst";
 const LAND = "if (isnan(v)) { emitRGB(vec3(0.18)); return; }";  // MUR has no value on land
 const KELVIN = `#uicontrol invlerp temperature(range=[298, 305])
@@ -88,8 +109,24 @@ void main() {
 
 export const CARDS: DemoCard[] = [
   {
+    kind: "link", id: "register-fly", image: "cards/register-fly.jpg",
+    title: "Two fly brains registered on your GPU in seconds, served at every resolution",
+    blurb: "Not just an affine: one is found from the images, then a deformable field is solved on top of it on this computer's GPU in seconds, and the moving brain is served through both at every resolution, chunk by chunk. Before (as stored), after, and the field (how far the deformable part moved each point) side by side.",
+    data: "FCWB and JRC2018F templates (OME-Zarr RFC-5 examples)",
+    href: "register.html",
+    command: "uv run python examples/fly_brain_registration.py",
+  },
+  {
+    kind: "link", id: "register-efish", image: "cards/register-efish.jpg",
+    title: "Two EASI-FISH rounds aligned: finer deformation fields fitted where you zoom",
+    blurb: "Two imaging rounds of one fly brain: an affine found from the images, a deformable field solved on top of it on the GPU, and finer fields fitted block by block only where you zoom in.",
+    data: "Janelia EASI-FISH, fly central brain, rounds 1 and 2 (janelia-data-examples)",
+    href: `register.html?fixed=${ROUND1}&moving=${ROUND2}&refine=3&iterations=100,40,40,40&window=15,31,31,31`,
+    command: `chunkmirage serve 'register://${ROUND2}?fixed=${encodeURIComponent(ROUND1)}&affine=auto&refine=3&iterations=100,40,40,40&window=15,31,31,31&show=pair' --python-viewer`,
+  },
+  {
     kind: "pipeline", id: "contacts", image: "cards/contacts.jpg",
-    title: "Organelle contact sites, computed where you look",
+    title: "Organelle contact sites in a whole cell, computed as you pan",
     blurb: "Where mitochondria and the ER come within 12 nm of each other in a whole HeLa cell (122 gigavoxels of FIB-SEM). The organelles are OpenOrganelle's published predictions thresholded at 128, where the predicted distance to their boundary crosses zero (the first step of its own segmentations): mitochondria labelled as objects in green, the ER in magenta, and the contact sites between them as objects of their own. Each chunk on screen is computed as you pan, by chunkmirage's threshold, label and contacts ops running in this page; nothing is precomputed.",
     data: "OpenOrganelle jrc_hela-2 (Heinrich et al., Nature 2021): EM and the COSEM mitochondria and ER predictions",
     views: {
@@ -112,7 +149,7 @@ export const CARDS: DemoCard[] = [
   },
   {
     kind: "pipeline", id: "spots", image: "cards/spots.jpg",
-    title: "Single mRNA molecules across a fly brain",
+    title: "Every mRNA spot in a fly brain, found as you browse",
     blurb: "An EASI-FISH round of a whole fly central brain, its two FISH channels' spots found chunk by chunk as you browse (a difference of Gaussians and its local maxima): the step a pipeline usually tunes on a crop, here on the whole brain. Left, the images; right, the spots found in them.",
     data: "Janelia EASI-FISH, fly central brain, round 1 (janelia-data-examples)",
     views: {
@@ -134,8 +171,50 @@ export const CARDS: DemoCard[] = [
     command: `chunkmirage serve '${ROUND1}' --select c=1,t=0 \\\n  --op spots:threshold=10,radius=2 --chunk 16,128,128 --python-viewer`,
   },
   {
+    kind: "pipeline", id: "mandelbulb", image: "cards/mandelbulb.jpg",
+    title: "A 3-D fractal to zoom into forever, computed chunk by chunk",
+    blurb: "The Mandelbulb, the best known 3-D fractal, as a zarr array 2^28 voxels across, 21 levels deep: 10^25 voxels that exist nowhere. Each chunk is computed when the viewer asks for it, by chunkmirage's synthetic source running in this page; zoom into the slice on the left and finer levels iterate more, so new buds keep appearing. Right, the whole bulb volume rendered from its coarse levels. Colours are escape times, the same at every level.",
+    data: "Computed: the power-8 Mandelbulb (White and Nylander, 2009), chunkmirage's synthetic://mandelbulb",
+    views: {
+      slice: { source: BULB, chunk: [256, 1, 256] },
+      volume: { source: BULB, chunk: [32, 32, 32] },
+    },
+    layers: [
+      { name: "slice", view: "slice", type: "image", shader: BULB_SLICE },
+      { name: "bulb", view: "volume", type: "image", shader: BULB_VOLUME, volume: true },
+    ],
+    panels: [["slice"], ["bulb"]], layouts: ["xz", "3d"], turn: [0.28, 0.2, 0.06, 0.94],
+    position: [SIDE / 2, SIDE / 2, SIDE / 2], zoom: SIDE / 700,
+    command: `chunkmirage serve '${BULB}' --chunk 256,1,256 --python-viewer`,
+  },
+  {
+    kind: "map", id: "moon", image: "cards/moon.jpg",
+    title: "Landing ground at the Moon's south pole: slope and relief computed per map tile",
+    blurb: "NASA's 5 m elevation maps of 26 places at the Moon's south pole, where Artemis astronauts may land (from the Lunar Orbiter Laser Altimeter, 16 to 30 km across). Everything on the map is computed for each tile as the map asks, by chunkmirage's hillshade and slope ops in this page: the relief, lit by a sun you can move (shading only, no cast shadows), and in green the ground flat enough to land on, under the slope you choose. Pick a site to compute another. The map is OpenLayers, reading the page's chunks as GeoZarr: no Neuroglancer here.",
+    data: "LOLA 5 m south-pole elevation (Barker et al.), cloud-optimized GeoTIFFs (USGS Astrogeology, AWS Open Data)",
+    views: {
+      relief: { source: RIDGE, chunk: TILE, ops: [{ op: "hillshade", azimuth: 135, altitude: 10 }] },
+      slope: { source: RIDGE, chunk: TILE, ops: [{ op: "slope" }] },
+    },
+    projection: { code: "IAU_2015:30135", extent: [-1095700, -1095700, 1095700, 1095700] },  // south polar stereographic, the Moon's sphere
+    layers: [
+      { name: "Relief", view: "relief", style: { color: ["array", ["/", ["band", 1], 255], ["/", ["band", 1], 255], ["/", ["band", 1], 255], ["case", [">", ["band", 1], 0], 1, 0]] } },
+      {
+        name: "Flat enough to land", view: "slope",
+        style: { variables: { flat: 8 }, color: ["case", ["<", ["band", 1], ["var", "flat"]], ["color", 40, 220, 90, 0.55], ["color", 0, 0, 0, 0]] },
+      },
+    ],
+    controls: [
+      { label: "Sun from", unit: "°", min: 0, max: 345, step: 15, view: "relief", op: 0, param: "azimuth" },
+      { label: "Sun height", unit: "°", min: 1, max: 45, step: 1, view: "relief", op: 0, param: "altitude" },
+      { label: "Flat: slope under", unit: "°", min: 2, max: 20, step: 1, layer: "Flat enough to land", variable: "flat", value: 8 },
+    ],
+    sites: { label: "Site", views: ["relief", "slope"], options: SITES.map(([id, name]) => ({ name, url: `${DEMS}/${id}/${id}.tif` })) },
+    command: `chunkmirage serve '${RIDGE}' \\\n  --op hillshade:azimuth=135,altitude=10 --chunk 256,256 --python-viewer`,
+  },
+  {
     kind: "pipeline", id: "hurricanes", image: "cards/hurricanes.jpg",
-    title: "Hurricanes' cold wakes, day by day",
+    title: "Hurricanes' cold wakes: each day's change across 4 trillion sea temperatures",
     blurb: "NASA's daily sea-surface temperature of all the oceans since 2002, a kilometre apart: 4 trillion values, read straight from their public store. The change from the day before is computed for each chunk as you look, by chunkmirage's diff op running in this page. On 29 August 2005 Katrina leaves a cold swath across the Gulf of Mexico; scroll on through the days to Rita's, a month later. Left, the temperature (25 to 32 °C); right, its change since the day before (±2 °C).",
     data: "MUR sea-surface temperature, v4.1 (NASA JPL; AWS Open Data)",
     views: {
@@ -173,52 +252,11 @@ export const CARDS: DemoCard[] = [
     command: `chunkmirage serve '${MUR}' --op diff:axis=0,lag=1 --chunk 1,256,256 --python-viewer`,
   },
   {
-    kind: "map", id: "moon", image: "cards/moon.jpg",
-    title: "Where to land at the Moon's south pole",
-    blurb: "NASA's 5 m elevation maps of 26 places at the Moon's south pole, where Artemis astronauts may land (from the Lunar Orbiter Laser Altimeter, 16 to 30 km across). Everything on the map is computed for each tile as the map asks, by chunkmirage's hillshade and slope ops in this page: the relief, lit by a sun you can move (shading only, no cast shadows), and in green the ground flat enough to land on, under the slope you choose. Pick a site to compute another. The map is OpenLayers, reading the page's chunks as GeoZarr: no Neuroglancer here.",
-    data: "LOLA 5 m south-pole elevation (Barker et al.), cloud-optimized GeoTIFFs (USGS Astrogeology, AWS Open Data)",
-    views: {
-      relief: { source: RIDGE, chunk: TILE, ops: [{ op: "hillshade", azimuth: 135, altitude: 10 }] },
-      slope: { source: RIDGE, chunk: TILE, ops: [{ op: "slope" }] },
-    },
-    projection: { code: "IAU_2015:30135", extent: [-1095700, -1095700, 1095700, 1095700] },  // south polar stereographic, the Moon's sphere
-    layers: [
-      { name: "Relief", view: "relief", style: { color: ["array", ["/", ["band", 1], 255], ["/", ["band", 1], 255], ["/", ["band", 1], 255], ["case", [">", ["band", 1], 0], 1, 0]] } },
-      {
-        name: "Flat enough to land", view: "slope",
-        style: { variables: { flat: 8 }, color: ["case", ["<", ["band", 1], ["var", "flat"]], ["color", 40, 220, 90, 0.55], ["color", 0, 0, 0, 0]] },
-      },
-    ],
-    controls: [
-      { label: "Sun from", unit: "°", min: 0, max: 345, step: 15, view: "relief", op: 0, param: "azimuth" },
-      { label: "Sun height", unit: "°", min: 1, max: 45, step: 1, view: "relief", op: 0, param: "altitude" },
-      { label: "Flat: slope under", unit: "°", min: 2, max: 20, step: 1, layer: "Flat enough to land", variable: "flat", value: 8 },
-    ],
-    sites: { label: "Site", views: ["relief", "slope"], options: SITES.map(([id, name]) => ({ name, url: `${DEMS}/${id}/${id}.tif` })) },
-    command: `chunkmirage serve '${RIDGE}' \\\n  --op hillshade:azimuth=135,altitude=10 --chunk 256,256 --python-viewer`,
-  },
-  {
     kind: "python", id: "solar", image: "cards/solar.jpg",
-    title: "A solar flare in the running difference",
+    title: "A solar flare in the running difference, frame by frame (Python only)",
     blurb: "NASA's Solar Dynamics Observatory images the sun every 6 minutes: 73 thousand 512 x 512 frames for 2014 in one array of its public machine-learning dataset. Each frame minus the one before, the running difference solar physicists watch for what changes, is computed as the viewer asks: on 10 September 2014 an X1.6 flare erupts from the centre of the disk. Left, the sun at 171 Å; right, its change in 6 minutes.",
     data: "SDO machine-learning dataset v2, AIA 171 Å, 2014 (NASA FDL; NASA's open data bucket)",
     why: "NASA's bucket does not let a browser page read it (no CORS), so this one runs from Python.",
     command: "uv run python examples/solar_flares.py",
-  },
-  {
-    kind: "link", id: "register-fly", image: "cards/register-fly.jpg",
-    title: "Register two fly brain templates on your GPU",
-    blurb: "Not just an affine: one is found from the images, then a deformable field is solved on top of it on this computer's GPU in seconds, and the moving brain is served through both at every resolution, chunk by chunk. Before (as stored), after, and the field (how far the deformable part moved each point) side by side.",
-    data: "FCWB and JRC2018F templates (OME-Zarr RFC-5 examples)",
-    href: "register.html",
-    command: "uv run python examples/fly_brain_registration.py",
-  },
-  {
-    kind: "link", id: "register-efish", image: "cards/register-efish.jpg",
-    title: "Align two EASI-FISH rounds, finer where you zoom",
-    blurb: "Two imaging rounds of one fly brain: an affine found from the images, a deformable field solved on top of it on the GPU, and finer fields fitted block by block only where you zoom in.",
-    data: "Janelia EASI-FISH, fly central brain, rounds 1 and 2 (janelia-data-examples)",
-    href: `register.html?fixed=${ROUND1}&moving=${ROUND2}&refine=3&iterations=100,40,40,40&window=15,31,31,31`,
-    command: `chunkmirage serve 'register://${ROUND2}?fixed=${encodeURIComponent(ROUND1)}&affine=auto&refine=3&iterations=100,40,40,40&window=15,31,31,31&show=pair' --python-viewer`,
   },
 ];

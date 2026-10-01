@@ -168,9 +168,10 @@ Early, but working:
   python-neuroglancer viewer that keeps the camera while layers refetch.
 
 * **In the browser:** registration on WebGPU, and pipelines of the package's own ops in
-  Pyodide: organelle contact sites, FISH spots, hurricanes' cold wakes in NASA's sea
-  temperature, and landing ground at the Moon's south pole drawn by OpenLayers from the
-  page's GeoZarr ([gallery](https://yuriyzubov.github.io/chunkmirage/browser/)).
+  Pyodide: organelle contact sites, FISH spots, a 3-D fractal 2^28 voxels across computed
+  as you zoom, landing ground at the Moon's south pole drawn by OpenLayers from the page's
+  GeoZarr, and hurricanes' cold wakes in NASA's sea temperature
+  ([gallery](https://yuriyzubov.github.io/chunkmirage/browser/)).
 
 Not yet: GPU ops (only registration uses the GPU), MCP server. See the
 [roadmap](docs/roadmap.md).

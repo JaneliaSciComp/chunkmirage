@@ -81,9 +81,18 @@ generates data on the fly from voxel coordinates. Nothing is stored, so the volu
 as large as you like, and each scale level is the same function sampled at a coarser
 spacing, so the pyramid is exact (`s1[z,y,x] == s0[2z,2y,2x]`). Kinds: `blobs` (Gaussian
 blobs), `shells` (hollow spheres, membrane-like), `noise` (fractal value noise), `julia`
-(a 3-D slice of a quaternion Julia set); combine with `+`, e.g. `blobs+noise`. Useful for
-demos and for stress-testing pipelines without I/O. Generation is vectorised numpy, so
-the server's threadpool runs it on all cores.
+(a 3-D slice of a quaternion Julia set), `mandelbulb` (the power-8 Mandelbulb, to zoom
+into); combine with `+`, e.g. `blobs+noise`. Useful for demos and for stress-testing
+pipelines without I/O. Generation is vectorised numpy, so the server's threadpool runs it
+on all cores, and the browser engine's Pyodide workers run the same module for a view
+whose source is `synthetic://` (nothing is read).
+
+`mandelbulb` spans `[-1.25, 1.25]` on every axis in float64 from integer indices, so an
+array 2^28 voxels across (21 levels, 10^25 voxels) still resolves its finest voxels. Its
+value is 4 × the smooth escape iteration (255 inside), the same at every level, so a
+colour stays a colour as the viewer changes level; and it is the one kind whose levels are
+not exactly the same function: a level iterates `10 + 3 log2(256 / voxels across)` times,
+more the finer it is, as fractal zoomers do, so zooming in resolves new detail.
 
 ### Scene sources (OME-Zarr 0.6 transformations)
 

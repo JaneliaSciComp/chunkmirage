@@ -47,6 +47,6 @@ ctx.onmessage = async ({ data: m }: MessageEvent<ToReader>) => {
     else if (m.type === "read") { const body = await read(m.view, m.level, m.lo, m.hi); ctx.postMessage({ reqId: m.reqId, value: body } satisfies Answer, [body]); }
     else if (m.type === "sample") ctx.postMessage({ reqId: m.reqId, value: await sample(m.view, m.ps) } satisfies Answer);
   } catch (e) {
-    ctx.postMessage({ reqId: m.reqId, error: (e as Error)?.message ?? String(e) } satisfies Answer);
+    ctx.postMessage({ reqId: m.reqId, error: String((e as Error)?.message ?? e) } satisfies Answer);
   }
 };

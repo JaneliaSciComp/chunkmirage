@@ -18,6 +18,8 @@ const CONVENTIONS = [
   { uuid: "689b58e2-cf7b-45e0-9fff-9cfc0883d6b4", name: "spatial:" },
 ];
 const KEPT_BYTES = 256 * 2 ** 20;  // computed chunks kept for clients that refetch
+/** Sources the Pyodide workers compute themselves (chunkmirage's own Python), nothing read. */
+const computedSource = (url: string) => url.startsWith("synthetic://");
 
 type Request<R> = R extends unknown ? Omit<R, "reqId"> : never;
 type Answered = null | { status: number; body: string | ArrayBuffer; type: string }
@@ -33,7 +35,7 @@ class Rpc<Req extends { reqId: number }> {
       const p = this.pending.get(m.reqId);
       if (!p) return;
       this.pending.delete(m.reqId);
-      if ("error" in m) p.reject(new Error(m.error)); else p.resolve(m.value as never);
+      if ("error" in m) p.reject(new Error(typeof m.error === "string" ? m.error : JSON.stringify(m.error))); else p.resolve(m.value as never);
     };
     worker.onerror = (e) => { for (const p of this.pending.values()) p.reject(new Error(e.message || "a worker failed")); this.pending.clear(); };
   }
@@ -83,12 +85,16 @@ export class Engine {
     await this.plan(views);
   }
 
-  /** Open `views`' sources (once each) and plan their ops in every worker. */
+  /** Open `views`' sources (once each: read ones by the reader, computed ones described by
+   * a worker) and plan their ops in every worker. */
   private async plan(views: Record<string, PipelineView>): Promise<void> {
-    const opened = await this.reader!.call<Record<string, SourceInfo>>({ type: "open", views });
-    const specs = Object.fromEntries(Object.entries(views).map(([v, spec]) => {
+    const entries = Object.entries(views), read = entries.filter(([, s]) => !computedSource(s.source));
+    const opened = read.length ? await this.reader!.call<Record<string, SourceInfo>>({ type: "open", views: Object.fromEntries(read) }) : {};
+    for (const [v, s] of entries) if (computedSource(s.source)) opened[v] = await this.pool[0].call<SourceInfo>({ type: "describe", source: s.source });
+    const specs = Object.fromEntries(entries.map(([v, spec]) => {
       const s = opened[v], shape = [...(s.channels > 1 ? [s.channels] : []), ...s.levels[0].shape];
-      return [v, { ops: spec.ops ?? [], shape, dtype: s.dtype, chunk: spec.chunk, voxel: s.levels[0].voxel }];
+      const source = computedSource(spec.source) ? spec.source : undefined;
+      return [v, { ops: spec.ops ?? [], shape, dtype: s.dtype, chunk: spec.chunk, voxel: s.levels[0].voxel, source }];
     }));
     const plans = await Promise.all(this.pool.map((w) => w.call<Record<string, Plan>>({ type: "plan", views: specs })));
     for (const [v, s] of Object.entries(opened)) this.infos[v] = { ...s, out: plans[0][v].dtype, lead: plans[0][v].lead, halo: plans[0][v].halo };
@@ -167,13 +173,13 @@ export class Engine {
     const outLo = index.map((i, a) => i * C[a]), outHi = outLo.map((o, a) => Math.min(o + C[a], l.shape[a]));
     const inLo = outLo.map((o, a) => o - halo[a]), inHi = outHi.map((o, a) => o + halo[a]);
     const lo = inLo.map((o) => Math.max(o, 0)), hi = inHi.map((o, a) => Math.min(o, l.shape[a]));
-    const data = await this.reader!.call<ArrayBuffer>({ type: "read", view, level, lo, hi });
+    const data = computedSource(this.views[view].source) ? null : await this.reader!.call<ArrayBuffer>({ type: "read", view, level, lo, hi });
     const lead = v.lead ? [v.channels] : [];
     const worker = this.pool[this.turn++ % this.pool.length];
     return worker.call<ArrayBuffer>({
-      type: "compute", view, data, readShape: [...lead, ...hi.map((h, a) => h - lo[a])],
+      type: "compute", view, level, data, readShape: [...lead, ...hi.map((h, a) => h - lo[a])],
       inLo, inHi, outLo, outHi, full: [...lead, ...l.shape], voxel: l.voxel,
-    }, [data]);
+    }, data ? [data] : []);
   }
 
   private keep(key: string, body: ArrayBuffer) {
@@ -197,7 +203,10 @@ export class Engine {
     if (pending) chunks.claim(key);  // another request waits for it too
     else {
       pending = chunks.submit(key, level, () => this.compute(view, level, index), () => { this.counts.dropped++; })
-        .then((b) => { this.counts.computed++; this.keep(key, b); return b; }, (e) => { if (!(e instanceof Cancelled)) this.counts.failed++; throw e; })
+        .then((b) => { this.counts.computed++; this.keep(key, b); return b; }, (e) => {
+          if (!(e instanceof Cancelled)) { this.counts.failed++; console.error(`chunk ${key}: ${String((e as Error).message ?? e).trim().split("\n").slice(-3).join(" / ")}`); }
+          throw e;
+        })
         .finally(() => { this.inflight.delete(key); this.onChange(); });
       this.inflight.set(key, pending);
     }

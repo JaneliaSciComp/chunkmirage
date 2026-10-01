@@ -51,21 +51,24 @@ async function viewerState(card: PipelineCard) {
       type: "image", name: l.name, source,
       ...(glsl ? { shader: glsl } : {}),
       ...(l.additive ? { blend: "additive" } : {}),
+      ...(l.volume ? { volumeRendering: "on" } : {}),
     };
   }));
   const main = document.querySelector("main")!;
+  const zoom = card.zoom * dims[names[0]][0] / Math.min(...Object.values(dims).map((d) => d[0]));
   return {
     // the viewer's position is physical, in voxels: the source's origin is part of it
     dimensions: dims, position: order.map((a) => card.position[a] + 0.5 + l0.origin[a] / l0.voxel[a]),
     // Neuroglancer counts zoom in the smallest scale among the dimensions, whatever their
     // units (a day in seconds beside 0.01 degrees, say): the card's is in voxels of x
-    displayDimensions: names, crossSectionScale: card.zoom * dims[names[0]][0] / Math.min(...Object.values(dims).map((d) => d[0])),
+    displayDimensions: names, crossSectionScale: zoom,
+    ...(card.layouts?.includes("3d") ? { projectionScale: zoom * 900, ...(card.turn ? { projectionOrientation: card.turn } : {}) } : {}),  // the 3-D panel's height, the same voxels
     ...(card.orientation ? { crossSectionOrientation: card.orientation } : {}),
     ...(card.playback ? { velocity: { [card.playback.axis]: { velocity: card.playback.velocity, atBoundary: "stop", paused: true } } } : {}),
     crossSectionBackgroundColor: "#000000", showAxisLines: false, layers,
     layout: card.panels.length === 1
-      ? { type: "viewer", layers: card.panels[0], layout: "xy" }
-      : { type: "row", children: card.panels.map((names) => ({ type: "viewer", layers: names, layout: "xy" })) },
+      ? { type: "viewer", layers: card.panels[0], layout: card.layouts?.[0] ?? "xy" }
+      : { type: "row", children: card.panels.map((names, i) => ({ type: "viewer", layers: names, layout: card.layouts?.[i] ?? "xy" })) },
     selectedLayer: { visible: false }, size: [main.clientWidth, main.clientHeight],
   };
 }
