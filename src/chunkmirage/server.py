@@ -39,6 +39,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
+from chunkmirage import demand
 from chunkmirage.cache import LRUCache
 from chunkmirage.frontends import FRONTENDS, ChunkRequest, Frontend, Metadata, get_frontend
 from chunkmirage.neuroglancer import source_url, viewer_link, viewer_state
@@ -146,7 +147,9 @@ def set_compute_threads(n: int) -> None:
     the GIL, so this is the server's parallelism for chunk work; pure-Python ops serialise."""
     import anyio
 
-    anyio.to_thread.current_default_thread_limiter().total_tokens = int(n)
+    # ``n`` compute at once (demand.Slots); threads of requests waiting on queued work (their
+    # slot given up meanwhile) or for a slot must not run the pool out
+    anyio.to_thread.current_default_thread_limiter().total_tokens = int(n) + 1024
 
 
 def create_app(
@@ -158,6 +161,9 @@ def create_app(
     allow_edit: bool = True,
     threads: int | None = None,
 ) -> Starlette:
+    # chunk requests computing at once (the rest wait their turn, or give theirs up while they
+    # wait on queued work)
+    slots = demand.Slots(int(threads) if threads else 40)
     if isinstance(datasets, DatasetRegistry):
         registry = datasets
     else:
@@ -191,6 +197,7 @@ def create_app(
                 {
                     "op": op.name,
                     "halo": list(op.halo_for(p.info(0).ndim)),
+                    "cached": op.cached,
                     "doc": (op.__doc__ or "").strip(),
                 }
                 for op in p.ops
@@ -300,6 +307,10 @@ def create_app(
     async def cache_clear(request: Request):
         return JSONResponse({"cleared": registry.cache.invalidate()})
 
+    async def queue_stats(request: Request):
+        queues = {name: q.stats() for name, q in demand.queues.items()}
+        return JSONResponse({"requests": slots.stats(), **queues})
+
     async def serve(request: Request):
         name = request.path_params["name"]
         fmt = request.path_params["format"]
@@ -308,6 +319,18 @@ def create_app(
         fe = fronts.get(fmt)
         if p is None or fe is None:
             return Response("not found", 404)
+        # A group or level asked for as a directory (a trailing /) or as a page (HTML first in
+        # Accept, as browsers and Java's HTTP client send) gets a listing: that is how Fiji's
+        # N5 viewer finds the levels. Metadata clients (Neuroglancer, tensorstore, zarr-python)
+        # ask for */* and get the metadata, as before.
+        directory = request.url.path.endswith("/")
+        page = request.headers.get("accept", "").lstrip().startswith("text/html")
+        if directory or page:
+            entries = fe.listing(p, rest)
+            if entries is not None:
+                return HTMLResponse(_listing_html(request.url.path, entries))
+            if directory:
+                return Response("not found", 404)
         try:
             resolved = fe.resolve(p, rest)
         except ValueError as e:
@@ -321,13 +344,25 @@ def create_app(
                 headers={"Cache-Control": "no-cache"},
             )
         assert isinstance(resolved, ChunkRequest)
-        if await request.is_disconnected():
-            return Response(status_code=499)  # client cancelled before we started
+        # The request claims the work it needs; if its client disconnects, the claim is
+        # cancelled and work nobody else wants is dropped: a turn it waits for, and queued
+        # expensive work (``demand``).
+        claim = demand.Claim()
+        watch = asyncio.create_task(_watch_disconnect(request, claim))
         try:
-            body = await run_in_threadpool(_compute_and_encode, p, fe, resolved)
+            body = await run_in_threadpool(
+                demand.claimed, claim, _compute_and_encode, p, fe, resolved, slots=slots
+            )
+        except demand.Cancelled:
+            return Response(status_code=499)  # the client stopped waiting
+        except asyncio.CancelledError:
+            claim.cancel()  # the server cancelled the request (its client went): its work too
+            raise
         except Exception as e:  # noqa: BLE001
             log.exception("chunk %s/%s/%s failed", name, fmt, rest)
             return JSONResponse({"error": str(e)}, 500)
+        finally:
+            watch.cancel()
         headers = {"Cache-Control": "no-cache"}
         if (
             fe.name == "precomputed"
@@ -352,6 +387,7 @@ def create_app(
         Route("/api/events", events),
         Route("/api/cache", cache_stats, methods=["GET"]),
         Route("/api/cache", cache_clear, methods=["DELETE"]),
+        Route("/api/queue", queue_stats, methods=["GET"]),
         Route("/{name}/@{digest}/{format}", serve),
         Route("/{name}/@{digest}/{format}/{path:path}", serve),
         Route("/{name}/{format}", serve),
@@ -371,8 +407,7 @@ def create_app(
 
     @contextlib.asynccontextmanager
     async def lifespan(_app):
-        if threads:
-            set_compute_threads(threads)
+        set_compute_threads(threads or 40)
         yield
 
     app = Starlette(routes=routes, middleware=middleware, lifespan=lifespan)
@@ -412,6 +447,26 @@ async def event_stream(
             yield ": keepalive\n\n"
             last_beat = time.monotonic()
         await asyncio.sleep(poll_seconds)
+
+
+def _listing_html(path: str, entries: list[str]) -> str:
+    """A directory listing as Python's http.server writes one, which HTTP clients that browse
+    a store (n5-universe's, so Fiji's) parse: one link per entry, directories ending in /."""
+    from html import escape
+
+    items = "".join(f'<li><a href="{escape(e)}">{escape(e)}</a></li>' for e in entries)
+    title = f"Directory listing for {escape(path)}"
+    return (
+        f'<!DOCTYPE HTML><html><head><meta charset="utf-8"><title>{title}</title></head>'
+        f"<body><h1>{title}</h1><hr><ul>{items}</ul><hr></body></html>\n"
+    )
+
+
+async def _watch_disconnect(request: Request, claim: demand.Claim) -> None:
+    """Cancel ``claim`` when the client disconnects (it aborted the request)."""
+    while not await request.is_disconnected():
+        await asyncio.sleep(0.25)
+    claim.cancel()
 
 
 def _compute_and_encode(p: Pipeline, fe: Frontend, req: ChunkRequest) -> bytes:

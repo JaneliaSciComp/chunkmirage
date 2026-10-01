@@ -33,6 +33,8 @@ _DTYPES = {
 class Zarr3Frontend(Frontend):
     name = "zarr3"
     neuroglancer_scheme = "zarr3"
+    root_keys = ("zarr.json",)
+    level_keys = ("zarr.json",)
 
     def __init__(self, compressor: str = "gzip", level: int | None = None):
         self.compressor = Compressor(compressor, level)

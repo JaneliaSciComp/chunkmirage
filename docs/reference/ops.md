@@ -26,15 +26,36 @@ new op; `tests/test_docs.py` requires it.
 |             | `radius`    | 2       | spherical structuring element radius in voxels; halo = `2 × radius + 1` |
 | `label`     | `min_size`  | 0       | connected components of a mask, output uint32 segment ids; drop components smaller than this |
 |             | `connectivity` | 1    | 1 = 6-connected, 2 = 18, 3 = 26 |
+| `spots`     | `sigma`     | 1.0     | bright diffraction-limited spots (single mRNAs in smFISH, EASI-FISH): difference of Gaussians, local maxima above `threshold`, each drawn as a small ball whose uint32 id comes from its position, so it is the same whichever chunk finds it; spot size in y-x voxels; needs a `z, y, x` volume (`select` a channel) |
+|             | `sigma_z`   | 0.6     | spot size in z voxels |
+|             | `threshold` | 10      | least difference-of-Gaussians response, image intensity units |
+|             | `separation`| 2       | spots closer than this (y-x voxels) are one |
+|             | `radius`    | 1       | ball drawn per spot, y-x voxels (0 marks one voxel) |
+| `contacts`  | `radius`    | 3.0     | contact sites between the first two channels of a `stack://` source: voxels within this many voxels (Euclidean) of both structures; output uint8 mask; halo = `radius + 1` |
+|             | `a_low`     | 128     | values at or above this in the first channel are the first structure (128 for a uint8 probability map, 1 for a segmentation) |
+|             | `b_low`     | 128     | the same for the second channel |
 
 `label` numbers components **per chunk** (salted by chunk position so ids never collide).
 An object spanning chunks therefore gets one colour per chunk. That is the honest per-chunk
 preview of a global operation; see [FAQ](../faq.md#where-does-it-fall-short).
 
 Ops that need to know *where* a block sits override `apply_at(block, box)` instead of
-`apply(block)`; `label` uses it for the salt.
+`apply(block)`; `label` uses it for the salt, `spots` for its ids.
 
-None of the built-ins cache their output (`cache=False`); everything except `threshold`,
+`examples/fish_spots.py` runs `spots` on both FISH channels of a public EASI-FISH round of
+a whole fly central brain (3.4 gigavoxels per channel), next to the raw channels, with the
+threshold editable at a prompt. Only the chunks on screen are searched, and a chunk's spots
+are identical to those found in one pass over a larger block.
+
+Ops over several images take the channels of a
+[`stack://` source](../concepts/formats.md#stack-sources-several-images-as-one-arrays-channels)
+and return an array without the channel axis, as `contacts` does (its `output_info` drops the
+axis). The pipeline reads every channel and pads only the spatial axes by the halo; ops after
+it in the same stage see the plain spatial block.
+
+None of the built-ins cache their output by default (`cache=False`); a pipeline turns it on
+for one op with `"cache": true` in its spec ([caching](../concepts/caching.md#why-not-cache-every-stage)).
+Everything except `threshold`,
 `cast` and `scale` needs the `ops` extra (scipy).
 
 ## CLI syntax
@@ -42,6 +63,7 @@ None of the built-ins cache their output (`cache=False`); everything except `thr
 ```
 --op threshold:low=120,high=200
 --op '{"op": "gaussian", "sigma": 2}'
+--op gaussian:sigma=2,cache=true
 ```
 
 Values are parsed as JSON where possible, else strings. Repeat `--op` to chain.

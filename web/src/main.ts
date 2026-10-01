@@ -2,12 +2,14 @@
 // field on the GPU (solver.ts), and serves the before, after and field views to Neuroglancer
 // through the service worker (sw.ts) and the chunk workers (chunks.ts). Form defaults and the
 // "same in Python" command come from chunkmirage's RegisterParams, via its JSON Schema.
-import { affineDistance, findAffine, type FoundAffine } from "./affine";
+import { affineDistance, findAffine, halve, type FoundAffine } from "./affine";
+import { Blocks, normalize } from "./blocks";
+import { Cancelled, Claim, queue } from "./demand";
 import type { RegisterParams } from "./generated/chunkmirage";
 import schema from "./generated/chunkmirage.schema.json";
 import { nearestLevel, openImage, percentiles, prod, readLevel, type Image, type Numbers } from "./ome";
-import { gpu, solve } from "./solver";
-import type { Affine, ControlGrid, FromWorker, Reply, ToWorker, ViewKind, Volume } from "./types";
+import { gpu, solve, type Settings } from "./solver";
+import type { Affine, ControlGrid, FromWorker, Later, Reply, StoreStats, ToWorker, ViewKind, Volume } from "./types";
 
 const CHUNK = [16, 128, 128];    // chunks of the registered volume, z, y, x
 const MAX_VOXELS = 1 << 22;      // finest automatic level: the whole level sits on the GPU
@@ -18,12 +20,13 @@ const SHORT: Record<string, string> = { micrometer: "µm", nanometer: "nm", mill
 // this page's share of /virtual/ (getRandomValues: randomUUID exists on secure pages only)
 const PAGE = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
 
-type FieldName = "fixed" | "moving" | "fixed_channel" | "moving_channel" | "affine" | "levels" | "iterations" | "smooth" | "grid";
+type FieldName = "fixed" | "moving" | "fixed_channel" | "moving_channel" | "affine" | "mirrored" | "levels" | "iterations" | "smooth" | "grid" | "window" | "refine" | "halo" | "block";
 type Form = Record<FieldName, string>;
 interface Ranges { fixed: number[]; moving: number[]; field?: number }
 interface Sources { before?: string; after?: string; field?: string }
 interface Session {
   fixed: Image; moving: Image; pool: Pool; views: Map<string, ViewKind>;
+  blocks: Map<string, Map<number, Blocks>>;  // per view, the levels whose field is fitted where it is viewed
   before?: { id: string; key: string; url: string };  // the moving image placed by the affine alone
   sources?: Sources;  // what the viewer shows
   ranges?: Ranges; rangesKey?: string; shown?: boolean;
@@ -33,7 +36,8 @@ interface Channels { fixedChannel: number; movingChannel: number }
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const form = $<HTMLFormElement>("form");
 const input = (name: FieldName) => form.elements.namedItem(name) as HTMLInputElement | HTMLTextAreaElement;
-const values = () => Object.fromEntries(new FormData(form)) as Form;
+// the form's values; a checkbox reads "true" when ticked, "" when not, as a link carries it
+const values = () => ({ ...Object.fromEntries(new FormData(form)), mirrored: String((input("mirrored") as HTMLInputElement).checked) }) as Form;
 
 // RegisterParams' properties: the form's defaults and lower bounds
 const REGISTER = schema.$defs.RegisterParams.properties as Record<string,
@@ -71,19 +75,33 @@ function toQuery(p: RegisterParams): string {
 /** The form's registration as a chunkmirage command, served to any viewer or library. After a
  * run it names the levels the page solved on: automatic levels differ, since Python allows
  * bigger ones (a server GPU has more memory than a browser gets). */
+const numbers = (text: string) => text.split(",").map((v) => Number(v.trim())).filter((v) => !Number.isNaN(v));
+
 function showCommand(solvedLevels?: number[]) {
   const f = values();
-  let affine: string | null = null;
-  try { affine = f.affine.trim() ? parseAffine(f.affine).flat().map((v) => +v.toPrecision(6)).join(",") : null; } catch { /* shown once fixed */ }
+  let affine = "auto";  // Python finds one as this page does, until this page has
+  try { if (f.affine.trim()) affine = parseAffine(f.affine).flat().map((v) => +v.toPrecision(6)).join(","); } catch { /* shown once fixed */ }
   const params: RegisterParams = {
-    fixed: f.fixed, affine,
+    fixed: f.fixed, affine, mirrored: f.mirrored === "true" && affine === "auto",
     fixed_channel: Number(f.fixed_channel), moving_channel: Number(f.moving_channel),
-    levels: f.levels.trim() ? f.levels.split(",").map(Number) : solvedLevels ?? null,
-    iterations: [Number(f.iterations)], smooth: Number(f.smooth), grid: Number(f.grid),
+    levels: f.levels.trim() ? numbers(f.levels) : solvedLevels ?? null,
+    iterations: numbers(f.iterations), smooth: Number(f.smooth), grid: Number(f.grid),
+    window: numbers(f.window) as RegisterParams["window"], refine: Number(f.refine), halo: Number(f.halo),
+    block: numbers(f.block) as RegisterParams["block"],
   };
   $("pyCommand").textContent = f.fixed && f.moving
     ? `chunkmirage serve 'register://${f.moving}?${toQuery(params)}'` : "chunkmirage serve 'register://<moving>?fixed=<fixed>'";
-  $("pyNote").hidden = Boolean(f.affine.trim());
+}
+
+/** `values` for every level, refined ones included: one for all, one per solved level (the
+ * refined ones take the last) or one per level, as register.py's per_level. */
+function perLevel(name: string, values: number[], solved: number, all: number): number[] {
+  if (![1, solved, all].includes(values.length)) {
+    const counts = [...new Set([1, solved, all])].sort((a, b) => a - b).join(" or ");
+    throw new Error(`${name} needs ${counts} values: one, one per level, or one per level with the refined ones`);
+  }
+  const v = values.length === 1 ? Array(all).fill(values[0]) : values;
+  return [...v, ...Array(all - v.length).fill(v[v.length - 1])];
 }
 
 // ------------------------------------------------ the example
@@ -164,17 +182,20 @@ async function preview() {
 }
 
 // ------------------------------------------------ chunk workers, and the service worker
+type FieldRequest = Extract<FromWorker, { type: "field" }>;
+
 class Pool {
   private pending = new Map<number, { resolve: (b: ArrayBuffer) => void; reject: (e: Error) => void }>();
   private seq = 0;
   private workers: Worker[];
   private starting = new Map<Worker, { resolve: () => void; reject: (e: Error) => void }>();
 
-  constructor(n: number) {
+  constructor(n: number, onField: (w: Worker, m: FieldRequest) => void) {
     this.workers = Array.from({ length: n }, () => {
       const w = new Worker(new URL("./chunks.ts", import.meta.url), { type: "module" });
       w.onmessage = ({ data: m }: MessageEvent<FromWorker>) => {
         if (m.type === "ready") return this.starting.get(w)?.resolve();
+        if (m.type === "field") return onField(w, m);
         if (m.type === "error" && m.reqId === undefined) return this.starting.get(w)?.reject(new Error(m.message));
         const p = m.reqId === undefined ? undefined : this.pending.get(m.reqId);
         if (!p) return;
@@ -192,10 +213,11 @@ class Pool {
     })));
   }
   broadcast(msg: ToWorker) { for (const w of this.workers) w.postMessage(msg); }
-  chunk(msg: Omit<Extract<ToWorker, { type: "chunk" }>, "reqId">, key: number): Promise<ArrayBuffer> {
+  /** A chunk computed by a worker, and the request's id (its field requests carry it). */
+  chunk(msg: Omit<Extract<ToWorker, { type: "chunk" }>, "reqId">, key: number): { reqId: number; body: Promise<ArrayBuffer> } {
     // neighbouring chunks go to one worker, which then reuses its reads
     const reqId = ++this.seq, w = this.workers[key % this.workers.length];
-    return new Promise((resolve, reject) => { this.pending.set(reqId, { resolve, reject }); w.postMessage({ ...msg, reqId }); });
+    return { reqId, body: new Promise((resolve, reject) => { this.pending.set(reqId, { resolve, reject }); w.postMessage({ ...msg, reqId }); }) };
   }
   terminate() { for (const w of this.workers) w.terminate(); }
 }
@@ -203,14 +225,84 @@ class Pool {
 navigator.serviceWorker?.addEventListener("message", async (e: MessageEvent<{ path: string }>) => {
   const port = e.ports[0];
   if (!port) return;
-  let reply: Reply;
-  try { reply = await answer(e.data.path); } catch (err) { reply = { status: 500, body: String(err), type: "text/plain" }; }
-  port.postMessage(reply, reply?.body instanceof ArrayBuffer ? [reply.body] : []);
+  let a: Answer;
+  try { a = await answer(e.data.path); } catch (err) { a = { status: 500, body: String(err), type: "text/plain" }; }
+  if (!a || !("pending" in a)) return port.postMessage(a, a && "body" in a && a.body instanceof ArrayBuffer ? [a.body] : []);
+  // a chunk: the head now, the body once computed; the client may give up in between
+  port.onmessage = (m: MessageEvent<{ cancel?: boolean }>) => { if (m.data?.cancel) a.claim.cancel(); };
+  port.postMessage({ status: a.status, type: a.type, stream: true } satisfies Reply);
+  a.pending.then(
+    (body) => port.postMessage({ body } satisfies Later, [body]),
+    (err) => port.postMessage({ error: String((err as Error)?.message ?? err) } satisfies Later),
+  ).finally(() => port.close());
 });
+
+/** A reply now, or a chunk being computed for a request holding `claim` on the blocks it needs. */
+type Answer = Reply | { status: number; type: string; pending: Promise<ArrayBuffer>; claim: Claim };
+const claims = new Map<number, Claim>();  // chunk request id -> its claim, while it is computed
+let cancelled = 0;  // chunk requests their client gave up on before they were answered
 
 const asJson = (o: object): Reply => ({ status: 200, body: JSON.stringify(o), type: "application/json" });
 
-async function answer(path: string): Promise<Reply> {  // a request under /virtual/<page>/<view>/..., or null if not ours
+/** A worker's request for the field over a window of a refined level's lattice: fitted
+ * block by block here, on the GPU, and sent back. */
+async function fieldRequest(w: Worker, m: FieldRequest) {
+  const blocks = session?.blocks.get(m.id)?.get(m.level);
+  const reply = (grid: ControlGrid | null, error?: string) =>
+    w.postMessage({ type: "field", reqId: m.reqId, grid, error } satisfies ToWorker, grid ? [grid.values.buffer] : []);
+  if (!blocks) return reply(null, `no fitted field for view ${m.id}, level ${m.level}`);
+  try { reply(await blocks.window(m.lo, m.hi, claims.get(m.chunk))); } catch (e) {
+    if (!(e instanceof Cancelled)) console.error(e);
+    reply(null, String((e as Error).message ?? e));
+  }
+}
+
+/** The service worker's store cache counters, or null without one. */
+function storeStats(): Promise<StoreStats | null> {
+  const sw = navigator.serviceWorker?.controller;
+  if (!sw) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const ch = new MessageChannel();
+    ch.port1.onmessage = (e: MessageEvent<StoreStats>) => resolve(e.data);
+    setTimeout(() => resolve(null), 1000);
+    sw.postMessage({ type: "store-stats" }, [ch.port2]);
+  });
+}
+
+let blocksTimer: ReturnType<typeof setInterval> | undefined;
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** What the fits where the viewer looks are doing: fitting and waiting now, fitted so far per
+ * level and the GPU time, and how much of what was read came from the store cache. Kept
+ * current while there is work. */
+let showing = false, again = false;  // one refresh at a time; calls meanwhile make one more
+async function showBlocks(s: Session) {
+  if (showing) { again = true; return; }
+  showing = true;
+  try { await refreshBlocks(s); } finally { showing = false; }
+  if (again) { again = false; void showBlocks(s); }
+}
+
+async function refreshBlocks(s: Session) {
+  const all = [...new Set([...s.blocks.values()].flatMap((m) => [...m.values()]))];  // views share their levels' blocks
+  const n = all.reduce((k, b) => k + b.fitted, 0), secs = all.reduce((k, b) => k + b.seconds, 0);
+  const levels = (m: Map<number, number>) => [...m].sort((a, b) => a[0] - b[0]).map(([l, k]) => `level ${l}: ${k}`).join(", ");
+  const per = new Map(all.filter((b) => b.fitted).map((b) => [b.lattice.level, b.fitted]));
+  const { running, waiting } = queue.byLevel();
+  const now = queue.running + queue.queued
+    ? `Fitting ${queue.running}${queue.running ? ` (${levels(running)})` : ""}, waiting ${queue.queued}${queue.queued ? ` (${levels(waiting)})` : ""}. ` : "";
+  const gone = queue.dropped || cancelled ? `Dropped ${plural(queue.dropped, "block")} the viewer stopped waiting for (${plural(cancelled, "chunk")} given up on). ` : "";
+  const done = n ? `Fitted ${plural(n, "block")} where you looked (${levels(per)}) in ${secs.toFixed(1)} s on the GPU.` : "Nothing fitted yet: zoom in past the solved levels.";
+  const st = await storeStats();
+  const reads = st && st.requests ? ` Images: ${(st.fetchedBytes / 2 ** 20).toFixed(0)} MB fetched, ${Math.round((100 * st.hits) / st.requests)}% of ${st.requests} reads from the cache.` : "";
+  const busy = queue.running + queue.queued;
+  $("blocks").hidden = !all.length;
+  $("blocks").textContent = now + gone + done + reads;
+  if (busy && !blocksTimer) blocksTimer = setInterval(() => void showBlocks(s), 1000);
+  if (!busy && blocksTimer) { clearInterval(blocksTimer); blocksTimer = undefined; }
+}
+
+async function answer(path: string): Promise<Answer> {  // a request under /virtual/<page>/<view>/..., or null if not ours
   const parts = path.split("/virtual/")[1]?.split("/");
   const s = session;
   if (!parts || parts[0] !== PAGE || !s) return null;
@@ -225,8 +317,13 @@ async function answer(path: string): Promise<Reply> {  // a request under /virtu
     const n = kind === "field" ? 1 : s.moving.lead, c = s.moving.names.indexOf("c");
     const channel = kind === "field" || c < 0 ? 0 : idx[c], index = idx.slice(n);
     const key = ((((level * 7 + channel) * 131 + (index[0] >> 2)) * 131 + index[1]) * 131 + index[2]) >>> 0;
-    const body = await s.pool.chunk({ type: "chunk", id: view, level, channel, index }, key);
-    return { status: 200, body, type: "application/octet-stream" };
+    const { reqId, body } = s.pool.chunk({ type: "chunk", id: view, level, channel, index }, key);
+    const claim = new Claim();
+    claims.set(reqId, claim);
+    claim.onCancel(() => { if (claims.delete(reqId)) { cancelled++; void showBlocks(s); } });
+    const pending = body.finally(() => claims.delete(reqId));
+    pending.catch(() => {});  // a cancelled chunk's failure is nobody's concern
+    return { status: 200, type: "application/octet-stream", pending, claim };
   }
   return notFound;
 }
@@ -280,19 +377,19 @@ async function startServing(fixed: Image, moving: Image): Promise<Session> {
   await navigator.serviceWorker.ready;
   if (session && session.fixed.url === fixed.url && session.moving.url === moving.url) return session;
   session?.pool.terminate();
-  const pool = new Pool(Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4) - 2)));
+  const pool = new Pool(Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4) - 2)), fieldRequest);
   await pool.setup({
     type: "setup", moving: moving.url, chunkShape: CHUNK,
     fixedLevels: fixed.levels.map((l) => ({ shape: l.shape, voxel: l.voxel, origin: l.origin })),
   });
-  session = { fixed, moving, pool, views: new Map() };
-  if (!view3dChosen) view3d.checked = prod(fixed.levels[0].shape) <= BIG_VOLUME;
+  session = { fixed, moving, pool, views: new Map(), blocks: new Map() };
   return session;
 }
 
-function publish(s: Session, id: string, affine: Affine, grid: ControlGrid | null, kind: ViewKind = "image"): string {
-  s.pool.broadcast({ type: "view", id, kind, affine, grid });
+function publish(s: Session, id: string, affine: Affine, grid: ControlGrid | null, kind: ViewKind = "image", refined: Map<number, Blocks> | null = null): string {
+  s.pool.broadcast({ type: "view", id, kind, affine, grid, refined: refined ? [...refined.values()].map((b) => b.lattice) : [] });
   s.views.set(id, kind);
+  if (refined) s.blocks.set(id, refined);
   return `zarr3://${new URL(`virtual/${PAGE}/${id}/`, location.href).href}`;
 }
 
@@ -310,7 +407,7 @@ function beforeView(s: Session, affine: Affine): string {
 /** Forget the views the viewer no longer shows, here and in the chunk workers. */
 function retain(s: Session, keep: string[]) {
   const ids = [...s.views.keys()].filter((id) => !keep.includes(id));
-  for (const id of ids) s.views.delete(id);
+  for (const id of ids) { s.views.delete(id); s.blocks.delete(id); }
   if (ids.length) s.pool.broadcast({ type: "drop", ids });
 }
 
@@ -327,11 +424,7 @@ async function images(f: Form): Promise<[Image, Image]> {
 // In 3D the brightest point along each ray is the one that moved furthest (emitIntensity; the
 // image layers get theirs from their invlerp).
 const MAX = { volumeRendering: "max", volumeRenderingDepthSamples: 128 };  // 3D: maximum intensity
-// Volume rendering asks for chunks across the whole visible volume, each computed here, so on
-// a large image it keeps the workers busy and the viewer dropping chunks: above this many
-// voxels at full resolution the 3D views start off, unless the link or the visitor says.
-const BIG_VOLUME = 1 << 27;
-const view3d = $<HTMLInputElement>("view3d");
+const view3d = $<HTMLInputElement>("view3d");  // on unless the link or the visitor says
 let view3dChosen = false;
 const FIELD_SHADER = (scale: number) => `#uicontrol float scale slider(min=${(scale / 20).toPrecision(2)}, max=${(scale * 4).toPrecision(2)}, default=${scale.toPrecision(3)})
 #uicontrol bool direction checkbox(default=false)
@@ -363,7 +456,8 @@ function viewerState(s: Session, p: Channels, sources: Sources): NgState {
     type: "image", name, source, blend: "additive", shader: shader(colour), shaderControls: { normalized: { range } }, ...(three ? MAX : {}),
     ...(img.names.includes("c") ? { localPosition: [channel] } : {}),
   });
-  const layers = [layer("fixed", `zarr3://${fixed.url}/`, "#ff4fd8", ranges.fixed, p.fixedChannel, fixed)];
+  // zarr:// has the viewer detect the version (v2 or v3); the views served here are v3
+  const layers = [layer("fixed", `zarr://${fixed.url}/`, "#ff4fd8", ranges.fixed, p.fixedChannel, fixed)];
   for (const name of ["before", "after"] as const) {
     const src = sources[name];
     if (src) layers.push(layer(name, src, "#45f07a", ranges.moving, p.movingChannel, moving));
@@ -470,7 +564,15 @@ async function run() {
     if (unitOf(fixed) !== unitOf(moving)) throw new Error(`units differ: ${unitOf(fixed)} and ${unitOf(moving)}`);
     let affine = parseAffine(f.affine);
     const auto = !f.affine.trim();  // find the affine first
-    const levels = f.levels ? f.levels.split(",").map(Number) : defaultLevels(fixed);
+    const levels = f.levels ? numbers(f.levels) : defaultLevels(fixed);
+    const solved = levels[levels.length - 1], refine = Number(f.refine) || 0, halo = Number(f.halo) || 0;
+    if (refine > solved) throw new Error(`refine=${refine}: ${solved} level(s) lie below level ${solved}, the finest solved`);
+    const iters = perLevel("iterations", numbers(f.iterations), levels.length, levels.length + refine);
+    const windows = perLevel("window", numbers(f.window), levels.length, levels.length + refine);
+    if (windows.some((w) => w < 1 || w % 2 === 0)) throw new Error(`window must be positive odd numbers, got ${windows}`);
+    const block = numbers(f.block);
+    if (block.length !== 3 || block.some((b) => !(b >= 1))) throw new Error(`block needs three sizes (z, y, x), got ${f.block}`);
+    const setting = (k: number): Settings => ({ iterations: iters[k], window: windows[k], smooth: Number(f.smooth), grid: Number(f.grid) });
     const pairs = levels.map((i) => [i, nearestLevel(moving, fixed.levels[i].voxel)]);
     const tRead = performance.now();
     const [s, read] = await Promise.all([  // the chunk workers start while the levels are read
@@ -489,16 +591,20 @@ async function run() {
     $("fieldCaption").textContent = "Field: solving…";
 
     const fr = percentiles(read[0][0].data, [0.5, 99.5]), mr = percentiles(read[0][1].data, [0.5, 99.5]);
-    const norm = (d: Numbers, [lo, hi]: number[]) => {
-      const o = new Float32Array(d.length), k = 1 / Math.max(hi - lo, 1e-12);
-      for (let i = 0; i < d.length; i++) o[i] = Math.min(1, Math.max(0, (d[i] - lo) * k));
-      return o;
-    };
-    const data: [Volume, Volume][] = read.map(([fl, ml]) => [{ ...fl, norm: norm(fl.data, fr) }, { ...ml, norm: norm(ml.data, mr) }]);
+    const raw = ({ data: d, shape, voxel, origin }: typeof read[0][0]): Volume => ({ norm: Float32Array.from(d), shape, voxel, origin });
+    const data: [Volume, Volume][] = read.map(([fl, ml]) => {
+      let [f0, m0] = [raw(fl), raw(ml)];
+      // a level too big for this GPU (the stored pyramid stops early): coarser copies of its own,
+      // made as a pyramid is (the voxels' means) and then normalized
+      while (prod(f0.shape) > MAX_VOXELS) [f0, m0] = [halve(f0), halve(m0)];
+      return [{ ...f0, norm: normalize(f0.norm, fr) }, { ...m0, norm: normalize(m0.norm, mr) }];
+    });
     const l0 = fixed.levels[0];
     const lo = l0.origin.map((o, a) => o - l0.voxel[a] / 2), hi = lo.map((v, a) => v + l0.shape[a] * l0.voxel[a]);
     $("stages").innerHTML = "";
-    const rows = levels.map((lvl, k) => stageRow(`<b>Level ${lvl}</b> · ${data[k][0].shape.join("×")} voxels`));
+    $("blocks").hidden = true;
+    const rows = levels.map((lvl, k) => stageRow(`<b>Level ${lvl}</b> · ${data[k][0].shape.join("×")} voxels`
+      + (data[k][0].shape.join() === read[k][0].shape.join() ? "" : " (halved to fit this GPU)")));
     const unit = SHORT[unitOf(fixed) ?? ""] ?? unitOf(fixed) ?? "";
     let found: FoundAffine | null = null;
     if (auto) {  // on the coarsest level; the field is then solved from it
@@ -508,7 +614,7 @@ async function run() {
         setBar(row, (stage + iteration / iterations) / stages);
         setRow(row, ".t", `fit ${stage + 1} / ${stages}`);
         setRow(row, ".sim", `similarity ${similarity?.toFixed(3)}`);
-      });
+      }, f.mirrored === "true");
       affine = fa.affine;
       const ref = exampleRef && f.fixed === exampleRef.fixed && f.moving === exampleRef.moving ? exampleRef.affine : null;
       fa.distance = ref ? affineDistance(data[0][0], affine, ref) : null;
@@ -521,9 +627,8 @@ async function run() {
     }
     showCommand(levels);
     $("summary").textContent = `Read levels ${levels.join(", ")} in ${readSecs.toFixed(1)} s. Solving the field…`;
-    const settings = { iterations: Number(f.iterations), smooth: Number(f.smooth), grid: Number(f.grid) };
     const g = await gpuReady;
-    const res = await solve(g, data, affine, [lo, hi], settings, ({ stage, iteration, iterations, similarity }) => {
+    const res = await solve(g, data, affine, [lo, hi], levels.map((_, k) => setting(k)), ({ stage, iteration, iterations, similarity }) => {
       setBar(rows[stage], iteration / iterations);
       setRow(rows[stage], ".t", `${iteration} / ${iterations}`);
       if (similarity != null) setRow(rows[stage], ".sim", `similarity ${similarity.toFixed(3)}`);
@@ -532,9 +637,18 @@ async function run() {
       setRow(rows[k], ".t", `${st.seconds.toFixed(1)} s`);
       setRow(rows[k], ".sim", `similarity ${st.first?.toFixed(3)} → ${st.final?.toFixed(3)}`);
     });
+    // below the solved levels, each refined level's field is fitted block by block as the
+    // viewer asks for chunks, from the solved field
+    const refined = new Map<number, Blocks>();
+    const pair = { fixed, moving, fixedChannel: p.fixedChannel, movingChannel: p.movingChannel, ranges: { fixed: fr, moving: mr } };
+    for (let r = 0; r < refine; r++) {
+      const i = solved - 1 - r;
+      refined.set(i, new Blocks(g, pair, affine, res.grid, i, [lo, hi], block, setting(levels.length + r), halo, solved - i));
+    }
     const afterId = `after-${++solves}`, fieldId = `field-${solves}`;
-    const after = publish(s, afterId, affine, res.grid), field = publish(s, fieldId, affine, res.grid, "field");
+    const after = publish(s, afterId, affine, res.grid, "image", refined), field = publish(s, fieldId, affine, res.grid, "field", refined);
     retain(s, [s.before!.id, afterId, fieldId]);
+    if (refine) { queue.onChange = () => void showBlocks(s); void showBlocks(s); }
     const sizes = new Float32Array(res.grid.values.length / 3);
     for (let i = 0; i < sizes.length; i++) sizes[i] = Math.hypot(res.grid.values[3 * i], res.grid.values[3 * i + 1], res.grid.values[3 * i + 2]);
     ranges.field = Math.max(percentiles(sizes, [99])[0], 1e-6);
@@ -559,7 +673,7 @@ async function run() {
 }
 
 // ------------------------------------------------ start-up
-for (const name of ["fixed_channel", "moving_channel", "iterations", "smooth", "grid"] as const) {
+for (const name of ["fixed_channel", "moving_channel", "iterations", "smooth", "grid", "window", "refine", "halo", "block"] as const) {
   const prop = REGISTER[name], el = input(name) as HTMLInputElement;
   el.value = String(prop.default);  // iterations' [100] shows as 100
   const min = prop.minimum ?? prop.exclusiveMinimum ?? prop.items?.minimum;
@@ -569,7 +683,8 @@ const query = new URLSearchParams(location.search);
 if (!query.has("fixed") && !query.has("moving")) await loadExample();
 for (const [k, v] of query) {
   const el = form.elements.namedItem(k);
-  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.value = v;
+  if (el instanceof HTMLInputElement && el.type === "checkbox") el.checked = v === "true";
+  else if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.value = v;
 }
 if (input("affine").value) {  // one row of the matrix per line
   const v = input("affine").value.split(/[\s,;]+/).filter(Boolean);
@@ -581,9 +696,9 @@ copyOnClick($("copy"), () => location.href, "Copy link to this run");
 copyOnClick($("copyPy"), () => $("pyCommand").textContent ?? "", "Copy");
 showCommand();
 if (INSECURE) { $("status").hidden = false; $("error").hidden = false; $("error").textContent = INSECURE; }
-else if (query.get("run") === "1") void run();
-else schedulePreview();
+else schedulePreview();  // a link shows its images; Register solves
 for (const k of ["fixed", "moving", "fixed_channel", "moving_channel", "affine"] as const) input(k).addEventListener("change", schedulePreview);
+input("mirrored").addEventListener("change", () => showCommand());
 if (query.has("3d")) { view3d.checked = query.get("3d") === "1"; view3dChosen = true; }
 view3d.addEventListener("change", () => {
   view3dChosen = true;

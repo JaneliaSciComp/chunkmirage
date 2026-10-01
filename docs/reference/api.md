@@ -18,6 +18,7 @@ All endpoints are CORS-open. Editing endpoints can be disabled with
 | `GET`    | `/ui`                                  | built-in control page; see [Interactivity](../concepts/interactivity.md) |
 | `GET`    | `/api/cache`                           | cache stats |
 | `DELETE` | `/api/cache`                           | clear cache |
+| `GET`    | `/api/queue`                           | work waiting and running: chunk requests (`requests`) and each queue of expensive work (`refined blocks`), per level, with what was dropped because its clients left ([caching](../concepts/caching.md#order-of-work-and-requests-given-up-on)) |
 | `GET`    | `/{name}/{format}/{path}`              | the spoofed dataset; see [Formats](../concepts/formats.md) |
 | `GET`    | `/{name}/@{digest}/{format}/{path}`    | same, with a cache-busting token |
 

@@ -49,7 +49,7 @@ def test_register_params_read_a_query():
     p = RegisterParams.from_query(
         {"fixed": "a.zarr", "levels": "6,5", "iterations": "50", "smooth": "2"}
     )
-    assert (p.levels, p.iterations, p.smooth, p.window) == ([6, 5], [50], 2.0, 7)
+    assert (p.levels, p.iterations, p.smooth, p.window) == ([6, 5], [50], 2.0, [7])
 
 
 def test_the_cli_prints_and_writes_it(tmp_path):

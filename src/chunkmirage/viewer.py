@@ -135,9 +135,14 @@ class Viewer:
                     if name in s.layers:
                         del s.layers[name]
                     continue
+                shader = getattr(p.source, "shader", None)
+                if shader:  # a source that says how to show its channels: they are the shader's
+                    self._renames.setdefault(name, {"c'": "c^"})
                 url = self._source(name, p)
                 if name in s.layers:
                     s.layers[name].source = url
+                    if shader:
+                        s.layers[name].shader = shader
                 elif is_segmentation(p):
                     layer = self._ng.SegmentationLayer(source=url)
                     if p.ops and p.ops[-1].name == "threshold":
@@ -146,7 +151,9 @@ class Viewer:
                         layer.not_selected_alpha = 0
                     s.layers[name] = layer
                 else:
-                    s.layers[name] = self._ng.ImageLayer(source=url)
+                    s.layers[name] = self._ng.ImageLayer(
+                        source=url, **({"shader": shader} if shader else {})
+                    )
 
     def close(self) -> None:
         self._unsubscribe()

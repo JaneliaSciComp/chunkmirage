@@ -13,11 +13,11 @@ import type { Affine, ControlGrid, Progress, Volume } from "./types";
 
 const WG = 256;
 const FLAT = 1e-4;  // windows with less variance than this carry no signal (registration.FLAT)
-const WINDOW: number = schema.$defs.RegisterParams.properties.window.default;  // correlation window, voxels
+export const WINDOW: number = schema.$defs.RegisterParams.properties.window.default[0];  // correlation window, voxels
 const STEP = 0.5;   // Adam learning rate, voxels of each level (registration.Settings.step)
 
-/** The page solves with one iteration count for every level. */
-export type Settings = Pick<Required<RegisterParams>, "smooth" | "grid"> & { iterations: number };
+/** One level's settings: iterations and correlation window for it, smoothness and grid spacing. */
+export type Settings = Pick<Required<RegisterParams>, "smooth" | "grid"> & { iterations: number; window: number };
 export interface Stage { shape: number[]; grid: number[]; seconds: number; first: number | null; final: number | null }
 export interface Gpu { device: GPUDevice; pipelines: Record<Kernel, GPUComputePipeline>; name: string }
 type Kernel = keyof typeof KERNELS;
@@ -57,13 +57,8 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(num_workgroups) nwg: vec
   ${body}
 }`;
 
-const KERNELS = {
-  // Moving image at affine(p + u(p)) (0 beyond it), and dJ/du's per-voxel factor.
-  warp: COMMON + /* wgsl */ `
-@group(0) @binding(1) var<storage, read> U: array<f32>;
-@group(0) @binding(2) var<storage, read> M: array<f32>;
-@group(0) @binding(3) var<storage, read_write> J: array<f32>;
-@group(0) @binding(4) var<storage, read_write> C: array<f32>;
+// The field u (bound as U) at a control-grid coordinate, and at a fixed physical point.
+const FIELD = /* wgsl */ `
 fn at_u(q: vec3<u32>) -> vec3<f32> {
   let i = ((q.x * P.gshape.y + q.y) * P.gshape.z + q.z) * 3u;
   return vec3<f32>(U[i], U[i + 1u], U[i + 2u]);
@@ -80,15 +75,25 @@ fn field(g: vec3<f32>) -> vec3<f32> {
   }
   return d;
 }
+fn displaced(x: vec3<f32>) -> vec3<f32> {
+  let g = clamp((x - P.lo.xyz) / P.sp.xyz, vec3<f32>(0.0), vec3<f32>(P.gshape.xyz) - 1.0);
+  return x + field(g);
+}`;
+
+const KERNELS = {
+  // Moving image at affine(p + u(p)) (0 beyond it), and dJ/du's per-voxel factor.
+  warp: COMMON + /* wgsl */ `
+@group(0) @binding(1) var<storage, read> U: array<f32>;
+@group(0) @binding(2) var<storage, read> M: array<f32>;
+@group(0) @binding(3) var<storage, read_write> J: array<f32>;
+@group(0) @binding(4) var<storage, read_write> C: array<f32>;` + FIELD + /* wgsl */ `
 fn mov(q: vec3<i32>) -> f32 {
   let n = vec3<i32>(P.mshape.xyz);
   if (any(q < vec3<i32>(0)) || any(q >= n)) { return 0.0; }
   return M[(u32(q.x) * P.mshape.y + u32(q.y)) * P.mshape.z + u32(q.z)];
 }` + ENTRY(/* wgsl */ `
   if (p >= P.fshape.w) { return; }
-  let x = phys(voxel(p));
-  let g = clamp((x - P.lo.xyz) / P.sp.xyz, vec3<f32>(0.0), vec3<f32>(P.gshape.xyz) - 1.0);
-  let m = to_moving(x + field(g));
+  let m = to_moving(displaced(phys(voxel(p))));
   let m0 = floor(m); let f = m - m0; let i0 = vec3<i32>(m0);
   var val = 0.0; var gr = vec3<f32>(0.0);
   for (var c = 0u; c < 8u; c++) {
@@ -106,13 +111,14 @@ fn mov(q: vec3<i32>) -> f32 {
   C[3u * p + 2u] = P.a0.z * gm.x + P.a1.z * gm.y + P.a2.z * gm.z;`),
 
   // Per level, before fitting: fixed image, its square, and "not covered by the moving
-  // image under the affine" (1) as three channels, to be box-summed.
+  // image under the starting field and the affine" (1) as three channels, to be box-summed.
   prep: COMMON + /* wgsl */ `
-@group(0) @binding(1) var<storage, read> F: array<f32>;
-@group(0) @binding(2) var<storage, read_write> S: array<f32>;` + ENTRY(/* wgsl */ `
+@group(0) @binding(1) var<storage, read> U: array<f32>;
+@group(0) @binding(2) var<storage, read> F: array<f32>;
+@group(0) @binding(3) var<storage, read_write> S: array<f32>;` + FIELD + ENTRY(/* wgsl */ `
   let N = P.fshape.w;
   if (p >= N) { return; }
-  let m = to_moving(phys(voxel(p)));
+  let m = to_moving(displaced(phys(voxel(p))));
   let top = max(vec3<f32>(P.mshape.xyz) - 1.0, vec3<f32>(1.0));
   let covered = all(m >= vec3<f32>(0.0)) && all(m <= top);
   S[p] = F[p]; S[N + p] = F[p] * F[p]; S[2u * N + p] = select(1.0, 0.0, covered);`),
@@ -274,18 +280,18 @@ async function open(): Promise<Gpu> {
   };
 }
 
-function controlShape(lo: number[], hi: number[], voxel: number[], grid: number): number[] {
-  return lo.map((l, a) => Math.max(2, Math.ceil((hi[a] - l) / (grid * voxel[a])) + 1));
+/** Control points spanning lo..hi at most `grid` voxels apart (exactly that far when the
+ * extent is a whole number of spacings, rounding error allowed for), as registration._control_shape. */
+export function controlShape(lo: number[], hi: number[], voxel: number[], grid: number): number[] {
+  return lo.map((l, a) => Math.max(2, Math.ceil((hi[a] - l) / (grid * voxel[a]) - 1e-6) + 1));
 }
 
-/** The field on a finer control grid spanning the same box: trilinear, as registration's
- * F.interpolate(align_corners=True). */
-function refine(u: Float32Array, from: number[], to: number[], lo: number[], hi: number[]): Float32Array {
-  const spacing = (n: number[]) => lo.map((l, a) => (hi[a] - l) / (n[a] - 1));
-  const old: ControlGrid = { shape: from, origin: lo, spacing: spacing(from), values: u };
-  const sp = spacing(to), out = new Float32Array(3 * prod(to)), d = [0, 0, 0];
+/** A field sampled on a control grid of `to` points spanning [lo, hi]: trilinear, as
+ * registration's F.interpolate(align_corners=True) between stages. */
+export function sampled(grid: ControlGrid, to: number[], lo: number[], hi: number[]): Float32Array {
+  const sp = lo.map((l, a) => (hi[a] - l) / (to[a] - 1)), out = new Float32Array(3 * prod(to)), d = [0, 0, 0];
   for (let z = 0, p = 0; z < to[0]; z++) for (let y = 0; y < to[1]; y++) for (let x = 0; x < to[2]; x++, p += 3) {
-    fieldAt(old, lo[0] + z * sp[0], lo[1] + y * sp[1], lo[2] + x * sp[2], d);
+    fieldAt(grid, lo[0] + z * sp[0], lo[1] + y * sp[1], lo[2] + x * sp[2], d);
     out[p] = d[0]; out[p + 1] = d[1]; out[p + 2] = d[2];
   }
   return out;
@@ -329,7 +335,7 @@ class Level {
     f32.set(fixed.voxel, 12); f32.set(fixed.origin, 16); f32.set(moving.voxel, 20); f32.set(moving.origin, 24);
     f32.set(lo, 28); f32.set(this.spacing, 32);
     f32.set(affine[0], 36); f32.set(affine[1], 40); f32.set(affine[2], 44);
-    f32.set([FLAT, 1 / N, settings.smooth, Math.floor(WINDOW / 2)], 48);
+    f32.set([FLAT, 1 / N, settings.smooth, Math.floor(settings.window / 2)], 48);
     const diffs = [0, 1, 2].map((a) => 3 * (gshape[a] - 1) * prod(gshape.filter((_, b) => b !== a)));
     f32.set([0, 1, 2].map((a) => (diffs[a] ? 2 / (diffs[a] * this.spacing[a] ** 2) : 0)), 52);
     this.params = p;
@@ -341,15 +347,22 @@ class Level {
     });
     const boxes = (a: GPUBuffer, b: GPUBuffer, c: GPUBuffer, d: GPUBuffer) => [bind("box", "P", this.axes[0], a, b), bind("box", "P", this.axes[1], b, c), bind("box", "P", this.axes[2], c, d)];
     this.groups = {
-      prep: bind("prep", "P", "F", "S"), statics: bind("statics", "P", "T", "STAT"),
+      prep: bind("prep", "P", "U", "F", "S"), statics: bind("statics", "P", "T", "STAT"),
       boxS: boxes(B.S, B.T, B.S, B.T),  // S's three channels into T: the prep's, then each step's
       warp: bind("warp", "P", "U", "M", "J", "C"), products: bind("products", "P", "F", "J", "S"),
       cc: bind("cc", "P", "T", "STAT", "AB", "CC"),
       boxAB: boxes(B.AB, B.S, B.T, B.S), grad: bind("grad", "P", "F", "J", "S", "C", "GD"),
       gather: bind("gather", "P", "GD", "U", "GU"), adam: bind("adam", "P", "GU", "U", "MOM", "VEL"),
     };
+  }
+
+  /** Start from the field `u`: the fixed image's window statistics, and which windows the
+   * moving image covers under it, are computed once here. */
+  start(u: Float32Array) {
+    const { device } = this.g;
+    device.queue.writeBuffer(this.buffers.U, 0, u as Float32Array<ArrayBuffer>);
     const enc = device.createCommandEncoder(), pass = enc.beginComputePass();
-    this.dispatch(pass, "prep", N); this.boxes(pass, "boxS"); this.dispatch(pass, "statics", N);
+    this.dispatch(pass, "prep", this.N); this.boxes(pass, "boxS"); this.dispatch(pass, "statics", this.N);
     pass.end(); device.queue.submit([enc.finish()]);
   }
 
@@ -360,8 +373,6 @@ class Level {
   }
 
   boxes(pass: GPUComputePassEncoder, key: "boxS" | "boxAB") { this.groups[key].forEach((grp, a) => this.dispatch(pass, "box", this.lines[a], grp)); }
-
-  setField(u: Float32Array) { this.g.device.queue.writeBuffer(this.buffers.U, 0, u as Float32Array<ArrayBuffer>); }
 
   step(t: number) {  // one Adam iteration
     const f32 = new Float32Array(this.params);
@@ -393,33 +404,39 @@ class Level {
 
 /**
  * Fit the field level by level. `data` is [[fixed, moving], ...] coarse to fine, each
- * {norm, shape, voxel, origin}; `box` is the fixed image's physical extent [lo, hi].
+ * {norm, shape, voxel, origin}, `settings` one for all or one per level; `box` is the
+ * physical extent the control grid spans, [lo, hi]. The fit starts from `init` (a field
+ * over the box, sampled onto the first grid) or from zero.
  * `onProgress({stage, stages, iteration, iterations, similarity})` is called as it goes.
  */
 export async function solve(
-  g: Gpu, data: [Volume, Volume][], affine: Affine, box: number[][], settings: Settings,
-  onProgress: (p: Progress) => void = () => {},
+  g: Gpu, data: [Volume, Volume][], affine: Affine, box: number[][], settings: Settings | Settings[],
+  onProgress: (p: Progress) => void = () => {}, init: ControlGrid | null = null,
 ): Promise<{ grid: ControlGrid; stages: Stage[]; seconds: number }> {
-  const [lo, hi] = box;
+  const [lo, hi] = box, per = Array.isArray(settings) ? settings : data.map(() => settings);
+  if (per.length !== data.length) throw new Error(`settings for ${per.length} levels, data for ${data.length}`);
   const t0 = performance.now();
-  let gshape = controlShape(lo, hi, data[0][0].voxel, settings.grid);
-  let u: Float32Array = new Float32Array(3 * prod(gshape));
+  let gshape = controlShape(lo, hi, data[0][0].voxel, per[0].grid);
+  let u: Float32Array = init ? sampled(init, gshape, lo, hi) : new Float32Array(3 * prod(gshape));
   const stages: Stage[] = [];
   let last: Level | null = null;
   for (const [s, [fl, ml]] of data.entries()) {
-    const shape = controlShape(lo, hi, fl.voxel, settings.grid);
-    if (shape.join() !== gshape.join()) { u = refine(u, gshape, shape, lo, hi); gshape = shape; }
+    const st = per[s], shape = controlShape(lo, hi, fl.voxel, st.grid);
+    if (shape.join() !== gshape.join()) {  // a finer grid over the same box
+      u = sampled({ shape: gshape, origin: lo, spacing: lo.map((l, a) => (hi[a] - l) / (gshape[a] - 1)), values: u }, shape, lo, hi);
+      gshape = shape;
+    }
     last?.destroy();
-    const lvl = new Level(g, fl, ml, affine, box, gshape, settings);
-    lvl.setField(u);
+    const lvl = new Level(g, fl, ml, affine, box, gshape, st);
+    lvl.start(u);
     const ts = performance.now();
     let first: number | null = null, sim: number | null = null;
-    for (let t = 1; t <= settings.iterations; t++) {
+    for (let t = 1; t <= st.iterations; t++) {
       lvl.step(t);
       if (t === 1) sim = first = await lvl.similarity();
-      else if (t % 10 === 0 || t === settings.iterations) await g.device.queue.onSubmittedWorkDone();
-      if (t === settings.iterations) sim = await lvl.similarity();
-      onProgress({ stage: s, stages: data.length, iteration: t, iterations: settings.iterations, similarity: sim });
+      else if (t % 10 === 0 || t === st.iterations) await g.device.queue.onSubmittedWorkDone();
+      if (t === st.iterations) sim = await lvl.similarity();
+      onProgress({ stage: s, stages: data.length, iteration: t, iterations: st.iterations, similarity: sim });
     }
     u = await lvl.read("U", 3 * lvl.G);
     stages.push({ shape: fl.shape, grid: gshape, seconds: (performance.now() - ts) / 1000, first, final: sim });

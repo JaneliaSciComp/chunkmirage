@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import ClassVar
@@ -41,6 +42,23 @@ class Frontend(ABC):
     @abstractmethod
     def encode(self, info: ArrayInfo, index: tuple[int, ...], block: np.ndarray) -> bytes:
         """Encode the (edge-clipped) block for chunk ``index`` in this format."""
+
+    root_keys: ClassVar[tuple[str, ...]] = ()  # metadata keys of the group
+    level_keys: ClassVar[tuple[str, ...]] = ()  # metadata keys of each level
+
+    def listing(self, pipeline: Pipeline, path: str) -> list[str] | None:
+        """What a directory listing of ``path`` shows: the group's metadata keys and one
+        directory per level, or a level's metadata keys (never its chunks); None if ``path``
+        is neither, or the format has no directories to list."""
+        path = path.strip("/")
+        if not self.root_keys:
+            return None
+        if path == "":
+            return [*self.root_keys, *(f"s{i}/" for i in range(pipeline.num_levels))]
+        m = re.fullmatch(r"s(\d+)", path)
+        if m and int(m.group(1)) < pipeline.num_levels:
+            return list(self.level_keys)
+        return None
 
     # Helpers shared by frontends -----------------------------------------------------
     @staticmethod

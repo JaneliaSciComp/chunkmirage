@@ -39,6 +39,37 @@
         "op"
       ]
     },
+    "Contacts": {
+      "additionalProperties": false,
+      "description": "Contact sites between two structures, the first two channels of a ``stack://`` source:\nthe voxels within ``radius`` of both. A mask; follow with ``label`` to colour and\nsize-filter the sites.",
+      "properties": {
+        "op": {
+          "const": "contacts"
+        },
+        "radius": {
+          "default": 3.0,
+          "description": "Reach, in voxels: a voxel is a contact site when both structures lie within this distance of it (Euclidean). The halo is radius + 1.",
+          "exclusiveMinimum": 0,
+          "maximum": 32,
+          "type": "number"
+        },
+        "a_low": {
+          "default": 128.0,
+          "description": "Values at or above this in the first channel are the first structure: 128 for a uint8 probability map, 1 for a segmentation.",
+          "type": "number"
+        },
+        "b_low": {
+          "default": 128.0,
+          "description": "The same threshold for the second channel, the second structure.",
+          "type": "number"
+        }
+      },
+      "title": "Contacts",
+      "type": "object",
+      "required": [
+        "op"
+      ]
+    },
     "DoG": {
       "additionalProperties": false,
       "description": "Difference of Gaussians: enhances blob-like structures of a chosen size, suppresses background.",
@@ -161,6 +192,9 @@
           "$ref": "#/$defs/Cast"
         },
         {
+          "$ref": "#/$defs/Contacts"
+        },
+        {
           "$ref": "#/$defs/DoG"
         },
         {
@@ -174,6 +208,9 @@
         },
         {
           "$ref": "#/$defs/Scale"
+        },
+        {
+          "$ref": "#/$defs/Spots"
         },
         {
           "$ref": "#/$defs/Threshold"
@@ -269,6 +306,21 @@
             }
           ],
           "default": null
+        },
+        "select": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Pin non-spatial axes to one index each, e.g. {\"c\": 1, \"t\": 0}: the pipeline sees that channel of that time point, without those axes"
         }
       },
       "required": [
@@ -295,7 +347,12 @@
             }
           ],
           "default": null,
-          "description": "The fixed-to-moving affine in physical units, C order: a .npy or text file holding a 4x4 or 3x4 matrix, or its 12 or 16 values inline, row by row. Default: identity."
+          "description": "The fixed-to-moving affine in physical units, C order: a .npy or text file holding a 4x4 or 3x4 matrix, or its 12 or 16 values inline, row by row; or auto, to find one from the images' intensity moments and a correlation fit. Default: identity."
+        },
+        "mirrored": {
+          "default": false,
+          "description": "The moving image is a mirror image of the fixed one (one axis reversed, as when a stack is acquired the other way round), for affine=auto: the search then tries only mirrored orientations. Correlation cannot tell handedness on a nearly symmetric specimen.",
+          "type": "boolean"
         },
         "fixed_channel": {
           "default": 0,
@@ -328,11 +385,38 @@
           "default": [
             100
           ],
-          "description": "Adam steps per level: one value, or one per level. 0 skips the solve (the affine alone).",
+          "description": "Adam steps per level: one value, one per level, or one per level including the refined ones. 0 skips the solve (the affine alone).",
           "items": {
             "minimum": 0,
             "type": "integer"
           },
+          "type": "array"
+        },
+        "refine": {
+          "default": 0,
+          "description": "Levels below the solved ones whose field is fitted on demand, block by block, where it is viewed: refine=2 with levels 6,5,4 fits levels 3 and 2, a block (one output chunk) when a chunk it covers is first requested, from the solved field, coarse to fine within the block. The finest fitted level's field serves every finer one.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "halo": {
+          "default": 8,
+          "description": "Voxels of context on every side of a block whose field is fitted on demand: how far beyond the block the fit looks, so neighbouring blocks agree.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "block": {
+          "default": [
+            64,
+            128,
+            128
+          ],
+          "description": "Voxels per block of a field fitted on demand, C order. Independent of the output's chunks: a chunk's field reaches into the neighbouring blocks, so blocks deeper than a thin chunk fit fewer voxels in all, even for one slice.",
+          "items": {
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 3,
+          "minItems": 3,
           "type": "array"
         },
         "smooth": {
@@ -348,10 +432,15 @@
           "type": "number"
         },
         "window": {
-          "default": 7,
-          "description": "Correlation window, voxels, odd.",
-          "minimum": 1,
-          "type": "integer"
+          "default": [
+            7
+          ],
+          "description": "Correlation window, voxels, odd: one value, one per level, or one per level including the refined ones. Fine levels gain from a wider one.",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 1,
+          "type": "array"
         },
         "show": {
           "default": "image",
@@ -441,6 +530,54 @@
         }
       },
       "title": "Scale",
+      "type": "object",
+      "required": [
+        "op"
+      ]
+    },
+    "Spots": {
+      "additionalProperties": false,
+      "description": "Bright diffraction-limited spots, such as single mRNA molecules in smFISH or EASI-FISH:\na difference of Gaussians, its local maxima above ``threshold``, each drawn as a small\nball. A spot's id comes from its position in the volume, so one spot keeps its id and\ncolour whichever chunk finds it.",
+      "properties": {
+        "op": {
+          "const": "spots"
+        },
+        "sigma": {
+          "default": 1.0,
+          "description": "Spot size, in voxels along y and x: the smaller blur of the difference of Gaussians (the larger is 1.6 times it). About the spot's standard deviation.",
+          "exclusiveMinimum": 0,
+          "maximum": 8,
+          "type": "number"
+        },
+        "sigma_z": {
+          "default": 0.6,
+          "description": "The same along z, in z voxels: smaller than sigma when z voxels are coarser, as in most light microscopy.",
+          "exclusiveMinimum": 0,
+          "maximum": 8,
+          "type": "number"
+        },
+        "threshold": {
+          "default": 10.0,
+          "description": "Least difference-of-Gaussians response a spot needs, in the image's intensity units: higher finds fewer, brighter spots.",
+          "minimum": 0,
+          "type": "number"
+        },
+        "separation": {
+          "default": 2,
+          "description": "Spots closer than this, in y-x voxels, are one: the radius of the local maximum search.",
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "radius": {
+          "default": 1,
+          "description": "Radius of the ball drawn for each spot, in y-x voxels (0 marks one voxel).",
+          "maximum": 8,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "title": "Spots",
       "type": "object",
       "required": [
         "op"

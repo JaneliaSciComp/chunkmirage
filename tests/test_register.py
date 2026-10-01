@@ -126,6 +126,157 @@ def test_reopening_reuses_the_solve(monkeypatch):
     assert len(calls) == 2  # once, then again for the new smoothness
 
 
+def test_refine_fits_finer_levels_where_they_are_read(monkeypatch):
+    pytest.importorskip("torch")
+    # a taller volume than FIXED, so a block is big enough for a coarse copy of itself
+    fixed_url = FIXED.replace("shape=24,64,64&chunk=24,32,32", "shape=32,64,64&chunk=32,32,32")
+    moving_url = f"warp://{fixed_url}?{SWIRL}"
+    calls = []
+    real = register.solve
+
+    def counting(fixed, *args, **kw):
+        calls.append((kw.get("label", ""), len(fixed)))
+        return real(fixed, *args, **kw)
+
+    def blocks():
+        return [c for c in calls if "block" in c[0]]
+
+    def url(extra):
+        return _url(extra, moving=moving_url, fixed=fixed_url)
+
+    monkeypatch.setattr(register, "solve", counting)
+    monkeypatch.setattr(register, "_blocks", type(register._blocks)(register.BLOCK_CACHE_BYTES))
+    fixed = _read(fixed_url)[INNER]
+    coarse = _corr(fixed, _read(url("levels=1"))[INNER])  # level 0 served through level 1's field
+    whole = _corr(fixed, _read(url("levels=1,0"))[INNER])  # both levels solved up front
+    calls.clear()
+    s0 = open_source(url("levels=1&refine=1&halo=4&block=32,32,32")).levels[0]
+    assert not blocks()  # opening fits no block
+    s0.read(s0.info.chunk_box((0, 0, 0)))
+    touched = blocks()
+    assert 0 < len(touched) <= 8, touched  # its blocks, and the neighbours it interpolates into
+    assert 2 in {
+        n for _, n in touched
+    }  # a coarse copy of the block, then the block (edges: too thin)
+    s0.read(s0.info.chunk_box((0, 0, 0)))
+    assert len(blocks()) == len(touched)  # remembered
+    refined = _corr(fixed, _read(s0)[INNER])
+    assert len(blocks()) > len(touched)  # the rest, once read
+    assert coarse < refined and abs(refined - whole) < 2e-3, (coarse, refined, whole)
+    u = _read(url("levels=1&refine=1&halo=4&block=32,32,32&show=field"))
+    assert u.shape == (3, 32, 64, 64) and np.isfinite(u).all()
+
+
+def test_refined_blocks_live_in_the_pipelines_cache(monkeypatch):
+    # a served register:// pipeline keeps its blocks with its chunks: --cache-gb bounds them,
+    # clearing the cache clears them, and the process-wide fallback stays empty
+    from chunkmirage.cache import LRUCache
+    from chunkmirage.pipeline import Pipeline
+
+    real = register.solve
+
+    def constant(fixed, moving, affine, settings, *, box, label="", **kw):
+        if "block" not in label:
+            return real(fixed, moving, affine, settings, box=box, label=label, **kw)
+        from chunkmirage.registration import Grid, _control_shape
+
+        lo, hi = (np.asarray(b, dtype=float) for b in box)
+        shape = _control_shape(lo, hi, fixed[-1].voxel_size, settings.grid)
+        return [Grid(np.zeros((*shape, 3), np.float32), lo, (hi - lo) / (np.asarray(shape) - 1))]
+
+    monkeypatch.setattr(register, "solve", constant)
+    fallback = type(register._blocks)(register.BLOCK_CACHE_BYTES)
+    monkeypatch.setattr(register, "_blocks", fallback)
+    cache = LRUCache()
+    spec = {"source": _url("levels=1&refine=1&iterations=0,5&halo=8&block=32,32,32")}
+    p = Pipeline.from_spec(spec, cache=cache)
+    p.chunk(0, (0, 0, 0))
+    blocks = [k for k in cache._data if isinstance(k[0], str) and k[0].startswith("register:")]
+    assert blocks and len(fallback) == 0
+    cache.invalidate()
+    assert len(cache) == 0
+
+
+def test_neighbouring_blocks_blend_across_their_overlap(monkeypatch):
+    # every block fits a constant field, 64 nm (a voxel) times its x index: the field steps by
+    # a whole block's difference from one block to the next, and blending spreads each step
+    # over the overlap instead of one lattice cell
+    from chunkmirage.registration import Grid, _control_shape
+
+    real = register.solve
+
+    def constant(fixed, moving, affine, settings, *, box, label="", **kw):
+        if "block" not in label:
+            return real(fixed, moving, affine, settings, box=box, label=label, **kw)
+        bx = int(label.rsplit(",", 1)[1].strip(" )"))
+        lo, hi = (np.asarray(b, dtype=float) for b in box)
+        shape = _control_shape(lo, hi, fixed[-1].voxel_size, settings.grid)
+        values = np.zeros((*shape, 3), np.float32)
+        values[..., 2] = 64.0 * bx
+        return [Grid(values, lo, (hi - lo) / (np.asarray(shape) - 1))]
+
+    monkeypatch.setattr(register, "solve", constant)
+    monkeypatch.setattr(register, "_blocks", type(register._blocks)(register.BLOCK_CACHE_BYTES))
+    url = _url("levels=1&refine=1&iterations=0,5&halo=8&block=32,32,32&show=field")
+    ux = _read(url)[2, 12, 12]  # x component along x, inside a block in z and y
+    # blocks are 8 lattice points (32 voxels) wide; 3 to 5 points into one, only it counts
+    for bx in range(2):
+        np.testing.assert_allclose(ux[32 * bx + 14 : 32 * bx + 20], 64.0 * bx, atol=1e-3)
+    steps = np.abs(np.diff(ux))
+    assert steps.max() <= 0.3 * 64 / 4, (
+        steps.max()
+    )  # a quarter of the step per lattice cell at most
+
+
+def test_halving_does_not_wrap_small_integers():
+    from chunkmirage.registration import Level, _halve
+
+    lvl = Level(np.full((4, 4, 4), 200, np.uint8), np.ones(3), np.zeros(3))
+    assert (_halve(lvl).data == 200).all()  # not (200 + 200) % 256 / 2
+
+
+def test_the_affine_is_found_when_asked(tmp_path):
+    pytest.importorskip("torch")
+    # the moving image is the fixed one turned half a turn about y and shifted 3 voxels in y
+    fixed = _read(FIXED)
+    path = _zarr(tmp_path / "turned.zarr", np.ascontiguousarray(fixed[::-1, :, ::-1]))
+    shift = "1,0,0,0,0,1,0,192,0,0,1,0"
+    turned = _read(_url(f"affine={shift}&iterations=0", moving=path))
+    still = _zarr(tmp_path / "moving.zarr", turned)
+    before = _corr(fixed[INNER], _read(_url("iterations=0", moving=still))[INNER])
+    found = _read(_url("affine=auto&iterations=0", moving=still))
+    after = _corr(fixed[INNER][:, 3:], found[INNER][:, 3:])
+    assert before < 0.3 and after > 0.95, (before, after)
+
+
+def test_pair_and_field_views_say_how_to_show_themselves():
+    from chunkmirage.neuroglancer import layer_for
+    from chunkmirage.pipeline import Pipeline
+
+    pair = layer_for("pair", Pipeline(open_source(_url("show=pair&iterations=0")), []), "zarr3://u")
+    assert "emitRGB(vec3(f, m, f))" in pair["shader"]  # fixed magenta, moving green
+    assert list(pair["source"]["transform"]["outputDimensions"]) == ["c^", "z", "y", "x"]
+    field = layer_for(
+        "field", Pipeline(open_source(_url("show=field&iterations=0")), []), "zarr3://u"
+    )
+    assert "colormapJet" in field["shader"]
+    plain = layer_for("image", Pipeline(open_source(_url("iterations=0")), []), "zarr3://u")
+    assert plain == {"type": "image", "source": "zarr3://u", "name": "image"}
+
+
+def test_a_mirrored_affine_is_found_when_asked(tmp_path):
+    pytest.importorskip("torch")
+    # the moving image is the fixed one with z reversed, as a stack acquired the other way
+    # round: no rotation maps one onto the other, and the search finds it only when told
+    fixed = _read(FIXED)
+    mirrored = _zarr(tmp_path / "mirrored.zarr", np.ascontiguousarray(fixed[::-1]))
+    rot = _corr(fixed[INNER], _read(_url("affine=auto&iterations=0", moving=mirrored))[INNER])
+    mir = _corr(
+        fixed[INNER], _read(_url("affine=auto&mirrored=true&iterations=0", moving=mirrored))[INNER]
+    )
+    assert mir > 0.999 and rot < 0.97, (rot, mir)  # exact only as a mirror (the blobs are smooth)
+
+
 def test_channels_are_matched_and_all_registered(tmp_path):
     fixed = _read(FIXED)
     data = np.stack([255 - fixed, fixed])[None]  # t, c: match on channel 1
@@ -149,6 +300,9 @@ def test_channels_are_matched_and_all_registered(tmp_path):
         ("iterations=1,2,3", "one per level"),
         ("affine=1,2,3", "4x4 or 3x4"),
         ("frames=0", r"frames\s+Input should be greater than or equal to 1"),
+        ("levels=1&refine=2", "1 level\\(s\\) lie below level 1"),
+        ("levels=1&refine=1&frames=2", "frames and refine"),
+        ("levels=1&refine=1&iterations=1,2,3", "1 or 2 values"),
     ],
 )
 def test_bad_urls_explain_themselves(extra, message):

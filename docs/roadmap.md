@@ -13,12 +13,19 @@ describe shipped features as future work.
 3. **Materialize-on-browse with a disk cache.** Back the cache with a real zarr on local or
    shared storage so it persists, is shared across workers, and doubles as a partially
    computed output. Add a background filler that expands outward from requested chunks: the
-   viewer becomes the job scheduler.
+   viewer becomes the job scheduler. (Ordering the work by what clients ask for, and
+   dropping what they stop waiting for, has shipped; see
+   [caching](concepts/caching.md#order-of-work-and-requests-given-up-on). Inference ops
+   would join its queues.)
 4. **Lazy-compute story for non-viewer clients.** Demonstrate dask/tensorstore reading a
    served pipeline and running downstream analysis with no intermediate written.
 5. **DAG pipelines, multi-source ops.** Named stages with fan-out (one model, many
    post-processors) and a `Combine` op taking another pipeline as input. Unlocks masking,
-   model-vs-model disagreement views, registration overlays. With it, structured sources:
+   model-vs-model disagreement views, registration overlays. (The two-input case has
+   shipped in its simplest form: `stack://` serves images on one grid as channels and an
+   op such as `contacts` consumes them; see
+   [formats](concepts/formats.md#stack-sources-several-images-as-one-arrays-channels).)
+   With it, structured sources:
    a pipeline's source as a JSON object as well as a URL, such as
    `{"register": {"moving": ..., "fixed": ..., "affine": [...]}}`, typed by the same schema
    (`chunkmirage schema`) so nested sources and long parameters need no escaping and the
@@ -48,13 +55,29 @@ describe shipped features as future work.
    `register://`'s deformable registration on the viewer's GPU, reading OME-Zarr straight
    from its URLs (see the [design notes](design.md#client-side-browser-roadmap)), and
    serves the registered volume to Neuroglancer through a service worker, computed by web
-   workers. The docs site hosts it with its own Neuroglancer build. What remains is ops
-   (WebGPU filters, ONNX Runtime Web inference) through the same service worker, and an
-   affine search for Python's `register://` to match the page's. User code in the browser
-   would come in two tiers: array functions exported to ONNX run on the GPU in both engines
-   (ONNX Runtime and ONNX Runtime Web), and anything else runs in the page through Pyodide,
-   on the CPU. Whether the page's WebGPU shaders can also serve Python (wgpu-py), as one
-   implementation of the solver for both, is still to be measured against PyTorch.
+   workers. The docs site hosts it with its own Neuroglancer build. What remains, in order:
+    * A gallery. An index page of cards, each a JSON pipeline spec plus viewer settings,
+      opened by one generic page that builds its form from the schema, embeds Neuroglancer
+      and shows the same pipeline as a `chunkmirage serve` command. The registration page
+      becomes a card. This is the first, smallest piece of structured sources (item 5).
+    * Ops on data nobody hosts. `synthetic://` ported to TypeScript (a hash of world
+      coordinates, exact at every scale), the pointwise and filter ops as WebGPU compute
+      shaders, `label` on the CPU, each with a parity test against Python on seeded synthetic
+      data. Cards: a filter chain, morphology on shells, the same volume served as zarr v2,
+      v3, N5 and precomputed by the service worker, a 4096³ pyramid that costs nothing.
+    * Real public data: OpenOrganelle's bucket allows any origin, so a card can run a live
+      filter chain on jrc_hela-2 with nothing copied at deploy time.
+    * A layer of where `refine` has fitted the field and how well (each block's
+      correlation before and after), in both engines.
+    * User code, in two tiers. A `python` op holding a block-to-block function runs in the
+      page through Pyodide (numpy, scipy and scikit-image ship with it) and natively in
+      Python, where the server takes it only from the command line or a spec file, never
+      through the REST API. Array functions exported to ONNX run on the GPU in both engines
+      (ONNX Runtime and ONNX Runtime Web).
+    * A CI job that runs the page headless and diffs its chunks against Python's, so the
+      engines cannot drift. Whether the page's WebGPU shaders can also serve Python
+      (wgpu-py), as one implementation of the solver for both, is still to be measured
+      against PyTorch.
 
 ## Untapped potential
 

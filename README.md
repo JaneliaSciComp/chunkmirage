@@ -85,7 +85,9 @@ chunkmirage serve "scene:///tmp/fly/fly_brains.zarr?image=FCWB&target=JRC2018F"
 ```
 
 `register://` sources solve the registration too: a deformable field fitted on the GPU
-in seconds from coarse levels, then every level served through it. The demo compares
+in seconds from coarse levels, then every level served through it; with `refine=`, the
+finer levels' fields are fitted block by block where you look, and `affine=auto` finds
+the starting affine from the images. The demo compares
 before and after in the viewer's own GPU shader, and solves again as you change settings:
 
 ```bash
@@ -150,11 +152,13 @@ Early, but working:
 
 * **Sources:** zarr v2/v3, N5 and precomputed (file, S3, GCS, HTTP) and HDF5; computed
   `synthetic://` volumes, `scene://` registration through OME-Zarr 0.6 transformations,
-  `warp://` procedural deformations, and `register://` deformable registration solved on
-  a GPU.
+  `warp://` procedural deformations, `register://` deformable registration solved on
+  a GPU, `stack://` several images as one array's channels, and `flip://` images stored
+  the other way round.
 * **Frontends:** N5, Zarr v2, Zarr v3 and precomputed, all served at once.
 * **Ops:** threshold, cast, scale, Gaussian, uniform and difference-of-Gaussians filters,
-  morphology, connected components; halos handled for you.
+  morphology, connected components, FISH spot detection, contact sites between two
+  stacked images; halos handled for you.
 * **Live editing:** per-stage LRU cache, REST edits, a control page, and a
   python-neuroglancer viewer that keeps the camera while layers refetch.
 

@@ -7,7 +7,7 @@ from importlib.metadata import entry_points
 from typing import Any, ClassVar
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from chunkmirage.core import ArrayInfo
 
@@ -20,7 +20,8 @@ class Op(BaseModel):
     * ``halo``: voxels of upstream context needed on every side (int or per-axis tuple).
       The framework reads the padded region, calls ``apply`` on it, and crops the result.
     * ``cache``: whether this stage's output chunks should be memoized. Turn on for
-      expensive stages (inference) so cheap downstream tweaks (threshold) are free.
+      expensive stages (inference) so cheap downstream tweaks (threshold) are free. A
+      pipeline can override it per op: ``{"op": "gaussian", "sigma": 4, "cache": true}``.
     * ``output_dtype`` / ``output_info``: describe the result; default is unchanged.
     """
 
@@ -29,6 +30,12 @@ class Op(BaseModel):
     name: ClassVar[str] = ""
     halo: ClassVar[int | tuple[int, ...]] = 0
     cache: ClassVar[bool] = False
+    _cache: bool | None = PrivateAttr(None)  # this op's own setting, over the class's
+
+    @property
+    def cached(self) -> bool:
+        """Whether this op's output is memoized: its own setting, else its class's."""
+        return self.cache if self._cache is None else self._cache
 
     def halo_for(self, ndim: int) -> tuple[int, ...]:
         h = self.halo
@@ -51,10 +58,16 @@ class Op(BaseModel):
 
     # --- identity / serialization -------------------------------------------------
     def spec(self) -> dict[str, Any]:
-        return {"op": self.name, **self.model_dump(mode="json")}
+        spec = {"op": self.name, **self.model_dump(mode="json")}
+        if self._cache is not None:
+            spec["cache"] = self._cache
+        return spec
 
     def digest(self) -> str:
-        payload = json.dumps(self.spec(), sort_keys=True, default=str).encode()
+        """Identity of what the op computes: whether it is cached does not change that."""
+        payload = json.dumps(
+            {"op": self.name, **self.model_dump(mode="json")}, sort_keys=True, default=str
+        ).encode()
         return hashlib.sha1(payload).hexdigest()[:12]
 
 
@@ -109,7 +122,11 @@ def op_from_spec(spec: dict[str, Any] | Op) -> Op:
         return spec
     spec = dict(spec)
     name = spec.pop("op")
-    return get_op(name)(**spec)
+    cache = spec.pop("cache", None)
+    op = get_op(name)(**spec)
+    if cache is not None:
+        op._cache = bool(cache)
+    return op
 
 
 def ops_from_specs(specs: Sequence[dict[str, Any] | Op]) -> list[Op]:
