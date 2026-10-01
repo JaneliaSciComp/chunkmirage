@@ -16,6 +16,7 @@ napari or a dask script.
 | [Six tiles stitched by RANSAC](https://yuriyzubov.github.io/chunkmirage/browser/stitch.html) | interest points in every overlap, matches, RANSAC and the global fit (rerun as you move a setting, with inliers and rejected matches drawn), then each fused chunk: `chunkmirage.stitching`, as `stitch://` runs it | BigStitcher-Spark's stitching example, a larval fly CNS |
 | [Organelle contact sites](https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=contacts) | the mitochondria and ER predictions thresholded at 128 (mitochondria labelled), and `contacts` then `label` on the two, stacked and flipped into the EM's frame | OpenOrganelle jrc_hela-2 |
 | [Single mRNA molecules](https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=spots) | `spots` on both FISH channels | Janelia EASI-FISH, fly central brain |
+| [Follow one nucleus through two days](https://yuriyzubov.github.io/chunkmirage/browser/track.html) | not chunks but a trajectory: a nucleus double-clicked is followed frame by frame by its overlap with the next frame's nuclei (`chunkmirage.tracking`, one call a frame), reading only a box around it from each, and its volume plotted as each frame comes in; the viewer reads the images from the bucket itself, and the page keeps the nucleus followed highlighted and centred in every frame | Allen Institute for Cell Science, Dixon et al. 2024: hiPS colony time-lapse, lamin B1 and nuclear segmentation |
 | [A 3-D fractal to zoom into forever](https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=mandelbulb) | the Mandelbulb itself, `synthetic://mandelbulb`, computed by chunkmirage's synthetic source in the page's workers (nothing is read): a slice to zoom into, finer levels iterating more, and the bulb volume rendered, finer levels loading as you zoom into it (a 3-D panel's depth of 2 view heights and 512 samples: Neuroglancer picks one level for the whole depth) | computed: an array 2^28 voxels across, 21 levels |
 | [The Mandelbulb as a solid surface that sharpens as you zoom](https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=mesh-bulb) | a multi-resolution mesh: four levels of detail (the bulb at 256³ to 2048³), each node marching cubes over a chunk of `synthetic://mandelbulb`, Draco-encoded and padded, made when Neuroglancer asks for its bytes; zoom in and finer nodes replace the ones in view | computed: levels 17 to 20 |
 | [Shackleton crater's rim in 3-D](https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=mesh-moon) | a terrain mesh of NASA's 5 m elevation (two triangles per 20 m cell), each fragment made when fetched, beside the elevation as stored | LOLA south-pole elevation, Shackleton rim |
@@ -40,7 +41,9 @@ chunk. A demo is an entry of `web/src/cards.ts`:
 views (each a pipeline spec: source, `select`, ops, chunks) and a Neuroglancer layout, or
 for a map demo (`map.html`) OpenLayers layers, styles and sliders. The stitch page
 (`stitch.html`) runs `chunkmirage.stitching`'s steps in the same workers, one call each, and
-serves its fused volume as a view whose chunks it computes itself. The pages share the
+serves its fused volume as a view whose chunks it computes itself; the track page
+(`track.html`) runs `chunkmirage.tracking`'s step a frame at a time on boxes its reader reads
+at each timepoint (a read can pick its own entry of a source's other axes, `{t: 12}`). The pages share the
 engine (`web/src/engine.ts`), which serves the views as OME-Zarr and as
 [GeoZarr](concepts/formats.md#geozarr-for-map-clients-browser-engine).
 
@@ -63,6 +66,7 @@ in 512³ blocks (268 MB decoded) at full resolution; `examples/contact_sites.py
 | `examples/hurricane_wakes.py` | the hurricanes demo served by Python, any date and place, the lag at a prompt | `uv sync --extra all` |
 | `examples/solar_flares.py` | the running difference of NASA's SDO images of the sun (no browser access to that bucket, so Python only), on the X1.6 flare of 10 September 2014 | `uv sync --extra all` |
 | `examples/fly_brain_registration.py` | the fly templates through their published OME-Zarr 0.6 transformations (`scene://`) | `uv sync --extra all` |
+| `examples/track_nucleus.py` | one nucleus followed through the colony time-lapse by overlap, its volume per frame written as CSV (the track page's work, from Python) | `uv sync --extra all` |
 | `examples/register_demo.py` | a deformable registration solved as the source opens, re-solved as you type settings | `uv sync --extra all --extra gpu` (or `--extra cpu`) |
 | `examples/swirl_demo.py` | a procedural deformation and its field, animated on a time axis | `uv sync --extra all` |
 | `examples/demo.py` | one small volume served in every format at once, with a shared cache | `uv sync --extra ops` |

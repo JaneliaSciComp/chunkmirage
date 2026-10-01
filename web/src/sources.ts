@@ -19,8 +19,9 @@ export interface Source {
   axes: ViewAxis[];   // the three axes levels have, e.g. z, y, x in nanometers
   channels: number;   // 1, or the images of a stack (its leading c axis)
   levels: SourceLevel[];
-  /** Voxels [lo, hi) of level `li` (z, y, x; within the level), channel `c`. */
-  read(li: number, c: number, lo: number[], hi: number[]): Promise<Numbers>;
+  /** Voxels [lo, hi) of level `li` (z, y, x; within the level), channel `c`; `at` picks
+   * other leading axes' entries (zarr sources: {t: 12}) over those the source was opened at. */
+  read(li: number, c: number, lo: number[], hi: number[], at?: Record<string, number>): Promise<Numbers>;
 }
 
 const READ_BYTES = 384 * 2 ** 20;  // decoded pieces kept per image (the page's reader holds them all)
@@ -52,13 +53,13 @@ async function zarrSource(url: string, select: Record<string, number>): Promise<
   const img = await openImage(url);
   for (const [axis, i] of Object.entries(select)) {
     if (!img.names.slice(0, img.lead).includes(axis)) throw new Error(`select ${axis}=${i}: ${url} has axes ${img.names}`);
-    if (axis !== "c" && i !== 0) throw new Error(`select ${axis}=${i}: only the first entry of ${axis} is read here`);
   }
   const reader = new RegionReader(img, READ_BYTES), channel = select.c ?? 0;
+  const pinned = Object.fromEntries(Object.entries(select).filter(([a]) => a !== "c"));
   return {
     url, dtype: img.dtype, axes: img.axes.slice(-3).map((a) => ({ name: a.name, unit: a.unit ?? "" })), channels: 1,
     levels: img.levels.map((l) => ({ shape: l.shape, voxel: l.voxel, origin: l.origin, chunks: l.arr.chunks.slice(-3) })),
-    read: async (li, _c, lo, hi) => (await reader.read(li, channel, lo, hi)).data,
+    read: async (li, _c, lo, hi, at) => (await reader.read(li, channel, lo, hi, { ...pinned, ...at })).data,
   };
 }
 

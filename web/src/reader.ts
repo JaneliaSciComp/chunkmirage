@@ -23,9 +23,9 @@ async function open(views: Extract<ToReader, { type: "open" }>["views"]) {
 }
 
 /** Voxels [lo, hi) of level `level` of a view's source, its channels one after another. */
-async function read(id: string, level: number, lo: number[], hi: number[]): Promise<ArrayBuffer> {
+async function read(id: string, level: number, lo: number[], hi: number[], at?: Record<string, number>): Promise<ArrayBuffer> {
   const src = sources.get(id)!;
-  const parts = await Promise.all(Array.from({ length: src.channels }, (_, c) => src.read(level, c, lo, hi)));
+  const parts = await Promise.all(Array.from({ length: src.channels }, (_, c) => src.read(level, c, lo, hi, at)));
   const each = prod(hi.map((h, a) => h - lo[a]));
   const all = new (parts[0].constructor as { new (n: number): typeof parts[0] })(each * parts.length);
   parts.forEach((p, c) => all.set(p as never, c * each));
@@ -44,7 +44,7 @@ async function sample(id: string, ps: number[]) {
 ctx.onmessage = async ({ data: m }: MessageEvent<ToReader>) => {
   try {
     if (m.type === "open") ctx.postMessage({ reqId: m.reqId, value: await open(m.views) } satisfies Answer);
-    else if (m.type === "read") { const body = await read(m.view, m.level, m.lo, m.hi); ctx.postMessage({ reqId: m.reqId, value: body } satisfies Answer, [body]); }
+    else if (m.type === "read") { const body = await read(m.view, m.level, m.lo, m.hi, m.at); ctx.postMessage({ reqId: m.reqId, value: body } satisfies Answer, [body]); }
     else if (m.type === "sample") ctx.postMessage({ reqId: m.reqId, value: await sample(m.view, m.ps) } satisfies Answer);
   } catch (e) {
     ctx.postMessage({ reqId: m.reqId, error: String((e as Error)?.message ?? e) } satisfies Answer);

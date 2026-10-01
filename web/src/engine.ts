@@ -149,14 +149,15 @@ export class Engine {
   }
 
   /** Voxels [lo, hi) of a level of a view's source, as the reader reads them for a chunk. */
-  read(view: string, level: number, lo: number[], hi: number[]): Promise<ArrayBuffer> {
-    return this.reader!.call<ArrayBuffer>({ type: "read", view, level, lo, hi });
+  read(view: string, level: number, lo: number[], hi: number[], at?: Record<string, number>): Promise<ArrayBuffer> {
+    return this.reader!.call<ArrayBuffer>({ type: "read", view, level, lo, hi, ...(at ? { at } : {}) });
   }
 
-  /** A step of chunkmirage.stitching, run by the next Pyodide worker. */
-  stitch<T>(fn: string, args: Record<string, unknown>, arrays: ArrayBuffer[] = []): Promise<T> {
+  /** A step of a page's work (chunkmirage.stitching's, or tracking's `track_*`), run by the
+   * next Pyodide worker. */
+  call<T>(fn: string, args: Record<string, unknown>, arrays: ArrayBuffer[] = []): Promise<T> {
     const worker = this.pool[this.turn++ % this.pool.length];
-    return worker.call<T>({ type: "stitch", fn, args: JSON.stringify(args), arrays }, arrays);
+    return worker.call<T>({ type: "call", fn, args: JSON.stringify(args), arrays }, arrays);
   }
 
   /** View `view` with some of its spec changed (other ops, another source), served under a

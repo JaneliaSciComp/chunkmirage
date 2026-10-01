@@ -191,6 +191,14 @@ export const CARDS: DemoCard[] = [
     command: `chunkmirage serve '${ROUND1}' --select c=1,t=0 \\\n  --op spots:threshold=10,radius=2 --chunk 16,128,128 --python-viewer`,
   },
   {
+    kind: "link", id: "track", image: "cards/track.jpg",
+    title: "Follow one nucleus through two days of a colony: its growth curve plotted as frames stream",
+    blurb: "A stem cell colony imaged every 5 minutes for 47 hours, every nucleus segmented in every frame but numbered afresh in each. Double-click a nucleus and it is followed frame by frame, forward and back in time, by its overlap with the next frame's nuclei; only a box around it is read from each frame, and its volume is plotted as each frame comes in, by chunkmirage's tracking in this page. Nuclei grow through interphase and halve when they divide.",
+    data: "Allen Institute for Cell Science, Dixon et al. 2024: hiPS cells with lamin B1 tagged and their nuclear segmentation, 570 frames",
+    href: "track.html",
+    command: "uv run python examples/track_nucleus.py --frame 100 --label 148",
+  },
+  {
     kind: "pipeline", id: "mandelbulb", image: "cards/mandelbulb.jpg",
     title: "A 3-D fractal to zoom into forever, computed chunk by chunk",
     blurb: "The Mandelbulb, the best known 3-D fractal, as a zarr array 2^28 voxels across, 21 levels deep: 10^25 voxels that exist nowhere. Each chunk is computed when the viewer asks for it, by chunkmirage's synthetic source running in this page; zoom into the slice on the left and finer levels iterate more, so new buds keep appearing. Right, the bulb volume rendered: zoom into it and finer levels are computed there too. Colours are escape times, the same at every level.",

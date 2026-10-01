@@ -16,6 +16,7 @@ import pySourceBase from "../../src/chunkmirage/sources/base.py?raw";
 import pySynthetic from "../../src/chunkmirage/sources/synthetic.py?raw";
 import pyMeshes from "../../src/chunkmirage/meshes.py?raw";
 import pyStitching from "../../src/chunkmirage/stitching.py?raw";
+import pyTracking from "../../src/chunkmirage/tracking.py?raw";
 import type { Answer, ToPyWorker } from "./types";
 
 export const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/";
@@ -29,6 +30,7 @@ const FILES: Record<string, string> = {
   "chunkmirage/sources/base.py": pySourceBase, "chunkmirage/sources/synthetic.py": pySynthetic,
   "chunkmirage/meshes.py": pyMeshes,  // meshes of a view, made where a fragment is fetched
   "chunkmirage/stitching.py": pyStitching,  // the stitch page's steps, one call each
+  "chunkmirage/tracking.py": pyTracking,    // the track page's, one frame each
 };
 const GLUE = `
 import json
@@ -129,10 +131,13 @@ def compute(view, level, data, read_shape, in_lo, in_hi, out_lo, out_hi, full_sh
     return np.ascontiguousarray(result).astype(result.dtype.newbyteorder("<"), copy=False).tobytes()
 `;
 
-const STITCH = `
-def stitch(fn, args, arrays):
-    """One step of chunkmirage.stitching for the stitch page: JSON in, JSON (or a chunk's
-    bytes) out, arrays as raw bytes."""
+const STEPS = `
+def call(fn, args, arrays):
+    """One step of a page's work in chunkmirage.stitching (the stitch page) or
+    chunkmirage.tracking (track_*: the track page): JSON in, JSON (or a chunk's bytes) out,
+    arrays as raw bytes."""
+    if fn.startswith("track_"):
+        return _track(fn, json.loads(args), arrays)
     from chunkmirage import stitching as S
     a = json.loads(args)
     p = S.StitchParams(**a.get("params", {}))
@@ -169,6 +174,15 @@ def stitch(fn, args, arrays):
         out = np.pad(out, [(0, c - n) for c, n in zip(a["chunk"], out.shape)])  # zarr chunks are whole
         return np.ascontiguousarray(out).astype(out.dtype.newbyteorder("<"), copy=False).tobytes()
     raise ValueError(f"no stitching step {fn}")
+
+def _track(fn, a, arrays):
+    from chunkmirage import tracking as T
+    block = lambda k: np.frombuffer(arrays[k].to_py(), np.dtype(a["dtype"])).reshape(a["shape"])
+    if fn == "track_measure":  # the object at its first frame, in a block from a.start
+        return json.dumps(T.measure(block(0), a["label"], a["start"], a["voxel"]))
+    if fn == "track_step":  # the object from the frame before (block 0) in the next (block 1)
+        return json.dumps(T.step(block(0), a["label"], block(1), a["start"], a["voxel"]))
+    raise ValueError(f"no tracking step {fn}")
 `;
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
@@ -185,7 +199,7 @@ async function load(packages: string[] = []) {
     py.FS.mkdirTree(`/chunkmirage/${path.slice(0, path.lastIndexOf("/"))}`);
     py.FS.writeFile(`/chunkmirage/${path}`, text);
   }
-  py.runPython(`import sys; sys.path.insert(0, "/chunkmirage")\n${GLUE}\n${STITCH}`);
+  py.runPython(`import sys; sys.path.insert(0, "/chunkmirage")\n${GLUE}\n${STEPS}`);
 }
 
 /** Each view's output dtype, the leading axes its ops consume and the halo they need. */
@@ -200,11 +214,11 @@ async function plan(views: Extract<ToPyWorker, { type: "plan" }>["views"], packa
   return out;
 }
 
-/** A stitching step: JSON back, or with `bytes` a chunk's bytes. */
-async function stitch(m: Extract<ToPyWorker, { type: "stitch" }>): Promise<unknown> {
+/** A page's step (stitching, tracking): JSON back, or a chunk's bytes. */
+async function step(m: Extract<ToPyWorker, { type: "call" }>): Promise<unknown> {
   if (!py) await (loaded ??= load());
   const arrays = (m.arrays ?? []).map((b) => new Uint8Array(b));
-  const out = await withPackages(() => py.globals.get("stitch")(m.fn, m.args, arrays));
+  const out = await withPackages(() => py.globals.get("call")(m.fn, m.args, arrays));
   if (typeof out === "string") return JSON.parse(out);
   const bytes = out.toJs() as Uint8Array;
   out.destroy();
@@ -289,7 +303,7 @@ ctx.onmessage = async ({ data: m }: MessageEvent<ToPyWorker>) => {
       const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
       ctx.postMessage({ reqId: m.reqId, value: body } satisfies Answer, [body]);
     }
-    else if (m.type === "stitch") { const v = await stitch(m); ctx.postMessage({ reqId: m.reqId, value: v } satisfies Answer, v instanceof ArrayBuffer ? [v] : []); }
+    else if (m.type === "call") { const v = await step(m); ctx.postMessage({ reqId: m.reqId, value: v } satisfies Answer, v instanceof ArrayBuffer ? [v] : []); }
     else if (m.type === "compute") { const body = await compute(m); ctx.postMessage({ reqId: m.reqId, value: body } satisfies Answer, [body]); }
   } catch (e) {
     // Pyodide's file-system errors are objects without a message: say what they are

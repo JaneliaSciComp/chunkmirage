@@ -65,7 +65,7 @@ const seconds = (t0: number) => `${((performance.now() - t0) / 1000).toFixed(1)}
 async function openTiles() {
   const base = XML.slice(0, XML.lastIndexOf("/"));
   const xml = await (await fetch(XML)).text();
-  tiles = await engine.stitch<Tile[]>("tiles", { xml, base, channel: params.channel });
+  tiles = await engine.call<Tile[]>("tiles", { xml, base, channel: params.channel });
   const views = Object.fromEntries(tiles.map((t, k) => [tileView(k), { source: t.url, select: t.select, chunk: TILE_CHUNK }]));
   if (!engine.infos[tileView(0)]) await engine.add(views);
   for (const [k, t] of tiles.entries()) t.shape = engine.infos[tileView(k)].levels.map((l) => l.shape);
@@ -76,12 +76,12 @@ async function openTiles() {
 async function detect(): Promise<number[][][][]> {
   const key = JSON.stringify(DETECTION.map((k) => params[k]));
   if (points?.key === key) return points.values;
-  const overlaps = await engine.stitch<Overlap[]>("overlaps", { tiles, params });
+  const overlaps = await engine.call<Overlap[]>("overlaps", { tiles, params });
   const values = await Promise.all(overlaps.map((o) => Promise.all(o.regions.map(async (r, k) => {
     if (!r) return [];
     const t = o.tiles[k], level = engine.infos[tileView(t)].levels[params.level];
     const block = await engine.read(tileView(t), params.level, r[0], r[1]);
-    return engine.stitch<number[][]>("points", {
+    return engine.call<number[][]>("points", {
       tile: tiles[t], params, dtype: engine.infos[tileView(t)].dtype, shape: r[1].map((h, a) => h - r[0][a]),
       start: r[0], voxel: level.voxel, lo: o.lo, hi: o.hi,
     }, [block]);
@@ -102,9 +102,9 @@ function serveFused(f: Found): string {
     const g = f.grids[level], C = FUSED_CHUNK;
     const lo = index.map((i, a) => i * C[a]), hi = lo.map((o, a) => Math.min(o + C[a], g.shape[a]));
     const args = { tiles: own, placements, level, grid: g, lo, hi };
-    const regions = await engine.stitch<([number[], number[]] | null)[]>("regions", args);
+    const regions = await engine.call<([number[], number[]] | null)[]>("regions", args);
     const blocks = await Promise.all(regions.flatMap((r, t) => (r ? [engine.read(tileView(t), level, r[0], r[1])] : [])));
-    return engine.stitch<ArrayBuffer>("fuse", { ...args, regions, dtype: info.dtype, chunk: C, params: p }, blocks);
+    return engine.call<ArrayBuffer>("fuse", { ...args, regions, dtype: info.dtype, chunk: C, params: p }, blocks);
   });
   return name;
 }
@@ -243,7 +243,7 @@ function run() {
       const values = await detect();
       const t1 = performance.now();
       status("Matching and RANSAC…");
-      found = await engine.stitch<Found>("register", { tiles, points: values, params });
+      found = await engine.call<Found>("register", { tiles, points: values, params });
       fused = serveFused(found);
       showResult(found, `${fresh ? `Points ${((t1 - t0) / 1000).toFixed(1)} s, ` : ""}matches, RANSAC and fit ${seconds(t1)}.`);
       showCommand();

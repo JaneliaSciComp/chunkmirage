@@ -66,6 +66,15 @@ browser's stitch page.
 ::: chunkmirage.stitching.tiles_from_bdv
 ::: chunkmirage.sources.stitch.open_stitch
 
+## Tracking
+
+An object followed through a time series of labels by its overlap, frame by frame, behind
+the browser's track page and `examples/track_nucleus.py`.
+
+::: chunkmirage.tracking.follow
+::: chunkmirage.tracking.step
+::: chunkmirage.tracking.measure
+
 ## Frontends
 
 ::: chunkmirage.frontends.base.Frontend

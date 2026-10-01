@@ -89,7 +89,7 @@ export type MeshCall = NonNullable<PipelineView["mesh"]> & {
 /** What the page asks the reader, which opens the views' sources once for the page. */
 export type ToReader =
   | { type: "open"; reqId: number; views: Record<string, PipelineView> }
-  | { type: "read"; reqId: number; view: string; level: number; lo: number[]; hi: number[] }
+  | { type: "read"; reqId: number; view: string; level: number; lo: number[]; hi: number[]; at?: Record<string, number> }
   | { type: "sample"; reqId: number; view: string; ps: number[] };
 /** What the page asks a Pyodide worker. */
 export type ToPyWorker =
@@ -99,7 +99,7 @@ export type ToPyWorker =
   | { type: "compute"; reqId: number; view: string; level: number; data: ArrayBuffer | null; readShape: number[]; inLo: number[]; inHi: number[]; outLo: number[]; outHi: number[]; full: number[]; voxel: number[]; origin: number[]; unit?: string; mesh?: MeshCall }
   // a multi-resolution mesh's octree and index, from its coarsest level's surface band (`mesh.levels` the view's)
   | { type: "octree"; reqId: number; band: ArrayBuffer; shape: number[]; mesh: MeshCall; chunk: number[]; unit: string }
-  // a step of chunkmirage.stitching (the stitch page): JSON arguments, arrays as raw bytes
-  | { type: "stitch"; reqId: number; fn: string; args: string; arrays?: ArrayBuffer[] };
+  // a step of a page's work (chunkmirage.stitching, chunkmirage.tracking): JSON arguments, arrays as raw bytes
+  | { type: "call"; reqId: number; fn: string; args: string; arrays?: ArrayBuffer[] };
 /** Either's answer to request `reqId`. */
 export type Answer = { reqId: number; value: unknown } | { reqId: number; error: string };
