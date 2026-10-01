@@ -160,14 +160,17 @@ function viewerState() {
     matchLayer("inliers stitched", IN, true, byFit, toM), matchLayer("rejected stitched", OUT, false, byFit, toM),
     { type: "image", name: "fused", source: `zarr3://${engine.url(fused)}`, shader: "#uicontrol invlerp normalized(range=[10, 120])\nvoid main() { emitGrayscale(normalized()); }\n" },
   ];
-  const best = f.pairs.reduce((b, p, k) => (p.kept && p.inliers > (f.pairs[b]?.inliers ?? -1) ? k : b), 0);
-  const o = points!.overlaps[best], seam = o.lo.map((v, a) => (v + o.hi[a]) / 2);
+  // the kept overlap nearest the middle of it all, close enough to see the tiles disagree
+  const middle = [0, 1, 2].map((a) => g.origin[a] + g.voxel[a] * (g.shape[a] - 1) / 2);
+  const centre = (o: Overlap) => o.lo.map((v, a) => (v + o.hi[a]) / 2);
+  const far = (o: Overlap) => Math.hypot(...centre(o).map((c, a) => (a ? c - middle[a] : 0)));
+  const near = points!.overlaps.filter((_, k) => f.pairs[k].kept).sort((a, b) => far(a) - far(b))[0] ?? points!.overlaps[0];
+  const seam = centre(near);
   const main = document.querySelector("main")!;
   const w = (main.clientWidth || 1200) / 3 - 16, h = (main.clientHeight || 800) - 50;
   const column = (names: string[]) => ({ type: "viewer", layers: names, layout: "xy" });
   return {
     dimensions: dims, displayDimensions: ["x", "y", "z"],
-    // the overlap with the most inliers, close enough to see the tiles disagree at the stage
     position: [2, 1, 0].map((a) => seam[a] / g.voxel[a]),
     crossSectionScale: Math.min(Math.max(g.shape[2] / w, g.shape[1] / h) * 1.05, SEAM_ZOOM / g.voxel[2]),
     crossSectionBackgroundColor: "#000000", showAxisLines: false, showDefaultAnnotations: false, layers,
@@ -302,7 +305,8 @@ function controls() {
 async function start() {
   ($("xml") as HTMLAnchorElement).href = XML;
   const t0 = performance.now();
-  await engine.start({}, status);
+  await engine.start({}, status, ["scipy"]);  // the interest points' filters
+  await engine.ready;
   status(`Python ready in ${seconds(t0)}. Reading the project…`);
   controls();
   showCommand();

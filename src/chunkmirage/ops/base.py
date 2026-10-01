@@ -30,6 +30,8 @@ class Op(BaseModel):
     name: ClassVar[str] = ""
     halo: ClassVar[int | tuple[int, ...]] = 0
     cache: ClassVar[bool] = False
+    # packages its apply imports beyond numpy (the browser engine loads them up front)
+    packages: ClassVar[tuple[str, ...]] = ()
     _cache: bool | None = PrivateAttr(None)  # this op's own setting, over the class's
 
     @property

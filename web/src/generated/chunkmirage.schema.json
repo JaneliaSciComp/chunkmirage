@@ -71,6 +71,9 @@
       "type": "object",
       "required": [
         "op"
+      ],
+      "x-packages": [
+        "scipy"
       ]
     },
     "Diff": {
@@ -131,6 +134,9 @@
       "type": "object",
       "required": [
         "op"
+      ],
+      "x-packages": [
+        "scipy"
       ]
     },
     "Gaussian": {
@@ -158,6 +164,9 @@
       "type": "object",
       "required": [
         "op"
+      ],
+      "x-packages": [
+        "scipy"
       ]
     },
     "Hillshade": {
@@ -219,6 +228,9 @@
       "type": "object",
       "required": [
         "op"
+      ],
+      "x-packages": [
+        "scipy"
       ]
     },
     "MeshSpec": {
@@ -286,6 +298,9 @@
       "type": "object",
       "required": [
         "op"
+      ],
+      "x-packages": [
+        "scipy"
       ]
     },
     "OpSpec": {
@@ -721,6 +736,9 @@
       "type": "object",
       "required": [
         "op"
+      ],
+      "x-packages": [
+        "scipy"
       ]
     },
     "StitchParams": {
@@ -884,6 +902,9 @@
       "type": "object",
       "required": [
         "op"
+      ],
+      "x-packages": [
+        "scipy"
       ]
     }
   }

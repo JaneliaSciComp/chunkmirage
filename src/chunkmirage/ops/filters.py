@@ -15,6 +15,7 @@ class Gaussian(Op):
     """Gaussian blur (smoothing). Reduces noise before thresholding; larger sigma = blurrier."""
 
     name = "gaussian"
+    packages = ("scipy",)
     sigma: float = Field(
         1.0,
         gt=0,
@@ -48,6 +49,7 @@ class Uniform(Op):
     """Box (mean) filter: each voxel becomes the average of a size³ cube around it."""
 
     name = "uniform"
+    packages = ("scipy",)
     size: int = Field(
         3,
         ge=1,

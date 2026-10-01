@@ -131,11 +131,13 @@ def stitch(fn, args, arrays):
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let py: any = null;
+let loaded: Promise<void> | null = null;
 
-async function load() {
+async function load(packages: string[] = []) {
   const mod = await import(/* @vite-ignore */ `${PYODIDE}pyodide.mjs`);
   py = await mod.loadPyodide({ indexURL: PYODIDE });
-  await py.loadPackage(["numpy", "scipy", "pydantic"]);
+  // with the packages the page's ops declare; any other when first imported (withPackages)
+  await py.loadPackage(["numpy", "pydantic", ...packages]);
   for (const [path, text] of Object.entries(FILES)) {
     py.FS.mkdirTree(`/chunkmirage/${path.slice(0, path.lastIndexOf("/"))}`);
     py.FS.writeFile(`/chunkmirage/${path}`, text);
@@ -144,8 +146,8 @@ async function load() {
 }
 
 /** Each view's output dtype, the leading axes its ops consume and the halo they need. */
-async function plan(views: Extract<ToPyWorker, { type: "plan" }>["views"]) {
-  if (!py) await load();
+async function plan(views: Extract<ToPyWorker, { type: "plan" }>["views"], packages?: string[]) {
+  if (!py) await (loaded ??= load(packages));
   const out: Record<string, { dtype: string; lead: number; halo: number[] }> = {};
   for (const [id, v] of Object.entries(views)) {
     const p = JSON.parse(py.globals.get("plan")(id, JSON.stringify(v.ops), v.shape, v.dtype, v.chunk, v.voxel, v.source));
@@ -157,22 +159,40 @@ async function plan(views: Extract<ToPyWorker, { type: "plan" }>["views"]) {
 
 /** A stitching step: JSON back, or with `bytes` a chunk's bytes. */
 async function stitch(m: Extract<ToPyWorker, { type: "stitch" }>): Promise<unknown> {
-  if (!py) await load();
-  const out = py.globals.get("stitch")(m.fn, m.args, (m.arrays ?? []).map((b) => new Uint8Array(b)));
+  if (!py) await (loaded ??= load());
+  const arrays = (m.arrays ?? []).map((b) => new Uint8Array(b));
+  const out = await withPackages(() => py.globals.get("stitch")(m.fn, m.args, arrays));
   if (typeof out === "string") return JSON.parse(out);
   const bytes = out.toJs() as Uint8Array;
   out.destroy();
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
-let meshing: Promise<void> | null = null;  // scikit-image, loaded when a mesh is first asked for
+/** Pyodide packages the ops import inside their functions, loaded the first time one does:
+ * most demos never need scipy's 30 MB, nor a mesh scikit-image's. */
+const LAZY: Record<string, string> = { scipy: "scipy", skimage: "scikit-image" };
+const loading = new Map<string, Promise<void>>();
+
+/** `call()`, again after loading what it failed to import: a package not loaded yet, or one
+ * imported while it was still being installed (whose half-imported modules are dropped). */
+async function withPackages<T>(call: () => T): Promise<T> {
+  for (let tries = 0; ; tries++) {
+    try { return call(); } catch (e) {
+      const text = String((e as Error)?.message ?? "");
+      const name = (/No module named '(\w+)/.exec(text) ?? /`(\w+)` install you are using seems to be broken/.exec(text))?.[1];
+      if (!name || !LAZY[name] || tries > 1) throw e;
+      if (!loading.has(name)) loading.set(name, py.loadPackage([LAZY[name]]));
+      await loading.get(name);
+      py.runPython(`import sys\nfor m in [m for m in sys.modules if m == "${name}" or m.startswith("${name}.")]: del sys.modules[m]`);
+    }
+  }
+}
 
 /** A chunk, as zarr v3 bytes (little endian, C order), from its input region; or with
  * `mesh`, a mesh fragment of the region (Neuroglancer's legacy encoding). */
 async function compute(m: Extract<ToPyWorker, { type: "compute" }>): Promise<ArrayBuffer> {
-  if (m.mesh && m.mesh.kind !== "terrain") await (meshing ??= py.loadPackage(["scikit-image"]));
   const mesh = m.mesh ? JSON.stringify(m.mesh) : undefined;
-  const bytes = py.globals.get("compute")(m.view, m.level, m.data ? new Uint8Array(m.data) : undefined, m.readShape, m.inLo, m.inHi, m.outLo, m.outHi, m.full, m.voxel, m.origin, mesh, m.unit ?? "");
+  const bytes = await withPackages(() => py.globals.get("compute")(m.view, m.level, m.data ? new Uint8Array(m.data) : undefined, m.readShape, m.inLo, m.inHi, m.outLo, m.outHi, m.full, m.voxel, m.origin, mesh, m.unit ?? ""));
   const out = bytes.toJs() as Uint8Array;
   bytes.destroy();
   return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer;
@@ -180,8 +200,8 @@ async function compute(m: Extract<ToPyWorker, { type: "compute" }>): Promise<Arr
 
 ctx.onmessage = async ({ data: m }: MessageEvent<ToPyWorker>) => {
   try {
-    if (m.type === "describe") { if (!py) await load(); ctx.postMessage({ reqId: m.reqId, value: JSON.parse(py.globals.get("describe")(m.source)) } satisfies Answer); }
-    else if (m.type === "plan") ctx.postMessage({ reqId: m.reqId, value: await plan(m.views) } satisfies Answer);
+    if (m.type === "describe") { if (!py) await (loaded ??= load()); ctx.postMessage({ reqId: m.reqId, value: JSON.parse(py.globals.get("describe")(m.source)) } satisfies Answer); }
+    else if (m.type === "plan") ctx.postMessage({ reqId: m.reqId, value: await plan(m.views, m.packages) } satisfies Answer);
     else if (m.type === "stitch") { const v = await stitch(m); ctx.postMessage({ reqId: m.reqId, value: v } satisfies Answer, v instanceof ArrayBuffer ? [v] : []); }
     else if (m.type === "compute") { const body = await compute(m); ctx.postMessage({ reqId: m.reqId, value: body } satisfies Answer, [body]); }
   } catch (e) {

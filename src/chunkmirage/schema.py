@@ -40,6 +40,8 @@ def spec_schema() -> dict[str, Any]:
         schema = defs[cls.__name__]
         schema["properties"] = {"op": {"const": name}, **schema.get("properties", {})}
         schema["required"] = ["op", *schema.get("required", [])]
+        if cls.packages:  # what its apply imports beyond numpy, for the browser engine
+            schema["x-packages"] = list(cls.packages)
     defs["OpSpec"] = {
         "title": "OpSpec",
         "description": "One entry of a pipeline's ops: an op's name and its parameters.",

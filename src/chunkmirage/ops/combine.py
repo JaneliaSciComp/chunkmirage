@@ -22,6 +22,7 @@ class Contacts(Op):
     size-filter the sites."""
 
     name = "contacts"
+    packages = ("scipy",)
     radius: float = Field(
         3.0,
         gt=0,

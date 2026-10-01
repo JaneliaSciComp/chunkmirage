@@ -19,6 +19,7 @@ class DoG(Op):
     """Difference of Gaussians: enhances blob-like structures of a chosen size, suppresses background."""
 
     name = "dog"
+    packages = ("scipy",)
     sigma: float = Field(
         2.0, gt=0, description="Size of structures to enhance, in voxels (smaller blur)."
     )
@@ -54,6 +55,7 @@ class Morphology(Op):
     """Binary morphology on a mask: remove specks (open), fill holes (close), shrink or grow."""
 
     name = "morphology"
+    packages = ("scipy",)
     operation: str = Field(
         "open",
         pattern="^(open|close|erode|dilate)$",
@@ -92,6 +94,7 @@ class Label(Op):
     object spanning several chunks gets several colours; that is the honest per-chunk preview."""
 
     name = "label"
+    packages = ("scipy",)
     min_size: int = Field(
         0,
         ge=0,
@@ -144,6 +147,7 @@ class Spots(Op):
     colour whichever chunk finds it."""
 
     name = "spots"
+    packages = ("scipy",)
     sigma: float = Field(
         1.0,
         gt=0,

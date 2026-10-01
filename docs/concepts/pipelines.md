@@ -43,6 +43,7 @@ schema for free (`GET /api/ops`).
 | `name`                 | identifier used in specs and the CLI (`--op name:key=val`)              |
 | `halo`                 | voxels of context needed on every side; int, per-axis tuple, or a property computed from parameters (e.g. `Gaussian` uses `ceil(sigma * truncate)`) |
 | `cache`                | whether this stage's output chunks are memoized; see [Caching](caching.md) |
+| `packages`             | packages `apply` imports beyond numpy, e.g. `("scipy",)`; the schema carries them (`x-packages`) so the browser engine loads them with Python, only for pages whose ops need them |
 | `output_dtype(dtype)`  | result dtype; default unchanged                                         |
 | `apply(block)`         | the computation; must return an array of the same spatial shape        |
 | `apply_at(block, box)` | optional; same but told the block's (halo-padded) position, for position-dependent results such as unique per-chunk labels |

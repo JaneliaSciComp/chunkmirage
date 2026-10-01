@@ -24,8 +24,10 @@ napari or a dask script.
 | A solar flare (Python only) | `diff` along time on NASA's SDO images of the sun; the gallery shows its command, since NASA's bucket allows no browser page to read it | SDO machine-learning dataset, AIA 171 Å |
 
 The pipeline demos run chunkmirage's own Python in the page: Pyodide (Python compiled to
-WebAssembly, with numpy and scipy) loads the package's ops and `chunkmirage.fused`, the code
-a server's pipeline stage runs, in a few web workers (about 6 s, once). One reader worker
+WebAssembly, with numpy, and scipy only for pages whose ops import it) loads the package's
+ops and `chunkmirage.fused`, the code a server's pipeline stage runs, in a few web workers
+(4 to 7 s, once). Meanwhile the page opens the data and starts the viewer, whose first
+requests wait for Python; a package an op imports unannounced is loaded when it first does. One reader worker
 reads the images in TypeScript, as the Python sources do (OME-Zarr through zarrita, N5
 itself, xarray-written zarr with its coordinates and CF packing, `stack://` and `flip://`),
 decoding each store chunk once for the page; the page hands a worker the block a chunk

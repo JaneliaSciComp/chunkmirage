@@ -57,3 +57,18 @@ def test_diff_reads_back_along_its_axis_only(tmp_path):
     whole = p.read(0, Box((0, 0, 0), vol.shape))
     np.testing.assert_allclose(whole[2:], vol[2:] - vol[:-2], atol=1e-6)
     np.testing.assert_allclose(whole[:2], vol[:2] - vol[0], atol=1e-6)  # the first, repeated
+
+
+def test_ops_declare_the_packages_they_import():
+    """The browser engine loads an op's `packages` with Python; one it imports unannounced
+    costs the page a second load when a chunk first needs it."""
+    import inspect
+
+    from chunkmirage.ops.base import get_op, list_ops
+
+    for name in list_ops():
+        cls = get_op(name)
+        code = inspect.getsource(cls)
+        for package in ("scipy", "skimage"):
+            if f"from {package}" in code or f"import {package}" in code:
+                assert package in cls.packages, f"op {name} imports {package}: add it to packages"

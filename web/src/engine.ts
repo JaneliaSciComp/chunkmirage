@@ -8,6 +8,7 @@
 // (virtual/<page>/geo/<view>/<level>/<view>/...), the zarr-conventions multiscales, proj:
 // and spatial: attributes on the group.
 import { Cancelled, Claim, Queue } from "./demand";
+import schema from "./generated/chunkmirage.schema.json";
 import type { Answer, Later, PipelineView, Reply, SourceInfo, ToPyWorker, ToReader, ViewAxis, ViewInfo } from "./types";
 
 export const TO_SECONDS: Record<string, number> = { s: 1, second: 1, millisecond: 1e-3, ms: 1e-3, minute: 60, hour: 3600, day: 86400 };
@@ -17,7 +18,10 @@ const CONVENTIONS = [
   { uuid: "f17cb550-5864-4468-aeb7-f3180cfb622f", name: "proj:" },
   { uuid: "689b58e2-cf7b-45e0-9fff-9cfc0883d6b4", name: "spatial:" },
 ];
-const KEPT_BYTES = 256 * 2 ** 20;  // computed chunks kept for clients that refetch
+const KEPT_BYTES = 256 * 2 ** 20;
+/** The Pyodide packages each op imports beyond numpy, by op name (chunkmirage's schema). */
+const OP_PACKAGES: Record<string, string[]> = Object.fromEntries(Object.values(schema.$defs as Record<string, { properties?: { op?: { const?: string } }; "x-packages"?: string[] }>)
+  .flatMap((d) => (d.properties?.op?.const && d["x-packages"] ? [[d.properties.op.const, d["x-packages"]]] : [])));  // computed chunks kept for clients that refetch
 /** Sources the Pyodide workers compute themselves (chunkmirage's own Python), nothing read. */
 const computedSource = (url: string) => url.startsWith("synthetic://");
 
@@ -70,8 +74,10 @@ export class Engine {
   /** `onChange` is told whenever the counts change. */
   constructor(private onChange: () => void = () => {}) {}
 
-  /** Start the service worker, the reader and `n` Pyodide workers, and plan `views`. */
-  async start(views: Record<string, PipelineView>, status: (s: string) => void): Promise<void> {
+  /** Start the service worker, the reader and `n` Pyodide workers, and open `views`'
+   * sources. Their ops are planned once Python has loaded (`ready`); requests that come
+   * before wait for it, so a viewer can start meanwhile. */
+  async start(views: Record<string, PipelineView>, status: (s: string) => void, packages: string[] = []): Promise<void> {
     if (!window.isSecureContext) throw new Error("This page needs a secure context: open it over https, or through localhost.");
     if (!navigator.serviceWorker) throw new Error("This browser has no service workers (a private window?).");
     status("Starting the service worker…");
@@ -79,27 +85,48 @@ export class Engine {
     await navigator.serviceWorker.ready;
     this.listen();
     const n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 2));
-    status(`Loading Python (Pyodide, numpy, scipy) and chunkmirage's ops in ${n} worker${n > 1 ? "s" : ""}…`);
     this.reader = new Rpc<ToReader>(new Worker(new URL("./reader.ts", import.meta.url), { type: "module" }));
     this.pool = Array.from({ length: n }, () => new Rpc<ToPyWorker>(new Worker(new URL("./pyworker.ts", import.meta.url), { type: "module" })));
     this.chunks = new Queue<ArrayBuffer>(n);
-    await this.plan(views);
+    // load Python now, with what the views' ops import (each op's schema says)
+    const needed = [...new Set([...packages, ...Object.values(views).flatMap((v) => (v.ops ?? []).flatMap((o) => OP_PACKAGES[String(o.op)] ?? []))])];
+    status(`Opening the data, and loading Python (Pyodide, ${["numpy", ...needed].join(", ")}) and chunkmirage's ops in ${n} worker${n > 1 ? "s" : ""}…`);
+    const warm = Promise.all(this.pool.map((w) => w.call({ type: "plan", views: {}, packages: needed })));
+    await this.open(views);
+    this.ready = warm.then(() => this.planOps(views));
+    this.ready.catch(() => {});
   }
 
-  /** Open `views`' sources (once each: read ones by the reader, computed ones described by
-   * a worker) and plan their ops in every worker. */
+  /** Resolves once every view `start` was given is planned (Python loaded). */
+  ready: Promise<void> = Promise.resolve();
+  /** The views' sources as opened: axes and levels, known before Python has loaded. */
+  sources: Record<string, SourceInfo> = {};
+
+  /** Open `views`' sources and plan their ops in every worker. */
   private async plan(views: Record<string, PipelineView>): Promise<void> {
+    await this.open(views);
+    await this.planOps(views);
+  }
+
+  /** Open `views`' sources, once each: read ones by the reader, computed ones described by
+   * a worker (which waits for Python). */
+  private async open(views: Record<string, PipelineView>): Promise<void> {
     const entries = Object.entries(views), read = entries.filter(([, s]) => !computedSource(s.source));
     const opened = read.length ? await this.reader!.call<Record<string, SourceInfo>>({ type: "open", views: Object.fromEntries(read) }) : {};
     for (const [v, s] of entries) if (computedSource(s.source)) opened[v] = await this.pool[0].call<SourceInfo>({ type: "describe", source: s.source });
-    const specs = Object.fromEntries(entries.map(([v, spec]) => {
-      const s = opened[v], shape = [...(s.channels > 1 ? [s.channels] : []), ...s.levels[0].shape];
+    Object.assign(this.sources, opened);
+    Object.assign(this.views, views);
+  }
+
+  /** Plan opened views' ops in every worker: their output dtype, leading axes and halo. */
+  private async planOps(views: Record<string, PipelineView>): Promise<void> {
+    const specs = Object.fromEntries(Object.entries(views).map(([v, spec]) => {
+      const s = this.sources[v], shape = [...(s.channels > 1 ? [s.channels] : []), ...s.levels[0].shape];
       const source = computedSource(spec.source) ? spec.source : undefined;
       return [v, { ops: spec.ops ?? [], shape, dtype: s.dtype, chunk: spec.chunk, voxel: s.levels[0].voxel, source }];
     }));
     const plans = await Promise.all(this.pool.map((w) => w.call<Record<string, Plan>>({ type: "plan", views: specs })));
-    for (const [v, s] of Object.entries(opened)) this.infos[v] = { ...s, out: plans[0][v].dtype, lead: plans[0][v].lead, halo: plans[0][v].halo };
-    Object.assign(this.views, views);
+    for (const v of Object.keys(views)) this.infos[v] = { ...this.sources[v], out: plans[0][v].dtype, lead: plans[0][v].lead, halo: plans[0][v].halo };
   }
 
   /** Serve `views` too. */
@@ -109,6 +136,7 @@ export class Engine {
    * level as zarr v3 bytes (whole, little endian). */
   serve(view: string, info: ViewInfo, chunk: number[], produce: (level: number, index: number[]) => Promise<ArrayBuffer>) {
     this.infos[view] = info;
+    this.sources[view] = info;
     this.views[view] = { source: "page://", chunk };
     this.producers.set(view, produce);
   }
@@ -191,7 +219,7 @@ export class Engine {
 
   /** The level a view's mesh is made from (chunkmirage.meshes.mesh_level). */
   meshLevel(view: string): number {
-    const v = this.infos[view], spec = this.views[view].mesh ?? {};
+    const v = this.sources[view], spec = this.views[view].mesh ?? {};
     if (spec.level !== undefined) return spec.level;
     const small = v.levels.findIndex((l) => Math.max(...l.shape.slice(-3)) <= 512);
     return small < 0 ? v.levels.length - 1 : small;
@@ -255,10 +283,12 @@ export class Engine {
   /** Projection codes of the GeoZarr groups, by view (set by the map page). */
   proj: Record<string, string> = {};
 
-  private answer(path: string): Answered {
+  private async answer(path: string): Promise<Answered> {
     const parts = path.split("/virtual/")[1]?.split("/");
     if (!parts || parts[0] !== this.page) return null;
     if (!this.chunks) return notFound;
+    const named = parts[1] === "geo" ? parts[2] : parts[1];
+    if (named && !this.infos[named] && this.sources[named]) await this.ready;  // its ops are being planned
     let rest = parts.slice(1), view: string;
     const map = rest[0] === "geo";
     if (map) {  // geo/<view>/zarr.json, geo/<view>/<level>/zarr.json, geo/<view>/<level>/<view>/...
@@ -313,7 +343,7 @@ export class Engine {
       const port = e.ports[0];
       if (!port) return;
       let a: Answered;
-      try { a = this.answer(e.data.path); } catch (err) { a = { status: 500, body: String(err), type: "text/plain" }; }
+      try { a = await this.answer(e.data.path); } catch (err) { a = { status: 500, body: String(err), type: "text/plain" }; }
       if (!a || !("pending" in a)) return port.postMessage(a, a && a.body instanceof ArrayBuffer ? [a.body] : []);
       // a chunk: the head now, the body once computed; the client may give up in between
       port.onmessage = (m: MessageEvent<{ cancel?: boolean }>) => { if (m.data?.cancel) a.claim.cancel(); };

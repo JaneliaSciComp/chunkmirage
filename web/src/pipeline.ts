@@ -34,7 +34,7 @@ function dimension(a: ViewAxis, voxel: number): [number, string] {
 }
 
 async function viewerState(card: PipelineCard) {
-  const first = engine.infos[Object.keys(card.views)[0]], l0 = first.levels[0];
+  const first = engine.sources[Object.keys(card.views)[0]], l0 = first.levels[0];
   const order = [2, 1, 0];  // shown x, y, z: the last axis across
   const names = order.map((a) => first.axes[a].name);
   const dims = Object.fromEntries(order.map((a) => [first.axes[a].name, dimension(first.axes[a], l0.voxel[a])]));
@@ -110,8 +110,7 @@ async function start() {
   $("data").textContent = card.data;
   $("command").textContent = card.command;
   const t0 = performance.now();
-  await engine.start(card.views, status);
-  status(`Python ready in ${((performance.now() - t0) / 1000).toFixed(1)} s. Chunks are computed as the viewer asks for them.`);
+  await engine.start(card.views, status);  // the data opened; Python still loading
   const ng = $<HTMLIFrameElement>("ng");
   const state = await viewerState(card);
   ng.src = `ng/index.html#!${encodeURIComponent(JSON.stringify(state))}`;
@@ -119,6 +118,9 @@ async function start() {
   if (card.timeline) showDates(ng, card.timeline, state.displayDimensions);
   $("empty").hidden = true;
   showCounts();
+  Object.assign(window, { engine });  // for a console, and the headless checks
+  await engine.ready;  // the viewer's requests wait for it
+  status(`Python ready in ${((performance.now() - t0) / 1000).toFixed(1)} s. Chunks are computed as the viewer asks for them.`);
 }
 
 $("copy").addEventListener("click", () => void navigator.clipboard.writeText($("command").textContent ?? ""));

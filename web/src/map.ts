@@ -52,8 +52,8 @@ async function start() {
   $("data").textContent = card.data;
   $("command").textContent = card.command;
   const t0 = performance.now();
-  await engine.start(card.views, status);
-  status(`Python ready in ${((performance.now() - t0) / 1000).toFixed(1)} s. Tiles are computed as the map asks for them.`);
+  await engine.start(card.views, status);  // the data opened; Python still loading
+  void engine.ready.then(() => status(`Python ready in ${((performance.now() - t0) / 1000).toFixed(1)} s. Tiles are computed as the map asks for them.`));
 
   // the data's own projection, so nothing is reprojected
   const projection = new Projection({ code: card.projection.code, units: "m", extent: card.projection.extent });
@@ -64,7 +64,7 @@ async function start() {
   const map = new OlMap({ target: "map", layers, controls: defaultControls().extend([new ScaleLine()]) });
   /** A view of the site: all of it on screen, no further out, down to quarter pixels. */
   const fit = () => {
-    const bbox = engine.infos[shown[card.sites.views[0]]].geo!.bbox, [w, h] = map.getSize() ?? [800, 600];
+    const bbox = engine.sources[shown[card.sites.views[0]]].geo!.bbox, [w, h] = map.getSize() ?? [800, 600];
     const whole = Math.max((bbox[2] - bbox[0]) / w, (bbox[3] - bbox[1]) / h);
     map.setView(new View({
       projection, extent: bbox, constrainOnlyCenter: false, showFullExtent: true,
