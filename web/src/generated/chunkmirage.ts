@@ -244,6 +244,10 @@ export interface Contacts {
    */
   radius?: number;
   /**
+   * Reach in the data's units (nm, say), instead of radius: each level counts it in its own voxels, so a contact means the same at every zoom (a level whose voxels are bigger than it keeps the voxels in both structures).
+   */
+  distance?: number | null;
+  /**
    * Values at or above this in the first channel are the first structure: 128 for a uint8 probability map, 1 for a segmentation.
    */
   a_low?: number;

@@ -1,6 +1,6 @@
 // The pipeline page: one demo of the gallery (cards.ts), its views computed and served by
 // the browser engine (engine.ts) as OME-Zarr, and shown in Neuroglancer.
-import { CARDS, type CardLayer, type PipelineCard, type Timeline } from "./cards";
+import { CARDS, type CardLayer, type OpControl, type PipelineCard, type Timeline } from "./cards";
 import { Engine, TO_SECONDS } from "./engine";
 import type { ViewAxis } from "./types";
 
@@ -100,6 +100,46 @@ function showDates(ng: HTMLIFrameElement, t: Timeline, names: string[]) {
   attach();
 }
 
+interface NgState { layers: { name: string; source: unknown }[]; [k: string]: unknown }
+interface NgViewer { state: { toJSON(): NgState; restoreState(s: NgState): void } }
+
+/** Sliders over op parameters: the view is computed again under a new name, and the viewer's
+ * layers of it switched to that, keeping the camera. */
+function controls(card: PipelineCard, ng: HTMLIFrameElement) {
+  const ops: Record<string, Record<string, unknown>[]> = {};
+  let busy = Promise.resolve();
+  const apply = (c: OpControl, value: number) => {
+    const list = (ops[c.view] ??= structuredClone(card.views[c.view].ops ?? []));
+    list[c.op] = { ...list[c.op], [c.param]: value };
+    busy = busy.then(async () => {
+      status("Computing again for what is on screen…");
+      const name = await engine.edit(c.view, { ops: structuredClone(list) });
+      const viewer = (ng.contentWindow as (Window & { viewer?: NgViewer }) | null)?.viewer;
+      if (viewer) {
+        const state = viewer.state.toJSON(), old = new RegExp(`/virtual/${engine.page}/${c.view}(~\\d+)?/`);
+        for (const l of state.layers) if (typeof l.source === "string" && old.test(l.source)) l.source = l.source.replace(old, `/virtual/${engine.page}/${name}/`);
+        viewer.state.restoreState(state);
+      }
+      status("Chunks are computed as the viewer asks for them.");
+    }).catch((e) => status(`Failed: ${(e as Error).message ?? e}`));
+  };
+  for (const c of card.controls ?? []) {
+    const row = document.createElement("label");
+    row.className = "control";
+    row.innerHTML = `<span></span><output></output><input type="range">`;
+    row.querySelector("span")!.textContent = c.label;
+    const input = row.querySelector("input")!, out = row.querySelector("output")!;
+    const value = Number((card.views[c.view].ops ?? [])[c.op]?.[c.param] ?? c.min);
+    Object.assign(input, { min: String(c.min), max: String(c.max), step: String(c.step), value: String(value) });
+    const show = () => { out.textContent = `${input.value}${c.unit}`; };
+    show();
+    input.addEventListener("input", show);
+    input.addEventListener("change", () => apply(c, Number(input.value)));
+    $("controls").append(row);
+  }
+  $("controls").hidden = !card.controls?.length;
+}
+
 async function start() {
   const id = new URLSearchParams(location.search).get("card") ?? "contacts";
   const card = CARDS.find((c): c is PipelineCard => c.kind === "pipeline" && c.id === id);
@@ -116,6 +156,7 @@ async function start() {
   ng.src = `ng/index.html#!${encodeURIComponent(JSON.stringify(state))}`;
   ng.hidden = false;
   if (card.timeline) showDates(ng, card.timeline, state.displayDimensions);
+  controls(card, ng);
   $("empty").hidden = true;
   showCounts();
   Object.assign(window, { engine });  // for a console, and the headless checks

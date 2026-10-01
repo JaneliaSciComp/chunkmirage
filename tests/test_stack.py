@@ -150,3 +150,22 @@ def test_flipped_images_stack(centred):
     data = stack.read(Box((0, 0, 0, 0), (2, *levels[0].shape)))
     np.testing.assert_array_equal(data[0], np.flip(levels[0], axis=1))
     np.testing.assert_array_equal(data[1], levels[0])
+
+
+def test_contact_distance_means_the_same_at_every_level():
+    from chunkmirage import fused
+    from chunkmirage.core import ArrayInfo
+    from chunkmirage.ops import op_from_spec
+
+    op = op_from_spec({"op": "contacts", "distance": 12})
+
+    def info(voxel):
+        return ArrayInfo(shape=(2, 64, 64, 64), dtype=np.dtype("uint8"), chunk_shape=(2, 16, 16, 16),
+                         voxel_size=(1, voxel, voxel, voxel), units=("", "nm", "nm", "nm"),
+                         axes=("c", "z", "y", "x"), translation=(0, 0, 0, 0))
+
+    assert op.for_level(info(4)).radius == 3  # 12 nm at 4 nm
+    assert op.for_level(info(16)).radius == 0.75
+    # the halo is planned on the level given, the finest's being the widest
+    assert fused.plan(info(4), [op])[2] == (4, 4, 4)
+    assert fused.plan(info(16), [op])[2] == (2, 2, 2)

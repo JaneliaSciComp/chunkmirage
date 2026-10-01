@@ -38,6 +38,7 @@ new op; `tests/test_docs.py` requires it.
 |             | `altitude`  | 45      | the sun's height above the horizon, degrees |
 |             | `z_factor`  | 1.0     | as for `slope`; above 1 exaggerates relief |
 | `contacts`  | `radius`    | 3.0     | contact sites between the first two channels of a `stack://` source: voxels within this many voxels (Euclidean) of both structures; output uint8 mask; halo = `radius + 1` |
+|             | `distance`  | none    | the reach in the data's units (nm) instead: each level counts it in its own voxels, so a contact means the same at every zoom; halo planned on the finest level |
 |             | `a_low`     | 128     | values at or above this in the first channel are the first structure (128 for a uint8 probability map, 1 for a segmentation) |
 |             | `b_low`     | 128     | the same for the second channel |
 

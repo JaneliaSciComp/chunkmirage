@@ -17,7 +17,8 @@ from chunkmirage.ops.base import Op
 def plan(info: ArrayInfo, ops: Sequence[Op]) -> tuple[ArrayInfo, int, tuple[int, ...]]:
     """What ``ops`` make of input ``info``: the output's info (its chunks still the input's),
     how many leading axes they consume (the channels of a ``stack://`` source, which are
-    read whole), and the halo the output's axes need, the sum of the ops'."""
+    read whole), and the halo the output's axes need, the sum of the ops'. Planned on the
+    finest level, the halo is the widest any level needs."""
     out = info
     for op in ops:
         out = op.output_info(out)
@@ -27,7 +28,8 @@ def plan(info: ArrayInfo, ops: Sequence[Op]) -> tuple[ArrayInfo, int, tuple[int,
             f"ops {[op.name for op in ops]} add axes ({info.ndim} -> {out.ndim}), which a"
             " stage cannot serve yet"
         )
-    halo = tuple(sum(op.halo_for(out.ndim)[a] for op in ops) for a in range(out.ndim))
+    # each op as it runs on this level (an op in physical units counts its halo in its voxels)
+    halo = tuple(sum(op.for_level(out).halo_for(out.ndim)[a] for op in ops) for a in range(out.ndim))
     return out, lead, halo
 
 

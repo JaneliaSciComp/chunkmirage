@@ -56,6 +56,19 @@
           "maximum": 32,
           "type": "number"
         },
+        "distance": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reach in the data's units (nm, say), instead of radius: each level counts it in its own voxels, so a contact means the same at every zoom (a level whose voxels are bigger than it keeps the voxels in both structures)."
+        },
         "a_low": {
           "default": 128.0,
           "description": "Values at or above this in the first channel are the first structure: 128 for a uint8 probability map, 1 for a segmentation.",

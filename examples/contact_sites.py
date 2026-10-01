@@ -4,14 +4,14 @@ and every chunk on screen answered with the voxels within a few nanometres of bo
 and size-filtered. Nothing is precomputed or written: 122 gigavoxels of cell, and only the
 chunks you view cost anything.
 
-    uv run python examples/contact_sites.py [--radius 3] [--min-size 50] [--chunk 16,128,128]
+    uv run python examples/contact_sites.py [--distance 12] [--min-size 50] [--chunk 16,128,128]
     uv run python examples/contact_sites.py --segmentations
 
 A python Neuroglancer viewer opens with the EM (read by the browser straight from the public
 bucket), the two organelles as the contacts op sees them (the predictions thresholded at
 128, where the predicted distance to their boundary crosses zero: the first step of
 OpenOrganelle's own segmentations; mitochondria labelled as objects) and the contact sites.
-While it is open, type settings at the prompt (``radius=4 min_size=100``) to recompute: the
+While it is open, type settings at the prompt (``distance=20 min_size=100``) to recompute: the
 viewer refetches what is on screen and keeps its camera; the two predictions were read into
 chunkmirage's cache by the first pass, so the second costs only the contact computation. The
 equivalent command line is printed.
@@ -40,12 +40,12 @@ LABELS = BUCKET + "jrc_hela-2.n5/labels/"
 MITO = "flip://" + LABELS + "mito_pred?axes=y"
 ER = "flip://" + LABELS + "er_pred?axes=y"
 MITO_SEG, ER_SEG, CONTACTS = (LABELS + n for n in ("mito_seg", "er_seg", "er_mito_contacts"))
-EDITABLE = ("radius", "min_size", "a_low", "b_low")
+EDITABLE = ("distance", "min_size", "a_low", "b_low")
 
 
 def spec(source: str, settings: dict) -> dict:
     """The contact-sites pipeline: the stack of two predictions, `contacts`, then `label`."""
-    contacts = {k: v for k, v in settings.items() if k in ("radius", "a_low", "b_low")}
+    contacts = {k: v for k, v in settings.items() if k in ("distance", "a_low", "b_low")}
     label = {k: v for k, v in settings.items() if k in ("min_size",)}
     return {"source": source, "ops": [{"op": "contacts", **contacts}, {"op": "label", **label}]}
 
@@ -68,7 +68,9 @@ def main() -> None:
     ap.add_argument("--a", help="first structure: a probability map (default: mito_pred)")
     ap.add_argument("--b", help="second structure, on the same grid (default: er_pred)")
     ap.add_argument("--em", default=EM, help="image the browser shows underneath (zarr URL)")
-    ap.add_argument("--radius", type=float, default=3, help="reach in voxels (12 nm at 4 nm)")
+    ap.add_argument(
+        "--distance", type=float, default=12, help="contact reach in nm, the same at every zoom"
+    )
     ap.add_argument("--min-size", type=int, default=50, help="drop sites smaller than this")
     ap.add_argument(
         "--a-low", type=float, help="threshold on the first channel (128; 1 for segmentations)"
@@ -125,7 +127,7 @@ def main() -> None:
     low = 1 if seg else 128
     source = f"stack://{a}|{b}"
     settings = {
-        "radius": args.radius,
+        "distance": args.distance,
         "min_size": args.min_size,
         "a_low": low if args.a_low is None else args.a_low,
         "b_low": low if args.b_low is None else args.b_low,
@@ -195,7 +197,7 @@ def main() -> None:
         )
     print(
         "Contact sites appear as the chunks on screen are computed; pan and they follow. Type "
-        f"settings to recompute ({', '.join(EDITABLE)}), e.g. `radius=4 min_size=100`.\n",
+        f"settings to recompute ({', '.join(EDITABLE)}), e.g. `distance=20 min_size=100`.\n",
         flush=True,
     )
     threading.Thread(target=prompt, args=(settings, load), daemon=True).start()
@@ -215,7 +217,7 @@ def prompt(settings: dict, load) -> None:
         try:
             new = dict(tok.split("=", 1) for tok in line.split())
         except ValueError:
-            print("expected key=value pairs, e.g. radius=4 min_size=100")
+            print("expected key=value pairs, e.g. distance=20 min_size=100")
             continue
         if bad := set(new) - set(EDITABLE):
             print(f"unknown: {sorted(bad)}; editable: {', '.join(EDITABLE)}")

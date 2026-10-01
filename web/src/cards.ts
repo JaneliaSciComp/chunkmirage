@@ -32,7 +32,10 @@ export interface PipelineCard extends Card {
   orientation?: number[];    // the slices' rotation (a quaternion), e.g. north up for a map
   timeline?: Timeline;       // the date on screen, for an axis of days
   playback?: { axis: string; velocity: number };  // the viewer's play button: steps per second
+  controls?: OpControl[];    // sliders: an op parameter of a view, computed again for what is on screen
 }
+/** A slider over a parameter of one of a view's ops. */
+export interface OpControl { label: string; unit: string; min: number; max: number; step: number; view: string; op: number; param: string }
 /** Dates along an axis whose coordinate counts days from `start`, and what happened on some. */
 export interface Timeline { axis: string; start: string; events: { from: string; to?: string; text: string }[] }
 /** A layer of a map demo: a view the page computes, drawn with an OpenLayers WebGL tile
@@ -40,8 +43,7 @@ export interface Timeline { axis: string; start: string; events: { from: string;
 export interface MapLayer { name: string; view: string; style: Record<string, unknown>; visible?: boolean }
 /** A slider: a parameter of a view's op (the view is computed again, for what is on screen),
  * or a style variable of a layer (redrawn by the map at once). */
-export type MapControl = { label: string; unit: string; min: number; max: number; step: number }
-  & ({ view: string; op: number; param: string } | { layer: string; variable: string; value: number });
+export type MapControl = OpControl | { label: string; unit: string; min: number; max: number; step: number; layer: string; variable: string; value: number };
 export interface MapCard extends Card {
   kind: "map";
   views: Record<string, PipelineView>;
@@ -144,7 +146,7 @@ export const CARDS: DemoCard[] = [
       er: { source: ER, chunk: CHUNK, ops: [{ op: "threshold", low: 128 }] },
       contacts: {
         source: `stack://${MITO}|${ER}`, chunk: CHUNK,
-        ops: [{ op: "contacts", radius: 3, a_low: 128, b_low: 128 }, { op: "label", min_size: 50 }],
+        ops: [{ op: "contacts", distance: 12, a_low: 128, b_low: 128 }, { op: "label", min_size: 50 }],
       },
     },
     layers: [
@@ -154,8 +156,9 @@ export const CARDS: DemoCard[] = [
       { name: "contacts", view: "contacts", type: "segmentation", colour: "#ffd21f", alpha: 0.9 },
     ],
     panels: [["em", "mito", "er", "contacts"]],
+    controls: [{ label: "Contact distance", unit: " nm", min: 4, max: 60, step: 2, view: "contacts", op: 0, param: "distance" }],
     position: [2156, 596, 3028], zoom: 1,
-    command: `P=${PRED}\nchunkmirage serve "stack://flip://$P/mito_pred?axes=y|flip://$P/er_pred?axes=y" \\\n  --op contacts:radius=3 --op label:min_size=50 --chunk 16,128,128 --python-viewer`,
+    command: `P=${PRED}\nchunkmirage serve "stack://flip://$P/mito_pred?axes=y|flip://$P/er_pred?axes=y" \\\n  --op contacts:distance=12 --op label:min_size=50 --chunk 16,128,128 --python-viewer`,
   },
   {
     kind: "pipeline", id: "spots", image: "cards/spots.jpg",

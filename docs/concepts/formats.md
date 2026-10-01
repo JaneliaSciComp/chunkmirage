@@ -416,15 +416,16 @@ below), followed by `label` to colour and size-filter the sites:
 ```
 P=https://janelia-cosem-datasets.s3.amazonaws.com/jrc_hela-2/jrc_hela-2.n5/labels
 chunkmirage serve "stack://flip://$P/mito_pred?axes=y|flip://$P/er_pred?axes=y" \
-    --op contacts:radius=3 --op label:min_size=50 --chunk 16,128,128 --python-viewer
+    --op contacts:distance=12 --op label:min_size=50 --chunk 16,128,128 --python-viewer
 ```
 
 `examples/contact_sites.py` serves the same with the EM underneath and the two predictions
 tinted, opens where the two organelles touch most, and takes new settings at a prompt.
 Only the chunks on screen are computed, out of 122 gigavoxels of cell, and a change of
-radius recomputes just those, from predictions the first pass left in the cache. Like every
-op's parameters, `radius` counts voxels of the level being served, so a zoomed-out view
-reaches proportionally further.
+distance recomputes just those, from predictions the first pass left in the cache. The
+`distance` is in nanometres and each level counts it in its own voxels, so a contact means
+the same at every zoom (`radius`, in voxels, would reach proportionally further on a
+zoomed-out level, as op parameters in voxels do).
 
 ### Flip sources (images stored the other way round)
 
