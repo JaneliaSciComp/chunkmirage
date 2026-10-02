@@ -163,6 +163,22 @@ const OL_GREY = { color: ["interpolate", ["linear"], ["band", 1], 0, [0, 0, 0, 1
 
 export const CARDS: DemoCard[] = [
   {
+    kind: "link", id: "register-fly", image: "cards/register-fly.jpg",
+    title: "Two fly brains registered on your GPU in seconds, served at every resolution",
+    blurb: "Not just an affine: one is found from the images, then a deformable field is solved on top of it on this computer's GPU in seconds, and the moving brain is served through both at every resolution, chunk by chunk. Before (as stored), after, and the field (how far the deformable part moved each point) side by side.",
+    data: "FCWB and JRC2018F templates (OME-Zarr RFC-5 examples)",
+    href: "register.html",
+    command: "uv run python examples/fly_brain_registration.py",
+  },
+  {
+    kind: "link", id: "register-efish", image: "cards/register-efish.jpg",
+    title: "Two EASI-FISH rounds aligned: finer deformation fields fitted where you zoom",
+    blurb: "Two imaging rounds of one fly brain: an affine found from the images, a deformable field solved on top of it on the GPU, and finer fields fitted block by block only where you zoom in.",
+    data: "Janelia EASI-FISH, fly central brain, rounds 1 and 2 (janelia-data-examples)",
+    href: `register.html?fixed=${ROUND1}&moving=${ROUND2}&refine=3&iterations=100,40,40,40&window=15,31,31,31`,
+    command: `chunkmirage serve 'register://${ROUND2}?fixed=${encodeURIComponent(ROUND1)}&affine=auto&refine=3&iterations=100,40,40,40&window=15,31,31,31&show=pair' --python-viewer`,
+  },
+  {
     kind: "pipeline", id: "fires", image: "cards/fires.jpg",
     title: "Los Angeles, January 2025: the fires' burn severity, from two satellite passes, for any reader",
     blurb: "Sentinel-2 imaged Los Angeles on 2 January 2025, five days before the Palisades and Eaton fires, and again on 1 February. Burn severity (dNBR, the usual measure: how much the near against the shortwave infrared fell) is computed for each tile as it is read, by chunkmirage's normalized_difference op in this page, from the two passes' stored bands: a map that exists nowhere. Pick who reads it: Neuroglancer; OpenLayers, a web map, reading it as GeoZarr; or GDAL itself, compiled to WebAssembly, opening it as a zarr and writing a GeoTIFF you can download. Yellow is low severity, orange moderate, red and purple high; underneath, the shortwave infrared after.",
@@ -191,22 +207,6 @@ export const CARDS: DemoCard[] = [
       python: "QGIS, xarray, rasterio: from chunkmirage serve (below), add the printed zarr URL (zarr://http://<host>:8000/<name>/zarr) as a raster layer, or xarray.open_zarr it.",
     },
     command: `chunkmirage serve '${BURN}' --op '${JSON.stringify(DNBR)}' --chunk 256,256`,
-  },
-  {
-    kind: "link", id: "register-fly", image: "cards/register-fly.jpg",
-    title: "Two fly brains registered on your GPU in seconds, served at every resolution",
-    blurb: "Not just an affine: one is found from the images, then a deformable field is solved on top of it on this computer's GPU in seconds, and the moving brain is served through both at every resolution, chunk by chunk. Before (as stored), after, and the field (how far the deformable part moved each point) side by side.",
-    data: "FCWB and JRC2018F templates (OME-Zarr RFC-5 examples)",
-    href: "register.html",
-    command: "uv run python examples/fly_brain_registration.py",
-  },
-  {
-    kind: "link", id: "register-efish", image: "cards/register-efish.jpg",
-    title: "Two EASI-FISH rounds aligned: finer deformation fields fitted where you zoom",
-    blurb: "Two imaging rounds of one fly brain: an affine found from the images, a deformable field solved on top of it on the GPU, and finer fields fitted block by block only where you zoom in.",
-    data: "Janelia EASI-FISH, fly central brain, rounds 1 and 2 (janelia-data-examples)",
-    href: `register.html?fixed=${ROUND1}&moving=${ROUND2}&refine=3&iterations=100,40,40,40&window=15,31,31,31`,
-    command: `chunkmirage serve 'register://${ROUND2}?fixed=${encodeURIComponent(ROUND1)}&affine=auto&refine=3&iterations=100,40,40,40&window=15,31,31,31&show=pair' --python-viewer`,
   },
   {
     kind: "link", id: "stitch", image: "cards/stitch.jpg",
