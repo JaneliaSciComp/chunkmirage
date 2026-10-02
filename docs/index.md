@@ -2,6 +2,15 @@
 
 **Spoof chunked array formats over HTTP with on-the-fly processing.**
 
+[▶ Try the demos in your browser](https://yuriyzubov.github.io/chunkmirage/browser/){ .md-button .md-button--primary }
+[All demos](demos.md){ .md-button }
+
+<div class="grid" markdown>
+[![Los Angeles fires: burn severity, read by Neuroglancer, a web map or GDAL](https://yuriyzubov.github.io/chunkmirage/browser/cards/fires.jpg){ width="32%" }](https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=fires)
+[![A 3-D fractal 2^28 voxels across](https://yuriyzubov.github.io/chunkmirage/browser/cards/mandelbulb.jpg){ width="32%" }](https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=mandelbulb)
+[![The Gulf Stream's fronts](https://yuriyzubov.github.io/chunkmirage/browser/cards/fronts.jpg){ width="32%" }](https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=fronts)
+</div>
+
 chunkmirage serves *virtual* datasets that look, to any HTTP-capable viewer or library
 (Neuroglancer, BigDataViewer/Fiji, vizarr, napari, dask, tensorstore, ...), like ordinary
 Zarr v2, Zarr v3, N5, or Neuroglancer Precomputed volumes. Nothing exists on disk. Every

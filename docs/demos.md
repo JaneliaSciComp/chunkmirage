@@ -2,6 +2,8 @@
 
 ## In the browser, nothing to install
 
+[▶ Open the gallery](https://yuriyzubov.github.io/chunkmirage/browser/){ .md-button .md-button--primary }
+
 **[The gallery](https://yuriyzubov.github.io/chunkmirage/browser/)** lists demos that run
 entirely in your browser (Chrome, Edge or Safari 26, for WebGPU and service workers). Images
 are read from their public buckets and every chunk on screen is computed in the page when
