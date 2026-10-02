@@ -20,6 +20,27 @@ viewer  --HTTP-->  chunkmirage  --tensorstore/h5py-->  real data (zarr/n5/precom
                       +-- REST API for live pipeline edits (UI / MCP / scripts)
 ```
 
+chunkmirage was inspired by [example-virtual-n5](https://github.com/stuarteberg/example-virtual-n5),
+which serves N5 chunks computed when a viewer asks for them, and by
+[cellmap-flow](https://github.com/janelia-cellmap/cellmap-flow), which grew out of example-virtual-n5
+and serves live model inference the same way. chunkmirage makes that trick general: any
+format, any source, any per-chunk computation, for any client.
+
+## Demos
+
+**[Try it in your browser](https://yuriyzubov.github.io/chunkmirage/browser/)**, nothing to
+install: every chunk on screen is computed in the page by chunkmirage's own Python, from
+public data, as the viewer asks for it. Among them:
+
+* hurricanes' cold wakes, and the Gulf Stream's fronts, in 20 years of daily sea temperature;
+* a 3-D fractal 2^28 voxels across to zoom into, and its mesh;
+* landing slopes at the Moon's south pole, on a map;
+* six microscope tiles stitched by RANSAC, two fly brains registered on your GPU;
+* organelle contact sites, mRNA spots, and nuclei followed through two days of a colony.
+
+Each also shows the `chunkmirage serve` command that serves the same from Python. The
+[demos page](docs/demos.md) lists them all, and the Python examples.
+
 ## Quick start
 
 ```bash
