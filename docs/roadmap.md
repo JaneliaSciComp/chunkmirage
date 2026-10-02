@@ -6,10 +6,51 @@ describe shipped features as future work.
 1. **A real inference consumer.** Port an existing live-inference server (cellmap-flow is
    the obvious candidate) onto an `Op` with `halo` and `cache=True` on a GPU node. Not
    because the tool is for that project, but because real models, real data and a real user
-   are the fastest way to expose the gaps below.
+   are the fastest way to expose the gaps below. Reading that server's code against this
+   one gave the list; the rule for what goes here is that a second consumer with no notion
+   of models would want it too, stated without model vocabulary. Everything else (model
+   configs, device slots, warmup, weight swaps, job launching, dashboards) stays in the
+   consumer, as a plugin package of ops and a source scheme, which the two entry points
+   below make possible with no change here.
+
+    The plan, five changes with the fourth the big one:
+
+    1. *Ops that crop, ops that add a channel axis* (`fused.py`, `ops/base.py`,
+       `pipeline.py`; the browser engine runs the same `fused.py`). `apply` may return the
+       padded block, as now, or the block shaved by its `halo` on every side, as a valid
+       convolution does: `fused.run` tracks the block's box instead of asserting its shape.
+       `output_info` may prepend one axis (`c`, N entries, unitless); the stage's chunk
+       spans it whole. Tests: an op returning the interior equals the full-shape version;
+       an op adding three channels served through every frontend against `np.gradient`.
+    2. *A `chunkmirage.sources` entry point* beside the ops one: name the scheme, value an
+       `open_x(url, *, cache_bytes, cache, **kw)` returning a `MultiscaleSource`; the
+       built-in schemes join the same table.
+    3. *`kind` on `ArrayInfo`* (`image`, `label`, `mask`), set by `output_info`, read by the
+       viewer glue (a segmentation layer), the precomputed `type` and the API's level info;
+       the dtype heuristic stays as the fallback.
+    4. *Input and output voxel size* (depends on 1 and 3; item 2 below).
+       `MultiscaleSource.level_for(voxel_size)` picks the level nearest a voxel size. An op
+       may declare `input_voxel_size` and let `output_info` change `voxel_size`, through one
+       helper that rescales shape and translation (voxel centres stay put, the OME
+       convention). Such a stage runs on one input level, resampled through the `scene://`
+       machinery when none matches, and produces one output level; coarser levels come from
+       a `downsample` stage (mean for images, mode for labels, by `kind`) reading the finer
+       one, so the op runs once and caching holds. The output chunk times the voxel ratio
+       must be whole input voxels, checked when the pipeline is built. `downsample` becomes
+       a public op. The acceptance test is a fake model shaped like a real one (a halo of 8,
+       three channels added, 8 nm in and 16 nm out) served in every format with a correct
+       pyramid, run once per chunk at one level. The browser engine refuses ops that declare
+       an input voxel size until it learns this.
+    5. *A bearer token* on `/api/*` (`--token`, `CHUNKMIRAGE_TOKEN`; item 9 below). Chunk
+       routes stay open, since viewers send no headers; `/api/events` takes `?token=`.
+
+    Changes 1, 2, 3 and 5 are independent and come first; 4 follows. The consumer's own
+    port (its ops as `Op` subclasses, its scripts that read the data themselves as a source
+    scheme, its launcher starting `chunkmirage serve`) needs 1 and 2 for anything at the
+    source's own voxel size and 4 for models that change it.
 2. **Multiscale semantics for ops.** Per-op declaration of valid scale levels plus a
    downsample-from-s0 mode. Today each level is processed independently, which is wrong for
-   inference.
+   inference. (Change 4 of item 1 is the plan for it.)
 3. **Materialize-on-browse with a disk cache.** Back the cache with a real zarr on local or
    shared storage so it persists, is shared across workers, and doubles as a partially
    computed output. Add a background filler that expands outward from requested chunks: the
