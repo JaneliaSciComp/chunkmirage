@@ -242,6 +242,8 @@ function highlight(force: boolean | Event = false) {
   const here = inFrame(t), want = new Set(here.map((h) => String(h.found.label)));
   updating = true;
   try {
+    // the layer's segment list too: only this frame's nuclei followed, not every id ever shown
+    for (const id of [...group.selectedSegments].map(String)) if (!want.has(id)) group.selectedSegments.delete(BigInt(id));
     for (const id of ids) if (!want.has(id)) visible.delete(BigInt(id));
     for (const id of want) if (!ids.has(id)) visible.add(BigInt(id));
     const colours = layer.displayState.segmentStatedColors?.value;
@@ -283,7 +285,7 @@ function viewerState(dims: Record<string, [number, string]>, centroid: number[])
       { type: "image", name: "lamin B1", source: `zarr://${RAW}/`, localPosition: [0],
         shader: "#uicontrol invlerp normalized(range=[98, 135])\nvoid main() { emitGrayscale(normalized()); }\n" },
       { type: "segmentation", name: "nuclei", source: `zarr://${SEG}/`, localPosition: [0], segments: [String(START.label)],
-        selectedAlpha: 0.45, notSelectedAlpha: 0, segmentDefaultColor: "#45f07a",
+        selectedAlpha: 0.45, notSelectedAlpha: 0,  // each shown in its track's colour (highlight)
         crossSectionRenderScale: 3 },  // a coarser level: the finest's chunks are 28 MB planes
     ],
     layout: "xy", selectedLayer: { visible: false },
