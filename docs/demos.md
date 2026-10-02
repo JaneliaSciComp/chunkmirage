@@ -2,6 +2,8 @@
 
 ## In the browser, nothing to install
 
+[▶ Open the gallery](https://yuriyzubov.github.io/chunkmirage/browser/){ .md-button .md-button--primary }
+
 **[The gallery](https://yuriyzubov.github.io/chunkmirage/browser/)** lists demos that run
 entirely in your browser (Chrome, Edge or Safari 26, for WebGPU and service workers). Images
 are read from their public buckets and every chunk on screen is computed in the page when
@@ -13,6 +15,7 @@ napari or a dask script.
 | ---- | -------------------------- | ---- |
 | [Fly brain templates](https://yuriyzubov.github.io/chunkmirage/browser/register.html) | the moving brain resampled through a field solved on your GPU | OME-Zarr RFC-5 examples |
 | [EASI-FISH rounds](https://yuriyzubov.github.io/chunkmirage/browser/register.html?fixed=https://janelia-data-examples.s3.amazonaws.com/fly-efish/NP31_R2_20240119/NP31_R2_1_1_SS00090_Spab_546_Nplp1_647_1x_Central.zarr/0&moving=https://janelia-data-examples.s3.amazonaws.com/fly-efish/NP31_R2_20240119/NP31_R2_2_1_SS00090_FMRFa_546_Proc_647_1x_Central.zarr/0&refine=3&iterations=100,40,40,40&window=15,31,31,31) | an affine found, a field solved, finer fields fitted where you zoom | Janelia EASI-FISH, rounds 1 and 2 |
+| [Los Angeles fires, any reader](https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=fires) | burn severity (dNBR) by `normalized_difference` from two Sentinel-2 passes, before and after the Palisades and Eaton fires; read by your pick of Neuroglancer, OpenLayers (as GeoZarr) or GDAL itself in WebAssembly (as zarr v2), which writes a georeferenced GeoTIFF to download | Sentinel-2 L2A, 2 January and 1 February 2025 |
 | [Six tiles stitched by RANSAC](https://yuriyzubov.github.io/chunkmirage/browser/stitch.html) | interest points in every overlap, matches, RANSAC and the global fit (rerun as you move a setting, with inliers and rejected matches drawn), then each fused chunk: `chunkmirage.stitching`, as `stitch://` runs it | BigStitcher-Spark's stitching example, a larval fly CNS |
 | [Organelle contact sites](https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=contacts) | the mitochondria and ER predictions thresholded at 128 (mitochondria labelled), and `contacts` then `label` on the two, stacked and flipped into the EM's frame | OpenOrganelle jrc_hela-2 |
 | [Single mRNA molecules](https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=spots) | `spots` on both FISH channels | Janelia EASI-FISH, fly central brain |

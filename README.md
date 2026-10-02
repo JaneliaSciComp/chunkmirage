@@ -2,6 +2,14 @@
 
 **Spoof chunked array formats over HTTP with on-the-fly processing.**
 
+**▶ [Try the demos in your browser](https://yuriyzubov.github.io/chunkmirage/browser/)**, nothing to install.
+
+<p>
+<a href="https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=fires"><img src="web/public/cards/fires.jpg" alt="Los Angeles fires: burn severity, read by Neuroglancer, a web map or GDAL" title="Los Angeles fires: burn severity, read by Neuroglancer, a web map or GDAL" width="32%"></a>
+<a href="https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=mandelbulb"><img src="web/public/cards/mandelbulb.jpg" alt="A 3-D fractal 2^28 voxels across" title="A 3-D fractal 2^28 voxels across" width="32%"></a>
+<a href="https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=fronts"><img src="web/public/cards/fronts.jpg" alt="The Gulf Stream's fronts" title="The Gulf Stream's fronts" width="32%"></a>
+</p>
+
 chunkmirage serves *virtual* datasets that look, to any HTTP-capable viewer or library
 (Neuroglancer, BigDataViewer/Fiji, vizarr, napari, webKnossos, zarr-python, dask,
 tensorstore, ...), like ordinary Zarr v2, Zarr v3, N5, or Neuroglancer Precomputed volumes. Nothing exists on disk.
@@ -19,6 +27,29 @@ viewer  --HTTP-->  chunkmirage  --tensorstore/h5py-->  real data (zarr/n5/precom
                       +-- frontends: n5 | zarr (v2) | zarr3 | precomputed, all served at once
                       +-- REST API for live pipeline edits (UI / MCP / scripts)
 ```
+
+chunkmirage was inspired by [example-virtual-n5](https://github.com/stuarteberg/example-virtual-n5),
+which serves N5 chunks computed when a viewer asks for them, and by
+[cellmap-flow](https://github.com/janelia-cellmap/cellmap-flow), which grew out of example-virtual-n5
+and serves live model inference the same way. chunkmirage makes that trick general: any
+format, any source, any per-chunk computation, for any client.
+
+## Demos
+
+**[Try it in your browser](https://yuriyzubov.github.io/chunkmirage/browser/)**, nothing to
+install: every chunk on screen is computed in the page by chunkmirage's own Python, from
+public data, as the viewer asks for it. Among them:
+
+* hurricanes' cold wakes, and the Gulf Stream's fronts, in 20 years of daily sea temperature;
+* a 3-D fractal 2^28 voxels across to zoom into, and its mesh;
+* the Los Angeles fires' burn severity from two satellite passes, read by your pick of
+  Neuroglancer, a web map, or GDAL itself in the page, which writes a GeoTIFF;
+* landing slopes at the Moon's south pole, on a map;
+* six microscope tiles stitched by RANSAC, two fly brains registered on your GPU;
+* organelle contact sites, mRNA spots, and nuclei followed through two days of a colony.
+
+Each also shows the `chunkmirage serve` command that serves the same from Python. The
+[demos page](docs/demos.md) lists them all, and the Python examples.
 
 ## Quick start
 

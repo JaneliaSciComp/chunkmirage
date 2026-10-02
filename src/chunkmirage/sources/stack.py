@@ -52,8 +52,8 @@ def _n_lead(ms: MultiscaleSource, url: str) -> int:
     n = 0
     while n < len(axes) and axes[n] not in _SPATIAL:
         n += 1
-    if len(axes) - n != 3 or any(a not in _SPATIAL for a in axes[n:]):
-        raise ValueError(f"{url}: stack:// needs images with axes ending in z, y, x; got {axes}")
+    if len(axes) - n not in (2, 3) or any(a not in _SPATIAL for a in axes[n:]):
+        raise ValueError(f"{url}: stack:// needs images with axes ending in z, y, x (or y, x); got {axes}")
     return n
 
 

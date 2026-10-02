@@ -394,6 +394,73 @@
         "scipy"
       ]
     },
+    "NormalizedDifference": {
+      "additionalProperties": false,
+      "description": "``(a - b) / (a + b)`` of two channels of a ``stack://`` source (float32): the indices\nremote sensing reads plants, water and burn scars from (NDVI is near infrared and red,\nNBR near and shortwave infrared). With ``minus``, a second pair's index is subtracted\nfrom the first's: a change between two dates. Burn severity (dNBR) is the NBR before a\nfire minus the NBR after, the before and after images' bands stacked as four channels.\nWhere a band is zero or less, or the two sum to under ``floor`` (water), the index is NaN.",
+      "properties": {
+        "op": {
+          "const": "normalized_difference"
+        },
+        "pair": {
+          "default": [
+            0,
+            1
+          ],
+          "description": "The channels a and b, counted from the first.",
+          "items": {
+            "type": "integer"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "minus": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Two more channels, whose index is subtracted from the first pair's: [2, 3] for the after image of a stack of before and after."
+        },
+        "offset": {
+          "default": 0.0,
+          "description": "Added to every channel first, to make reflectances of stored numbers: Sentinel-2 since 2022 stores them plus 1000 (offset -1000).",
+          "type": "number"
+        },
+        "nodata": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A stored value meaning no data (Sentinel-2: 0): the index there is NaN."
+        },
+        "floor": {
+          "default": 0.0,
+          "description": "Where a pair's two values sum to less than this (after offset), its index is noise, a ratio of near zeros (water reflects almost no infrared), and is NaN.",
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "title": "NormalizedDifference",
+      "type": "object",
+      "required": [
+        "op"
+      ]
+    },
     "OpSpec": {
       "title": "OpSpec",
       "description": "One entry of a pipeline's ops: an op's name and its parameters.",
@@ -427,6 +494,9 @@
         },
         {
           "$ref": "#/$defs/Morphology"
+        },
+        {
+          "$ref": "#/$defs/NormalizedDifference"
         },
         {
           "$ref": "#/$defs/Scale"

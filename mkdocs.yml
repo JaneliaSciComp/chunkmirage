@@ -22,8 +22,9 @@ theme:
 
 nav:
   - Home: index.md
-  - Getting started: getting-started.md
   - Demos: demos.md
+  - "Demo gallery (in your browser) ↗": https://yuriyzubov.github.io/chunkmirage/browser/
+  - Getting started: getting-started.md
   - Concepts:
       - Architecture & design: design.md
       - Pipelines, ops and halos: concepts/pipelines.md
@@ -40,6 +41,8 @@ nav:
   - Contributing & doc policy: contributing.md
 
 markdown_extensions:
+  - attr_list
+  - md_in_html
   - admonition
   - tables
   - toc: { permalink: true }

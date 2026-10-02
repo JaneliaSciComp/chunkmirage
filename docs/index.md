@@ -2,6 +2,15 @@
 
 **Spoof chunked array formats over HTTP with on-the-fly processing.**
 
+[▶ Try the demos in your browser](https://yuriyzubov.github.io/chunkmirage/browser/){ .md-button .md-button--primary }
+[All demos](demos.md){ .md-button }
+
+<div class="grid" markdown>
+[![Los Angeles fires: burn severity, read by Neuroglancer, a web map or GDAL](https://yuriyzubov.github.io/chunkmirage/browser/cards/fires.jpg){ width="32%" }](https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=fires)
+[![A 3-D fractal 2^28 voxels across](https://yuriyzubov.github.io/chunkmirage/browser/cards/mandelbulb.jpg){ width="32%" }](https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=mandelbulb)
+[![The Gulf Stream's fronts](https://yuriyzubov.github.io/chunkmirage/browser/cards/fronts.jpg){ width="32%" }](https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=fronts)
+</div>
+
 chunkmirage serves *virtual* datasets that look, to any HTTP-capable viewer or library
 (Neuroglancer, BigDataViewer/Fiji, vizarr, napari, dask, tensorstore, ...), like ordinary
 Zarr v2, Zarr v3, N5, or Neuroglancer Precomputed volumes. Nothing exists on disk. Every
@@ -18,11 +27,14 @@ viewer / dask  --HTTP-->  chunkmirage  --tensorstore/h5py-->  real data (zarr/n5
                              +-- REST API for live pipeline edits
 ```
 
+chunkmirage was inspired by [example-virtual-n5](https://github.com/stuarteberg/example-virtual-n5),
+which serves N5 chunks computed when a viewer asks for them, and by
+[cellmap-flow](https://github.com/janelia-cellmap/cellmap-flow), which grew out of example-virtual-n5
+and serves live model inference the same way. chunkmirage makes that trick general: any
+format, any source, any per-chunk computation, for any client.
 It is a general-purpose tool: any viewer or library that reads chunked arrays over HTTP,
-any source format, any per-chunk computation. Prior art that uses the same trick for one
-format or one purpose includes [example-virtual-n5](https://github.com/stuarteberg/example-virtual-n5)
-and the serving layer of [cellmap-flow](https://github.com/janelia-cellmap/cellmap-flow);
-projects like those are expected consumers, not the reason it exists.
+any source format, any per-chunk computation. **[See the demos](demos.md)**, which run in
+your browser with nothing to install.
 
 ## When to use it
 
