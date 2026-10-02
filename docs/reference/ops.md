@@ -48,6 +48,11 @@ new op; `tests/test_docs.py` requires it.
 |             | `distance`  | none    | the reach in the data's units (nm) instead: each level counts it in its own voxels, so a contact means the same at every zoom; halo planned on the finest level |
 |             | `a_low`     | 128     | values at or above this in the first channel are the first structure (128 for a uint8 probability map, 1 for a segmentation) |
 |             | `b_low`     | 128     | the same for the second channel |
+| `normalized_difference` | `pair` | 0, 1 | `(a - b) / (a + b)` of two channels of a `stack://` source, float32: the indices remote sensing reads plants, water and burn scars from (NDVI, NDWI, NBR); NaN where a band is zero or less |
+|             | `minus`     | none    | two more channels whose index is subtracted from the first pair's: a change between dates (burn severity, dNBR, is the NBR before minus the NBR after) |
+|             | `offset`    | 0       | added to every channel first, to make reflectances of stored numbers |
+|             | `nodata`    | none    | a stored value meaning no data: the index there is NaN |
+|             | `floor`     | 0       | where a pair sums to less than this, its index is noise (water) and NaN |
 
 `label` numbers components **per chunk** (salted by chunk position so ids never collide).
 An object spanning chunks therefore gets one colour per chunk. That is the honest per-chunk

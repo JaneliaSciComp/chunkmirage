@@ -5,13 +5,14 @@
 Viewers such as Neuroglancer, BigDataViewer, vizarr and napari, and libraries such as
 dask and tensorstore, can read chunked array formats over plain HTTP. chunkmirage answers
 those HTTP requests itself, so the "dataset" can be anything computable per chunk. It is
-meant to be the reusable, general form of a trick that has so far been re-implemented per
-project. Two existing examples of that pattern:
+meant to be the reusable, general form of a trick that had been re-implemented per project,
+and it was inspired by the two that showed it:
 
 * [example-virtual-n5](https://github.com/stuarteberg/example-virtual-n5): a Flask app that
-  synthesises N5 metadata and chunks. Proves the idea, single format, single dataset.
-* [cellmap-flow](https://github.com/janelia-cellmap/cellmap-flow): the same trick wrapped
-  around live model inference, with a UI for swapping models and post-processing.
+  synthesises N5 metadata and chunks. It proved the idea: one format, one dataset.
+* [cellmap-flow](https://github.com/janelia-cellmap/cellmap-flow), which grew out of
+  example-virtual-n5: the same trick wrapped around live model inference, with a UI for
+  swapping models and post-processing.
 
 chunkmirage factors out the part both share and generalises it to any format, source and
 computation:

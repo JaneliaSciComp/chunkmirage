@@ -18,11 +18,14 @@ viewer / dask  --HTTP-->  chunkmirage  --tensorstore/h5py-->  real data (zarr/n5
                              +-- REST API for live pipeline edits
 ```
 
+chunkmirage was inspired by [example-virtual-n5](https://github.com/stuarteberg/example-virtual-n5),
+which serves N5 chunks computed when a viewer asks for them, and by
+[cellmap-flow](https://github.com/janelia-cellmap/cellmap-flow), which grew out of example-virtual-n5
+and serves live model inference the same way. chunkmirage makes that trick general: any
+format, any source, any per-chunk computation, for any client.
 It is a general-purpose tool: any viewer or library that reads chunked arrays over HTTP,
-any source format, any per-chunk computation. Prior art that uses the same trick for one
-format or one purpose includes [example-virtual-n5](https://github.com/stuarteberg/example-virtual-n5)
-and the serving layer of [cellmap-flow](https://github.com/janelia-cellmap/cellmap-flow);
-projects like those are expected consumers, not the reason it exists.
+any source format, any per-chunk computation. **[See the demos](demos.md)**, which run in
+your browser with nothing to install.
 
 ## When to use it
 

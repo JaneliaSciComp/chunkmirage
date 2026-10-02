@@ -41,6 +41,15 @@ export interface PipelineCard extends Card {
   timeline?: Timeline;       // the date on screen, for an axis of days
   playback?: { axis: string; velocity: number };  // the viewer's play button: steps per second
   controls?: OpControl[];    // sliders: an op parameter of a view, computed again for what is on screen
+  consumers?: CardConsumers; // other readers to pick instead of Neuroglancer (a web map, GDAL)
+}
+/** Readers of a card's georeferenced views besides Neuroglancer (consumers.ts): a web map of
+ * some of them, and GDAL translating one, for an area, to a GeoTIFF. */
+export interface CardConsumers {
+  code: string;  // the views' projection, e.g. EPSG:32611 (nothing is reprojected)
+  map: { layers: { name: string; view: string; style: Record<string, unknown> }[] };
+  gdal: { view: string; level: number; scale: number[]; areas: { name: string; rows?: number[]; cols?: number[] }[] };
+  python: string;  // how desktop readers (QGIS, xarray) open the same, from chunkmirage's server
 }
 /** A slider over a parameter of one of a view's ops. */
 export interface OpControl { label: string; unit: string; min: number; max: number; step: number; view: string; op: number; param: string }
@@ -133,6 +142,25 @@ void main() {
   emitRGB(t < 0.0 ? mix(vec3(1.0), vec3(0.15, 0.35, 0.85), -t) : mix(vec3(1.0), vec3(0.85, 0.2, 0.15), t));
 }`;
 
+const S2 = "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/11/S/LT/2025";
+const BEFORE = `${S2}/1/S2A_11SLT_20250102_0_L2A`, AFTER = `${S2}/2/S2C_11SLT_20250201_0_L2A`;
+// near infrared and shortwave infrared, 20 m, before then after; nodata 0, water masked
+const BURN = `stack://${BEFORE}/B8A.tif|${BEFORE}/B12.tif|${AFTER}/B8A.tif|${AFTER}/B12.tif`;
+const DNBR = { op: "normalized_difference", pair: [0, 1], minus: [2, 3], nodata: 0, floor: 700 };
+// burn severity's usual classes (USGS): unburned under 0.1, then low, moderate, high
+const SEVERITY = `void main() {
+  float v = getDataValue();
+  if (isnan(v) || v < 0.1) { emitTransparent(); return; }
+  vec3 c = v < 0.27 ? vec3(1.0, 0.9, 0.3) : v < 0.44 ? vec3(1.0, 0.6, 0.1) : v < 0.66 ? vec3(0.9, 0.2, 0.1) : vec3(0.55, 0.0, 0.45);
+  emitRGBA(vec4(c, 0.8));
+}`;
+const OL_SEVERITY = {
+  color: ["case", ["!=", ["band", 1], ["band", 1]], [0, 0, 0, 0], ["<", ["band", 1], 0.1], [0, 0, 0, 0],
+    ["<", ["band", 1], 0.27], [255, 230, 77, 0.8], ["<", ["band", 1], 0.44], [255, 153, 26, 0.8],
+    ["<", ["band", 1], 0.66], [230, 51, 26, 0.8], [140, 0, 115, 0.8]],
+};
+const OL_GREY = { color: ["interpolate", ["linear"], ["band", 1], 0, [0, 0, 0, 1], 500, [20, 20, 20, 1], 4000, [235, 235, 235, 1]] };
+
 export const CARDS: DemoCard[] = [
   {
     kind: "link", id: "register-fly", image: "cards/register-fly.jpg",
@@ -149,6 +177,36 @@ export const CARDS: DemoCard[] = [
     data: "Janelia EASI-FISH, fly central brain, rounds 1 and 2 (janelia-data-examples)",
     href: `register.html?fixed=${ROUND1}&moving=${ROUND2}&refine=3&iterations=100,40,40,40&window=15,31,31,31`,
     command: `chunkmirage serve 'register://${ROUND2}?fixed=${encodeURIComponent(ROUND1)}&affine=auto&refine=3&iterations=100,40,40,40&window=15,31,31,31&show=pair' --python-viewer`,
+  },
+  {
+    kind: "pipeline", id: "fires", image: "cards/fires.jpg",
+    title: "Los Angeles, January 2025: the fires' burn severity, from two satellite passes, for any reader",
+    blurb: "Sentinel-2 imaged Los Angeles on 2 January 2025, five days before the Palisades and Eaton fires, and again on 1 February. Burn severity (dNBR, the usual measure: how much the near against the shortwave infrared fell) is computed for each tile as it is read, by chunkmirage's normalized_difference op in this page, from the two passes' stored bands: a map that exists nowhere. Pick who reads it: Neuroglancer; OpenLayers, a web map, reading it as GeoZarr; or GDAL itself, compiled to WebAssembly, opening it as a zarr and writing a GeoTIFF you can download. Yellow is low severity, orange moderate, red and purple high; underneath, the shortwave infrared after.",
+    data: "Sentinel-2 L2A, tile 11SLT, 2 January and 1 February 2025 (ESA Copernicus; AWS Open Data, Element 84)",
+    views: {
+      after: { source: `${AFTER}/B12.tif`, chunk: [1, 256, 256] },
+      severity: { source: BURN, chunk: [1, 256, 256], ops: [DNBR] },
+    },
+    layers: [
+      { name: "after (shortwave infrared)", view: "after", type: "image", range: [500, 4000] },
+      { name: "burn severity", view: "severity", type: "image", shader: SEVERITY },
+    ],
+    panels: [["after (shortwave infrared)", "burn severity"]],
+    position: [0, 1080, 3800], zoom: 2.4,  // between the Palisades fire and the Eaton fire
+    consumers: {
+      code: "EPSG:32611",
+      map: { layers: [{ name: "after", view: "after", style: OL_GREY }, { name: "burn severity", view: "severity", style: OL_SEVERITY }] },
+      gdal: {
+        view: "severity", level: 1, scale: [-0.2, 1.0],
+        areas: [
+          { name: "Palisades fire", rows: [1120, 1660], cols: [2220, 3080] },
+          { name: "Eaton fire", rows: [560, 940], cols: [4660, 5320] },
+          { name: "the whole tile" },
+        ],
+      },
+      python: "QGIS, xarray, rasterio: from chunkmirage serve (below), add the printed zarr URL (zarr://http://<host>:8000/<name>/zarr) as a raster layer, or xarray.open_zarr it.",
+    },
+    command: `chunkmirage serve '${BURN}' --op '${JSON.stringify(DNBR)}' --chunk 256,256`,
   },
   {
     kind: "link", id: "stitch", image: "cards/stitch.jpg",

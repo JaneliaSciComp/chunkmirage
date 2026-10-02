@@ -38,6 +38,13 @@
   main { position: relative; min-width: 0; background: #000; }
   main iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
   .empty { position: absolute; inset: 0; display: grid; place-content: center; padding: 24px; text-align: center; color: var(--faint); }
+  #map { position: absolute; inset: 0; background: #000; }
+  #gdal { position: absolute; inset: 0; overflow: auto; padding: 18px; background: var(--bg); }
+  .gdal { display: flex; flex-direction: column; gap: 10px; max-width: 980px; }
+  .gdal .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .gdal img { max-width: 100%; image-rendering: pixelated; border: 1px solid var(--line); }
+  .gdal img:not([src]) { display: none; }
+  select { font: inherit; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; }
   @media (max-width: 720px) { body { grid-template-columns: 1fr; grid-template-rows: auto 70vh; } aside { border-right: 0; border-bottom: 1px solid var(--line); } }
 </style>
 </head>
@@ -53,6 +60,8 @@
   </section>
   <p class="muted" id="blurb"></p>
   <p class="faint">Data: <span id="data"></span></p>
+  <section class="controls" id="consumers" hidden><div class="label">Read by</div>
+    <select id="consumer"></select><p class="faint" id="consumer-note"></p></section>
   <section class="controls" id="controls" hidden><div class="label">Settings</div></section>
   <section>
     <div class="label">Status</div>
@@ -71,6 +80,8 @@
 <main>
   <div class="empty" id="empty">Loading…</div>
   <iframe id="ng" title="Neuroglancer" hidden></iframe>
+  <div id="map" hidden></div>
+  <div id="gdal" hidden></div>
 </main>
 <script type="module" src="./src/pipeline.ts"></script>
 </body>
