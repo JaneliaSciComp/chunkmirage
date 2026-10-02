@@ -1,9 +1,12 @@
-// The track page: a nucleus followed through a time-lapse of a stem cell colony, frame by
+// The track page: nuclei followed through a time-lapse of a stem cell colony, frame by
 // frame, as the segmentation is read: chunkmirage.tracking's step, one call a frame in the
-// engine's Pyodide workers, on a box around the nucleus that the page's reader reads from
-// the public bucket. Neuroglancer shows the images and the nuclei straight from the bucket;
-// the page keeps the nucleus followed highlighted in each frame (its id changes from frame
-// to frame) and plots its volume as each frame comes in. Double-click another to follow it.
+// engine's Pyodide workers, on a box around each nucleus that the page's reader reads from
+// the public bucket. Neuroglancer shows the images and the nuclei straight from the bucket.
+// Each nucleus double-clicked is a track of its own colour, followed both ways in time; when
+// one collapses into mitosis and is lost, its daughters are looked for where it was (new
+// nuclei appearing there) and followed too, so a track is a lineage. The page keeps the
+// nuclei followed highlighted in each frame (their ids change from frame to frame) and plots
+// their volumes as frames come in. Double-click a tracked nucleus again to drop its track.
 import { Engine } from "./engine";
 
 const BASE = "https://allencell.s3.amazonaws.com/aics/nuc-morph-dataset/hipsc_fov_nuclei_timelapse_dataset/"
@@ -19,14 +22,23 @@ const engine = new Engine(showCounts);
 
 interface Found { label: number; volume: number; centroid: number[]; lo: number[]; hi: number[]; touches: boolean; overlap?: number; divided?: boolean }
 interface Frame { frames: number; minutes: number }
+/** One line of descent: frame -> the nucleus there; `from` the frame it split off at. */
+interface Branch { frames: Map<number, Found>; from?: number; lost?: number }
+/** A nucleus double-clicked and its descendants (and, going back, its ancestors). */
+interface Track { colour: string; picked: { t: number; label: number }; branches: Branch[]; dropped: boolean; running: number }
+const COLOURS = ["#45f07a", "#ff4fd8", "#7ab0ff", "#ffd21f", "#ff8a3d", "#3de0ff"];
+const MAX_BRANCHES = 8;  // per track: a lineage two or three divisions deep
+// chunkmirage.tracking's: a collapse (DIVIDED of the largest in the dozen frames before), and
+// the daughters looked for after it (GAP frames, WITHIN µm of the mother)
+const DIVIDED = 0.65, GAP = 24, WITHIN = 18;
 let time: Frame = { frames: 1, minutes: 5 };
-let followed = new Map<number, Found>();  // frame -> the nucleus there
-let run = 0, shown = -1;
-let lost: { forward?: number; back?: number } = {};
+const tracks: Track[] = [];
+let shown = -1, picks = 0;
 
 function status(text: string) { $("state").textContent = text; }
 function showCounts() {
-  $("counts").textContent = `Frames followed: ${followed.size} of ${time.frames}${engine.running ? ` · reading and matching ${engine.running}` : ""}`;
+  const n = tracks.reduce((s, k) => s + k.branches.reduce((b, br) => b + br.frames.size, 0), 0);
+  $("counts").textContent = `Frames followed: ${n}, ${tracks.length} track${tracks.length === 1 ? "" : "s"}${engine.running ? ` · reading and matching ${engine.running}` : ""}`;
 }
 
 /** The time axis (frames, minutes apart), from the store's metadata. */
@@ -44,36 +56,94 @@ async function read(t: number, lo: number[], hi: number[]): Promise<ArrayBuffer>
   return engine.read("seg", LEVEL, lo, hi, { t });
 }
 
-/** The nucleus labelled `label` at frame `t0`, followed both ways until it is lost. */
+/** Follow the nucleus labelled `label` at frame `t0` as a new track, both ways in time,
+ * and both daughters at each division (forward). */
 async function follow(t0: number, label: number) {
-  const mine = ++run, shape = level().shape, dtype = engine.sources.seg.dtype;
-  followed = new Map();
-  lost = {};
-  draw();
+  const shape = level().shape, dtype = engine.sources.seg.dtype;
+  const track: Track = { colour: COLOURS[picks++ % COLOURS.length], picked: { t: t0, label }, branches: [], dropped: false, running: 0 };
+  tracks.push(track);
   status(`Finding nucleus ${label} in frame ${t0}…`);
   const whole = await read(t0, [0, 0, 0], shape);
   const first = await engine.call<Found | null>("track_measure", { label, start: [0, 0, 0], voxel: voxel(), dtype, shape }, [whole]);
-  if (!first || mine !== run) { if (!first) status(`No nucleus ${label} in frame ${t0}.`); return; }
-  followed.set(t0, first);
-  highlight();
-  status("Following it frame by frame, both ways…");
-  const way = async (dt: 1 | -1) => {
-    let record = first, t = t0;
-    while (mine === run && t + dt >= 0 && t + dt < time.frames) {
+  if (!first) { drop(track); status(`No nucleus ${label} in frame ${t0}.`); return; }
+  const main: Branch = { frames: new Map([[t0, first]]) };
+  track.branches.push(main);
+  highlight(true);
+  status("Following frame by frame, both ways, and the daughters of each division…");
+  await Promise.all([along(track, main, first, t0, 1), along(track, main, first, t0, -1)]);
+  if (!tracks.some((k) => k.running)) status("Done: double-click a nucleus to follow it too, or a followed one to drop it.");
+  draw();
+}
+
+/** One branch of a track, from `record` at frame `t`, a frame at a time in direction `dt`. */
+async function along(track: Track, branch: Branch, record: Found, t: number, dt: 1 | -1): Promise<void> {
+  track.running++;
+  const splits: Promise<void>[] = [];
+  try {
+    while (!track.dropped && t + dt >= 0 && t + dt < time.frames) {
       const nt = t + dt;
       let found = await stepTo(record, t, nt, MARGIN);
       if (found?.touches) found = await stepTo(record, t, nt, MARGIN.map((m) => 2 * m));  // the box cut it
-      if (mine !== run) return;
-      if (!found) { lost[dt > 0 ? "forward" : "back"] = nt; break; }
-      found.divided = found.volume <= 0.65 * record.volume;  // chunkmirage.tracking.DIVIDED
-      followed.set(nt, found);
+      if (track.dropped) return;
+      if (!found) {
+        branch.lost = nt;
+        const mother = dt > 0 ? motherOf(branch, nt) : null;
+        if (mother) splits.push(daughters(track, branch, mother, nt));  // it went into mitosis
+        break;
+      }
+      branch.frames.set(nt, found);
       record = found; t = nt;
       draw();
       showCounts();
+      if (nt === frameShown()) highlight(true);
     }
-  };
-  await Promise.all([way(1), way(-1)]);
-  if (mine === run) { status("Done: double-click another nucleus to follow it."); draw(); }
+  } finally {
+    track.running--;
+  }
+  await Promise.all(splits);
+}
+
+/** chunkmirage.tracking.mother_of: if a branch lost at frame `lost` had collapsed first, its
+ * record at its largest in the dozen frames before (the nucleus that went into mitosis). */
+function motherOf(branch: Branch, lost: number): Found | null {
+  const recent = [...branch.frames.entries()].filter(([t]) => lost - 12 <= t && t < lost).sort((a, b) => a[0] - b[0]).map(([, f]) => f);
+  if (!recent.length) return null;
+  const biggest = recent.reduce((m, f) => (f.volume > m.volume ? f : m));
+  return recent[recent.length - 1].volume <= DIVIDED * biggest.volume ? biggest : null;
+}
+
+/** chunkmirage.tracking.daughters: up to two new nuclei near `mother`, from frame `lost` on,
+ * each followed on as a branch of its own. */
+async function daughters(track: Track, branch: Branch, mother: Found, lost: number) {
+  const shape = level().shape, vx = voxel(), dtype = engine.sources.seg.dtype;
+  const reach = vx.map((v) => Math.ceil(WITHIN / v)), c = mother.centroid.map(Math.round);
+  const lo = c.map((v, a) => Math.max(v - reach[a], 0)), hi = c.map((v, a) => Math.min(v + reach[a] + 1, shape[a]));
+  const from = Math.max(...branch.frames.keys());
+  let found = 0;
+  const followed: Promise<void>[] = [];
+  for (let t = lost; t < Math.min(lost + GAP, time.frames) && found < 2 && !track.dropped; t++) {
+    const [prev, next] = await Promise.all([read(t - 1, lo, hi), read(t, lo, hi)]);
+    const born = await engine.call<Found[]>("track_newborns", {
+      start: lo, voxel: vx, dtype, shape: hi.map((h, a) => h - lo[a]), centre: mother.centroid, within: WITHIN, min_volume: 0.1 * mother.volume,
+    }, [prev, next]);
+    for (const d of born) {
+      if (found >= 2 || track.branches.length >= MAX_BRANCHES || track.dropped) break;
+      found++;
+      d.divided = true;  // a daughter's first frame: a dot on the graph
+      const child: Branch = { frames: new Map([[t, d]]), from };
+      track.branches.push(child);
+      draw();
+      followed.push(along(track, child, d, t, 1));
+    }
+  }
+  await Promise.all(followed);
+}
+
+function drop(track: Track) {
+  track.dropped = true;
+  tracks.splice(tracks.indexOf(track), 1);
+  draw();
+  showCounts();
 }
 
 async function stepTo(record: Found, t: number, nt: number, margin: number[]): Promise<Found | null> {
@@ -88,27 +158,37 @@ async function stepTo(record: Found, t: number, nt: number, margin: number[]): P
 // ------------------------------------------------ the graph
 function draw() {
   const svg = $<SVGSVGElement>("graph"), W = 320, H = 190, L = 34, B = 18;
-  const pts = [...followed.entries()].sort((a, b) => a[0] - b[0]);
-  const vols = pts.map(([, f]) => f.volume), vmax = Math.max(100, ...vols) * 1.1;
+  const all = tracks.flatMap((k) => k.branches.flatMap((b) => [...b.frames.values()].map((f) => f.volume)));
+  const vmax = Math.max(100, ...all) * 1.1;
   const x = (t: number) => L + ((W - L - 6) * t) / Math.max(time.frames - 1, 1);
   const y = (v: number) => H - B - ((H - B - 8) * v) / vmax;
-  const hours = (time.frames * time.minutes) / 60, ticks: string[] = [];
-  for (let h = 0; h <= hours; h += 12) ticks.push(`<line x1="${x((h * 60) / time.minutes)}" x2="${x((h * 60) / time.minutes)}" y1="${H - B}" y2="${H - B + 3}" stroke="#5d6675"/><text x="${x((h * 60) / time.minutes)}" y="${H - 4}" text-anchor="middle">${h} h</text>`);
-  for (const v of [0, vmax / 2, vmax].map((v) => Math.round(v / 100) * 100)) ticks.push(`<text x="${L - 4}" y="${y(v) + 3}" text-anchor="end">${v}</text>`);
-  // the line, broken where frames are missing
-  let path = "", prevT = -2;
-  for (const [t, f] of pts) { path += `${t === prevT + 1 ? "L" : "M"}${x(t).toFixed(1)},${y(f.volume).toFixed(1)}`; prevT = t; }
-  const divisions = pts.filter(([, f]) => f.divided).map(([t]) => `<line x1="${x(t)}" x2="${x(t)}" y1="8" y2="${H - B}" stroke="#ffd21f" stroke-dasharray="3 3"/>`);
-  const now = shown >= 0 ? `<line x1="${x(shown)}" x2="${x(shown)}" y1="8" y2="${H - B}" stroke="#7ab0ff"/>` : "";
-  svg.innerHTML = `<line x1="${L}" x2="${W - 6}" y1="${H - B}" y2="${H - B}" stroke="#5d6675"/><text x="4" y="12">µm³</text>`
-    + ticks.join("") + divisions.join("") + now + `<path d="${path}" fill="none" stroke="#45f07a" stroke-width="1.5"/>`;
-  const span = pts.length ? [pts[0][0], pts[pts.length - 1][0]] : [0, 0];
-  const n = pts.filter(([, f]) => f.divided).length;
-  $("summary").textContent = pts.length
-    ? `${pts.length} frames, ${((span[1] - span[0]) * time.minutes / 60).toFixed(1)} h: ${Math.round(vols[0])} to ${Math.round(vols[vols.length - 1])} µm³`
-      + `${n ? `, ${n} division${n > 1 ? "s" : ""} (dashed)` : ""}.`
-      + `${lost.back !== undefined ? ` Lost going back at frame ${lost.back}.` : ""}${lost.forward !== undefined ? ` Lost going on at frame ${lost.forward}.` : ""}`
-    : "";
+  const hours = (time.frames * time.minutes) / 60, parts: string[] = [];
+  for (let h = 0; h <= hours; h += 12) parts.push(`<line x1="${x((h * 60) / time.minutes)}" x2="${x((h * 60) / time.minutes)}" y1="${H - B}" y2="${H - B + 3}" stroke="#5d6675"/><text x="${x((h * 60) / time.minutes)}" y="${H - 4}" text-anchor="middle">${h} h</text>`);
+  for (const v of [0, vmax / 2, vmax].map((v) => Math.round(v / 100) * 100)) parts.push(`<text x="${L - 4}" y="${y(v) + 3}" text-anchor="end">${v}</text>`);
+  if (shown >= 0) parts.push(`<line x1="${x(shown)}" x2="${x(shown)}" y1="8" y2="${H - B}" stroke="#7ab0ff" stroke-opacity="0.6"/>`);
+  const lines: string[] = [];
+  for (const k of tracks) {
+    for (const br of k.branches) {
+      const pts = [...br.frames.entries()].sort((a, b) => a[0] - b[0]);
+      // a daughter's line starts at its mother's last point before they split
+      let path = "", prev = -2;
+      if (br.from !== undefined && pts.length) {  // across the mitosis, from the mother's last frame
+        const mother = k.branches.find((m) => m !== br && m.frames.has(br.from!));
+        const m = mother?.frames.get(br.from);
+        if (m) lines.push(`<path d="M${x(br.from).toFixed(1)},${y(m.volume).toFixed(1)}L${x(pts[0][0]).toFixed(1)},${y(pts[0][1].volume).toFixed(1)}" stroke="${k.colour}" stroke-dasharray="2 2" fill="none"/>`);
+      }
+      for (const [t, f] of pts) { path += `${t === prev + 1 ? "L" : "M"}${x(t).toFixed(1)},${y(f.volume).toFixed(1)}`; prev = t; }
+      lines.push(`<path d="${path}" fill="none" stroke="${k.colour}" stroke-width="1.5"${br.from !== undefined ? ' stroke-opacity="0.8"' : ""}/>`);
+      for (const [t, f] of pts) if (f.divided) lines.push(`<circle cx="${x(t)}" cy="${y(f.volume)}" r="2.5" fill="${k.colour}"/>`);
+    }
+  }
+  svg.innerHTML = `<line x1="${L}" x2="${W - 6}" y1="${H - B}" y2="${H - B}" stroke="#5d6675"/><text x="${L + 4}" y="14">µm³</text>` + parts.join("") + lines.join("");
+  $("summary").innerHTML = tracks.map((k) => {
+    const frames = k.branches.flatMap((b) => [...b.frames.keys()]), lo = Math.min(...frames), hi = Math.max(...frames);
+    return `<span style="color:${k.colour}">●</span> nucleus ${k.picked.label} (frame ${k.picked.t}): frames ${lo}–${hi}, ${((hi - lo) * time.minutes / 60).toFixed(1)} h`
+      + (k.branches.length > 1 ? `, ${k.branches.length} nuclei (${k.branches.length - 1} daughters, dots)` : "")
+      + (k.running ? " …" : "");
+  }).join("<br>");
 }
 
 // ------------------------------------------------ the viewer
@@ -124,28 +204,45 @@ function frameShown(): number {
   return i < 0 ? -1 : Math.round(v.position.value[i]);  // frame i is centred on i
 }
 
-let showing: string | null = null;  // the segment the page last showed
+let shownIds = new Set<string>();  // the segments the page last showed
 let updating = false;  // the page is changing the segments shown (which tells this again)
-/** Show the nucleus followed in the frame on screen (its id there), and follow a new one
- * when one is double-clicked. */
-function highlight() {
+/** The nuclei followed, in the frame on screen: track and id. */
+function inFrame(t: number): { track: Track; found: Found }[] {
+  return tracks.flatMap((k) => k.branches.flatMap((b) => (b.frames.has(t) ? [{ track: k, found: b.frames.get(t)! }] : [])));
+}
+
+/** Show the nuclei followed in the frame on screen (their ids there, in their tracks'
+ * colours); a nucleus double-clicked starts a track, one followed and double-clicked again
+ * drops its track. `force`: the tracks changed, not the viewer. */
+function highlight(force: boolean | Event = false) {
   const v = viewer(), layer = v?.layerManager?.getLayerByName("nuclei")?.layer;
   if (!layer || updating) return;
-  const visible = layer.displayState.segmentationGroupState.value.visibleSegments;
-  const ids: string[] = [...visible].map(String);
-  const t = frameShown();
-  const picked = ids.find((id) => id !== showing);
-  if (picked && t >= 0) { showing = picked; void follow(t, Number(picked)); return; }
-  const f = followed.get(t), want = f ? String(f.label) : null;
-  if (want !== showing || ids.length !== (want ? 1 : 0)) {
-    showing = want;
-    updating = true;
-    try { visible.clear(); if (want) visible.add(BigInt(want)); } finally { updating = false; }
+  const group = layer.displayState.segmentationGroupState.value, visible = group.visibleSegments;
+  const ids = new Set<string>([...visible].map(String)), t = frameShown();
+  if (t !== shown) force = true;
+  else if (force !== true) {  // the viewer's segments changed: what did the user do?
+    const added = [...ids].filter((id) => !shownIds.has(id)), removed = [...shownIds].filter((id) => !ids.has(id));
+    for (const id of removed) { const hit = inFrame(t).find((h) => String(h.found.label) === id); if (hit) drop(hit.track); }
+    for (const id of added) void follow(t, Number(id));
   }
+  const here = inFrame(t), want = new Set(here.map((h) => String(h.found.label)));
+  updating = true;
+  try {
+    for (const id of ids) if (!want.has(id)) visible.delete(BigInt(id));
+    for (const id of want) if (!ids.has(id)) visible.add(BigInt(id));
+    const colours = layer.displayState.segmentStatedColors?.value;
+    if (colours) for (const h of here) colours.set(BigInt(h.found.label), BigInt(parseInt(h.track.colour.slice(1), 16)));
+  } catch (e) {
+    console.warn("highlighting the nuclei followed:", e);
+  } finally {
+    updating = false;
+  }
+  shownIds = want;
   if (t !== shown) {
     shown = t;
     draw();
-    if (f && $<HTMLInputElement>("centre").checked) centreOn(f);
+    const last = here.filter((h) => h.track === tracks[tracks.length - 1]);
+    if (last.length && $<HTMLInputElement>("centre").checked) centreOn(last[0].found);
   }
 }
 
@@ -194,17 +291,17 @@ async function start() {
   ng.src = `ng/index.html#!${encodeURIComponent(JSON.stringify(viewerState(dims, first?.centroid ?? level().shape.map((n) => n / 2))))}`;
   ng.hidden = false;
   $("empty").hidden = true;
-  showing = String(START.label);
+  shownIds = new Set([String(START.label)]);
   const attach = () => {
     const v = viewer();
     if (!v?.position || !v.layerManager?.getLayerByName("nuclei")) return void setTimeout(attach, 300);
-    v.position.changed.add(highlight);
-    v.layerManager.getLayerByName("nuclei").layer.displayState.segmentationGroupState.value.visibleSegments.changed.add(highlight);
+    v.position.changed.add(() => highlight());
+    v.layerManager.getLayerByName("nuclei").layer.displayState.segmentationGroupState.value.visibleSegments.changed.add(() => highlight());
   };
   attach();
   $("command").textContent = `uv run python examples/track_nucleus.py --frame ${START.t} --label ${START.label}`;
   void follow(START.t, START.label);
-  Object.assign(window, { engine, followed });  // for a console, and the headless checks
+  Object.assign(window, { engine, tracks });  // for a console, and the headless checks
 }
 
 $("copy").addEventListener("click", () => void navigator.clipboard.writeText($("command").textContent ?? ""));

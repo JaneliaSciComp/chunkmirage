@@ -192,8 +192,8 @@ export const CARDS: DemoCard[] = [
   },
   {
     kind: "link", id: "track", image: "cards/track.jpg",
-    title: "Follow one nucleus through two days of a colony: its growth curve plotted as frames stream",
-    blurb: "A stem cell colony imaged every 5 minutes for 47 hours, every nucleus segmented in every frame but numbered afresh in each. Double-click a nucleus and it is followed frame by frame, forward and back in time, by its overlap with the next frame's nuclei; only a box around it is read from each frame, and its volume is plotted as each frame comes in, by chunkmirage's tracking in this page. Nuclei grow through interphase and halve when they divide.",
+    title: "Follow nuclei through two days of a colony, their lineages plotted as frames stream",
+    blurb: "A stem cell colony imaged every 5 minutes for 47 hours, every nucleus segmented in every frame but numbered afresh in each. Double-click a nucleus and it is followed frame by frame, forward and back in time, by its overlap with the next frame's nuclei, reading only a box around it from each frame; when it divides, its daughters are found where it was and followed too. Each nucleus's volume is plotted as frames come in, by chunkmirage's tracking in this page: the sawtooth of growth and division, generation after generation.",
     data: "Allen Institute for Cell Science, Dixon et al. 2024: hiPS cells with lamin B1 tagged and their nuclear segmentation, 570 frames",
     href: "track.html",
     command: "uv run python examples/track_nucleus.py --frame 100 --label 148",

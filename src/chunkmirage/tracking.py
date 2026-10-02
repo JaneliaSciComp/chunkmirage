@@ -4,9 +4,12 @@ keep their ids from frame to frame (a segmentation done frame by frame rarely do
 object that moves less than its own size between frames is followed by its overlap.
 
 Each frame reads only a box around the object (its last bounding box, grown by a margin),
-so following one nucleus through a whole time-lapse reads a sliver of it. ``step`` is the
-work of one frame, numpy only, which the browser engine's workers run as it is; ``follow``
-loops it over a source for Python callers.
+so following one nucleus through a whole time-lapse reads a sliver of it. A nucleus that
+divides first collapses (its envelope breaks down in mitosis, and the segmentation loses
+it); its daughters then appear near where it was, as labels nothing covered the frame
+before (``newborns``), and are followed in turn, so a track becomes a lineage. ``step`` and
+``newborns`` are the work of one frame, numpy only, which the browser engine's workers run
+as they are; ``follow`` and ``lineage`` loop them over a source for Python callers.
 """
 
 from __future__ import annotations
@@ -16,7 +19,10 @@ from collections.abc import Callable, Iterator
 import numpy as np
 
 MIN_OVERLAP = 0.2  # of the object's voxels: less and it is lost (it left, or the labels failed)
-DIVIDED = 0.65  # a volume this fraction of the frame before's, or less: a division (one daughter followed)
+DIVIDED = 0.65  # a volume this fraction of the frame before's, or less: a division
+NEWBORN = 0.4  # a label no label of the frame before covers this share of: new (a daughter, say)
+GAP = 24  # frames searched for daughters after a nucleus collapses into mitosis and is lost
+WITHIN = 18.0  # physical units (µm) from the mother that daughters are looked for
 
 
 def measure(block: np.ndarray, label: int, start, voxel) -> dict | None:
@@ -92,3 +98,79 @@ def follow(read: Callable[[int, list[int], list[int]], np.ndarray], shape, voxel
         found["divided"] = found["volume"] <= DIVIDED * record["volume"]
         yield nt, found
         record, t = found, nt
+
+
+def newborns(prev: np.ndarray, nxt: np.ndarray, start, voxel, centre, within: float = WITHIN,
+             min_volume: float = 0.0) -> list[dict]:
+    """Labels of ``nxt`` that are new: covered less than ``NEWBORN`` by any one label of the
+    frame before, ``prev`` (the same box, from ``start``); within ``within`` (physical units)
+    of ``centre`` (level voxels) and of ``min_volume`` or more. After a mitosis, which hides
+    the nucleus for a few frames, these are its daughters. Nearest first."""
+    nxt, prev, voxel = np.asarray(nxt), np.asarray(prev), np.asarray(voxel)
+    out = []
+    for i in np.unique(nxt[nxt > 0]):
+        mask = nxt == i
+        under = prev[mask]
+        under = under[under > 0]
+        if len(under) and np.bincount(under).max() >= NEWBORN * mask.sum():
+            continue
+        found = measure(nxt, int(i), start, voxel)
+        far = np.linalg.norm((np.asarray(found["centroid"]) - np.asarray(centre)) * voxel)
+        if far <= within and found["volume"] >= min_volume:
+            found["distance"] = float(far)
+            out.append(found)
+    return sorted(out, key=lambda f: f["distance"])
+
+
+def mother_of(branch: dict[int, dict], lost: int) -> dict | None:
+    """If a branch lost at frame ``lost`` had collapsed first (its last volume ``DIVIDED`` of
+    its largest in the dozen frames before, or less), the record at that largest: the
+    nucleus that went into mitosis. ``None`` if it was just lost."""
+    recent = [branch[t] for t in sorted(branch) if lost - 12 <= t < lost]
+    if not recent:
+        return None
+    biggest = max(recent, key=lambda r: r["volume"])
+    return biggest if recent[-1]["volume"] <= DIVIDED * biggest["volume"] else None
+
+
+def daughters(read: Callable[[int, list[int], list[int]], np.ndarray], shape, voxel, mother: dict,
+              lost: int, frames: int, gap: int = GAP, within: float = WITHIN) -> list[tuple[int, dict]]:
+    """Up to two daughters of ``mother`` (a record, see ``mother_of``), looked for from frame
+    ``lost`` for ``gap`` frames in a box ``within`` around it: ``(frame, record)`` where each
+    first appears."""
+    voxel = np.asarray(voxel)
+    reach = np.ceil(within / voxel).astype(int)
+    lo = np.maximum(np.round(mother["centroid"]).astype(int) - reach, 0).tolist()
+    hi = np.minimum(np.round(mother["centroid"]).astype(int) + reach + 1, shape).tolist()
+    found: list[tuple[int, dict]] = []
+    for t in range(lost, min(lost + gap, frames)):
+        for d in newborns(read(t - 1, lo, hi), read(t, lo, hi), lo, voxel, mother["centroid"], within, 0.1 * mother["volume"]):
+            found.append((t, d))
+            if len(found) == 2:
+                return found
+    return found
+
+
+def lineage(read: Callable[[int, list[int], list[int]], np.ndarray], shape, voxel, t0: int,
+            label: int, frames: int, margin, max_branches: int = 8) -> list[dict[int, dict]]:
+    """The object labelled ``label`` at frame ``t0`` followed forward and back (``follow``),
+    and forward through its divisions: the daughters of each nucleus that collapses and is
+    lost are followed too. Returns branches (frame -> record), the first the object's own;
+    each daughter's first record says ``mother``, the branch it came from."""
+    main = dict(follow(read, shape, voxel, t0, label, range(t0 + 1, frames), margin))
+    main.update(follow(read, shape, voxel, t0, label, range(t0 - 1, -1, -1), margin))
+    branches, todo = [main], [0]
+    while todo and len(branches) < max_branches:
+        k = todo.pop(0)
+        last = max(branches[k])
+        mother = mother_of(branches[k], last + 1)
+        if mother is None or last + 1 >= frames:
+            continue
+        for t, d in daughters(read, shape, voxel, mother, last + 1, frames):
+            if len(branches) >= max_branches:
+                break
+            branch = dict(follow(read, shape, voxel, t, d["label"], range(t + 1, frames), margin))
+            branch[t]["mother"] = k
+            branches.append(branch)
+            todo.append(len(branches) - 1)
+    return branches

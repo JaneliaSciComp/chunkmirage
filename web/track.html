@@ -64,13 +64,14 @@
     nucleus segmented in every frame (but numbered afresh in each). Double-click a nucleus and
     it is followed frame by frame, forward and back in time, by its overlap with the next
     frame's nuclei: only a box around it is read from each frame, and its volume is plotted
-    as each frame comes in. It grows through interphase and halves when it divides (one
-    daughter is followed on).</p>
+    as each frame comes in. When it divides it vanishes for a few frames (mitosis breaks its
+    envelope down); its daughters are then found where it was, as new nuclei, and followed
+    too. Double-click more nuclei to follow them as well, a followed one again to drop it.</p>
   <p class="faint">Data: <a href="https://www.biorxiv.org/content/10.1101/2024.06.28.601071v1">Dixon et al. 2024</a>,
     Allen Institute for Cell Science: hiPS cells with lamin B1 tagged, 570 frames of 42 × 1248 × 1824,
     and their nuclear segmentation (allencell bucket, OME-Zarr).</p>
   <section>
-    <div class="label">Volume of the nucleus followed</div>
+    <div class="label">Volumes of the nuclei followed</div>
     <svg id="graph" viewBox="0 0 320 190" preserveAspectRatio="none"></svg>
     <p class="summary" id="summary" style="margin-top: 6px"></p>
     <label class="faint" style="display: flex; gap: 6px; align-items: center; margin-top: 6px"><input type="checkbox" id="centre" checked>

@@ -182,6 +182,8 @@ def _track(fn, a, arrays):
         return json.dumps(T.measure(block(0), a["label"], a["start"], a["voxel"]))
     if fn == "track_step":  # the object from the frame before (block 0) in the next (block 1)
         return json.dumps(T.step(block(0), a["label"], block(1), a["start"], a["voxel"]))
+    if fn == "track_newborns":  # new labels near a mother lost to mitosis: blocks of the frame before and this
+        return json.dumps(T.newborns(block(0), block(1), a["start"], a["voxel"], a["centre"], a["within"], a["min_volume"]))
     raise ValueError(f"no tracking step {fn}")
 `;
 
