@@ -58,14 +58,15 @@
 <aside>
   <p><a href="./">← All demos</a></p>
   <div>
-    <h1>Follow one nucleus through two days of a growing colony</h1>
+    <h1>Follow nuclei through two days of a growing colony</h1>
   </div>
   <p class="muted">A colony of human stem cells imaged every 5 minutes for 47 hours, with every
     nucleus segmented in every frame (but numbered afresh in each). Double-click a nucleus and
     it is followed frame by frame, forward and back in time, by its overlap with the next
     frame's nuclei: only a box around it is read from each frame, and its volume is plotted
     as each frame comes in. When it divides it vanishes for a few frames (mitosis breaks its
-    envelope down); its daughters are then found where it was, as new nuclei, and followed
+    envelope down), and the segmentation does not say which new nuclei came from it: the
+    new nuclei that appear near where it was are guessed to be its daughters, and followed
     too. Double-click more nuclei to follow them as well, a followed one again to drop it.</p>
   <p class="faint">Data: <a href="https://www.biorxiv.org/content/10.1101/2024.06.28.601071v1">Dixon et al. 2024</a>,
     Allen Institute for Cell Science: hiPS cells with lamin B1 tagged, 570 frames of 42 × 1248 × 1824,
@@ -74,6 +75,9 @@
     <div class="label">Volumes of the nuclei followed</div>
     <svg id="graph" viewBox="0 0 320 190" preserveAspectRatio="none"></svg>
     <p class="summary" id="summary" style="margin-top: 6px"></p>
+    <p class="faint" style="margin-top: 4px">Dots: likely daughters, a guess (new nuclei that appeared within 18 µm
+      of a nucleus that vanished into mitosis, within 2 h). Dashed: the mitosis between. ×: where a
+      line ends before the movie does, and its colour leaves the viewer.</p>
     <label class="faint" style="display: flex; gap: 6px; align-items: center; margin-top: 6px"><input type="checkbox" id="centre" checked>
       Keep it centred as you step through time (scroll with Alt held, or press play on the t axis)</label>
   </section>

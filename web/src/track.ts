@@ -3,8 +3,8 @@
 // engine's Pyodide workers, on a box around each nucleus that the page's reader reads from
 // the public bucket. Neuroglancer shows the images and the nuclei straight from the bucket.
 // Each nucleus double-clicked is a track of its own colour, followed both ways in time; when
-// one collapses into mitosis and is lost, its daughters are looked for where it was (new
-// nuclei appearing there) and followed too, so a track is a lineage. The page keeps the
+// one collapses into mitosis and is lost, its likely daughters are guessed (new nuclei
+// appearing near where it was) and followed too, so a track is a (guessed) lineage. The page keeps the
 // nuclei followed highlighted in each frame (their ids change from frame to frame) and plots
 // their volumes as frames come in. Double-click a tracked nucleus again to drop its track.
 import { Engine } from "./engine";
@@ -22,8 +22,10 @@ const engine = new Engine(showCounts);
 
 interface Found { label: number; volume: number; centroid: number[]; lo: number[]; hi: number[]; touches: boolean; overlap?: number; divided?: boolean }
 interface Frame { frames: number; minutes: number }
-/** One line of descent: frame -> the nucleus there; `from` the frame it split off at. */
-interface Branch { frames: Map<number, Found>; from?: number; lost?: number }
+/** One line of descent: frame -> the nucleus there; `from` the frame it split off at; `end`
+ * how it ends going forward (lost, into mitosis with or without daughters found, or the
+ * movie's end). */
+interface Branch { frames: Map<number, Found>; from?: number; lost?: number; end?: "lost" | "mitosis" | "divided" | "movie" }
 /** A nucleus double-clicked and its descendants (and, going back, its ancestors). */
 interface Track { colour: string; picked: { t: number; label: number }; branches: Branch[]; dropped: boolean; running: number }
 const COLOURS = ["#45f07a", "#ff4fd8", "#7ab0ff", "#ffd21f", "#ff8a3d", "#3de0ff"];
@@ -88,6 +90,7 @@ async function along(track: Track, branch: Branch, record: Found, t: number, dt:
       if (!found) {
         branch.lost = nt;
         const mother = dt > 0 ? motherOf(branch, nt) : null;
+        if (dt > 0) branch.end = mother ? "mitosis" : "lost";
         if (mother) splits.push(daughters(track, branch, mother, nt));  // it went into mitosis
         break;
       }
@@ -97,6 +100,7 @@ async function along(track: Track, branch: Branch, record: Found, t: number, dt:
       showCounts();
       if (nt === frameShown()) highlight(true);
     }
+    if (dt > 0 && !branch.end && t === time.frames - 1) branch.end = "movie";
   } finally {
     track.running--;
   }
@@ -113,7 +117,8 @@ function motherOf(branch: Branch, lost: number): Found | null {
 }
 
 /** chunkmirage.tracking.daughters: up to two new nuclei near `mother`, from frame `lost` on,
- * each followed on as a branch of its own. */
+ * each followed on as a branch of its own: likely daughters, a guess from where and when
+ * they appear (the segmentation does not say which nucleus a new one came from). */
 async function daughters(track: Track, branch: Branch, mother: Found, lost: number) {
   const shape = level().shape, vx = voxel(), dtype = engine.sources.seg.dtype;
   const reach = vx.map((v) => Math.ceil(WITHIN / v)), c = mother.centroid.map(Math.round);
@@ -129,7 +134,8 @@ async function daughters(track: Track, branch: Branch, mother: Found, lost: numb
     for (const d of born) {
       if (found >= 2 || track.branches.length >= MAX_BRANCHES || track.dropped) break;
       found++;
-      d.divided = true;  // a daughter's first frame: a dot on the graph
+      d.divided = true;  // a likely daughter's first frame: a dot on the graph
+      branch.end = "divided";
       const child: Branch = { frames: new Map([[t, d]]), from };
       track.branches.push(child);
       draw();
@@ -180,14 +186,22 @@ function draw() {
       for (const [t, f] of pts) { path += `${t === prev + 1 ? "L" : "M"}${x(t).toFixed(1)},${y(f.volume).toFixed(1)}`; prev = t; }
       lines.push(`<path d="${path}" fill="none" stroke="${k.colour}" stroke-width="1.5"${br.from !== undefined ? ' stroke-opacity="0.8"' : ""}/>`);
       for (const [t, f] of pts) if (f.divided) lines.push(`<circle cx="${x(t)}" cy="${y(f.volume)}" r="2.5" fill="${k.colour}"/>`);
+      if ((br.end === "lost" || br.end === "mitosis") && pts.length) {  // where a line ends before the movie does
+        const [t, f] = pts[pts.length - 1], cx = x(t), cy = y(f.volume);
+        lines.push(`<path d="M${cx - 3},${cy - 3}L${cx + 3},${cy + 3}M${cx - 3},${cy + 3}L${cx + 3},${cy - 3}" stroke="${k.colour}" stroke-width="1.5"/>`);
+      }
     }
   }
   svg.innerHTML = `<line x1="${L}" x2="${W - 6}" y1="${H - B}" y2="${H - B}" stroke="#5d6675"/><text x="${L + 4}" y="14">µm³</text>` + parts.join("") + lines.join("");
   $("summary").innerHTML = tracks.map((k) => {
     const frames = k.branches.flatMap((b) => [...b.frames.keys()]), lo = Math.min(...frames), hi = Math.max(...frames);
+    const ends = { lost: 0, mitosis: 0 };
+    for (const b of k.branches) if (b.end === "lost" || b.end === "mitosis") ends[b.end]++;
+    const how = [ends.mitosis ? `${ends.mitosis} went into mitosis but no new nuclei appeared near it (×)` : "",
+      ends.lost ? `${ends.lost} lost, the segmentation missing it (×)` : ""].filter(Boolean).join("; ");
     return `<span style="color:${k.colour}">●</span> nucleus ${k.picked.label} (frame ${k.picked.t}): frames ${lo}–${hi}, ${((hi - lo) * time.minutes / 60).toFixed(1)} h`
-      + (k.branches.length > 1 ? `, ${k.branches.length} nuclei (${k.branches.length - 1} daughters, dots)` : "")
-      + (k.running ? " …" : "");
+      + (k.branches.length > 1 ? `, ${k.branches.length} nuclei (${k.branches.length - 1} likely daughters, dots)` : "")
+      + (how ? `; ${how}` : "") + (k.running ? " …" : "");
   }).join("<br>");
 }
 
@@ -231,7 +245,10 @@ function highlight(force: boolean | Event = false) {
     for (const id of ids) if (!want.has(id)) visible.delete(BigInt(id));
     for (const id of want) if (!ids.has(id)) visible.add(BigInt(id));
     const colours = layer.displayState.segmentStatedColors?.value;
-    if (colours) for (const h of here) colours.set(BigInt(h.found.label), BigInt(parseInt(h.track.colour.slice(1), 16)));
+    if (colours) {  // ids are numbered afresh each frame: this frame's colours only
+      colours.clear();
+      for (const h of here) colours.set(BigInt(h.found.label), BigInt(parseInt(h.track.colour.slice(1), 16)));
+    }
   } catch (e) {
     console.warn("highlighting the nuclei followed:", e);
   } finally {

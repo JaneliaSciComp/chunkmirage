@@ -9,9 +9,10 @@ The segmentation numbers nuclei afresh in every frame, so the nucleus is followe
 overlap: in each next frame it is the label that covers most of it (``chunkmirage.tracking``,
 the same code the browser's track page runs). It is followed both ways from ``--frame``
 until it is lost (it leaves the field, or the segmentation misses it). A nucleus dividing
-first collapses (mitosis breaks its envelope down) and is lost; its daughters are then
-looked for where it was, as new nuclei, and followed on: one row per nucleus and frame,
-with its branch and its mother's. Each step reads about twenty planes of a 312 x 456 level
+first collapses (mitosis breaks its envelope down) and is lost; the new nuclei that then
+appear near where it was are taken for its daughters (a guess: the segmentation does not
+say which nucleus a new one came from) and followed on: one row per nucleus and frame, with
+its branch and its (likely) mother's. Each step reads about twenty planes of a 312 x 456 level
 from the bucket, cached as they are read.
 """
 
@@ -64,13 +65,13 @@ def main() -> None:
             for t in sorted(b):
                 r = b[t]
                 w.writerow([k, mother, t, round(t * minutes / 60, 3), r["label"], round(r["volume"], 2), *[round(c, 2) for c in r["centroid"]]])
-    print(f"followed nucleus {args.label} (frame {args.frame}) and {len(branches) - 1} descendants "
+    print(f"followed nucleus {args.label} (frame {args.frame}) and {len(branches) - 1} likely descendants "
           f"in {time.perf_counter() - t0:.0f} s:")
     for k, b in enumerate(branches):
         lo, hi = min(b), max(b)
         vols = [b[t]["volume"] for t in sorted(b)]
         mother = b[lo].get("mother")
-        print(f"  {k}{f' (daughter of {mother})' if mother is not None else ''}: frames {lo}-{hi} "
+        print(f"  {k}{f' (likely daughter of {mother})' if mother is not None else ''}: frames {lo}-{hi} "
               f"({(hi - lo) * minutes / 60:.1f} h), {vols[0]:.0f} -> {max(vols):.0f} µm³")
     print(f"wrote {args.out}")
 

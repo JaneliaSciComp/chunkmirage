@@ -6,8 +6,11 @@ object that moves less than its own size between frames is followed by its overl
 Each frame reads only a box around the object (its last bounding box, grown by a margin),
 so following one nucleus through a whole time-lapse reads a sliver of it. A nucleus that
 divides first collapses (its envelope breaks down in mitosis, and the segmentation loses
-it); its daughters then appear near where it was, as labels nothing covered the frame
-before (``newborns``), and are followed in turn, so a track becomes a lineage. ``step`` and
+it); new nuclei then appear near where it was, as labels nothing covered the frame before
+(``newborns``), and are taken for its daughters and followed in turn, so a track becomes a
+lineage. That is a guess from where and when they appear: the segmentation does not say
+which nucleus a new one came from, and in a dense colony a neighbour's daughter can be
+taken for this one's. ``step`` and
 ``newborns`` are the work of one frame, numpy only, which the browser engine's workers run
 as they are; ``follow`` and ``lineage`` loop them over a source for Python callers.
 """
@@ -105,7 +108,8 @@ def newborns(prev: np.ndarray, nxt: np.ndarray, start, voxel, centre, within: fl
     """Labels of ``nxt`` that are new: covered less than ``NEWBORN`` by any one label of the
     frame before, ``prev`` (the same box, from ``start``); within ``within`` (physical units)
     of ``centre`` (level voxels) and of ``min_volume`` or more. After a mitosis, which hides
-    the nucleus for a few frames, these are its daughters. Nearest first."""
+    the nucleus for a few frames, these are likely its daughters (a guess: nothing says which
+    nucleus a new one came from). Nearest first."""
     nxt, prev, voxel = np.asarray(nxt), np.asarray(prev), np.asarray(voxel)
     out = []
     for i in np.unique(nxt[nxt > 0]):
@@ -135,7 +139,8 @@ def mother_of(branch: dict[int, dict], lost: int) -> dict | None:
 
 def daughters(read: Callable[[int, list[int], list[int]], np.ndarray], shape, voxel, mother: dict,
               lost: int, frames: int, gap: int = GAP, within: float = WITHIN) -> list[tuple[int, dict]]:
-    """Up to two daughters of ``mother`` (a record, see ``mother_of``), looked for from frame
+    """Up to two likely daughters of ``mother`` (a record, see ``mother_of``): the first new
+    nuclei (``newborns``) near it, looked for from frame
     ``lost`` for ``gap`` frames in a box ``within`` around it: ``(frame, record)`` where each
     first appears."""
     voxel = np.asarray(voxel)

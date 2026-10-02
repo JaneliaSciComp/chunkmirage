@@ -69,7 +69,8 @@ browser's stitch page.
 ## Tracking
 
 An object followed through a time series of labels by its overlap, frame by frame, and
-through its divisions into its daughters, behind the browser's track page and
+through its divisions into its likely daughters (new objects appearing near where it was: a
+guess, not something the labels record), behind the browser's track page and
 `examples/track_nucleus.py`.
 
 ::: chunkmirage.tracking.lineage
