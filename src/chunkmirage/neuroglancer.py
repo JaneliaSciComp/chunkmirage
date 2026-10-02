@@ -19,6 +19,8 @@ _UNIT_TO_M = {
     "millimeter": 1e-3,
     "m": 1.0,
     "meter": 1.0,
+    "km": 1e3,
+    "kilometer": 1e3,
     "angstrom": 1e-10,
     "": 1e-9,
 }
@@ -33,6 +35,8 @@ _TIME_TO_S = {
     "minute": 60.0,
     "h": 3600.0,
     "hour": 3600.0,
+    "d": 86400.0,
+    "day": 86400.0,
 }
 _SPATIAL = ("z", "y", "x")
 DEFAULT_VIEWER = "https://neuroglancer-demo.appspot.com"
@@ -103,30 +107,48 @@ def layer_for(name: str, pipeline: Pipeline, src_url: str) -> dict:
 
 def dimensions(info: ArrayInfo) -> dict[str, list]:
     """Each axis as Neuroglancer's zarr/OME reader names and scales it, ``{name: [scale,
-    unit]}`` in axis order: spatial axes in metres (unitless ones taken as nm), time in
-    seconds, the channel axis as the layer-local ``c'``, anything else unitless."""
+    unit]}`` in axis order: time (any axis in a time unit) in seconds, spatial axes in
+    metres (unitless ones taken as nm, as the frontends serve them), the channel axis as the
+    layer-local ``c'``, anything else unitless."""
     dims: dict[str, list] = {}
     for ax, vs, unit in zip(info.axes, info.voxel_size, info.units):
         if ax == "c":
             dims["c'"] = [1.0, ""]
-        elif ax in _SPATIAL:
-            dims[ax] = [vs * _UNIT_TO_M.get(unit, 1e-9), "m"]
         elif unit in _TIME_TO_S:
             dims[ax] = [vs * _TIME_TO_S[unit], "s"]
+        elif ax in _SPATIAL:
+            dims[ax] = [vs * _UNIT_TO_M.get(unit, 1e-9), "m"]
         else:
             dims[ax] = [vs, ""]
     return dims
 
 
+def cross_section_scale(dims: Mapping[str, list], axis: str, voxels_per_pixel: float) -> float:
+    """Neuroglancer's ``crossSectionScale`` for ``voxels_per_pixel`` voxels of ``axis`` per
+    screen pixel. Neuroglancer counts it in the smallest scale among the dimensions,
+    whatever their units, so with a time axis in seconds beside space in metres a plain
+    ``1`` is not one voxel per pixel."""
+    smallest = min(float(scale) for scale, _ in dims.values())
+    return voxels_per_pixel * float(dims[axis][0]) / smallest
+
+
 def global_dimensions(info: ArrayInfo) -> tuple[dict[str, list], list[float], list[str]]:
     """Viewer dimensions, position and display dimensions for a dataset: the spatial
     axes, then the others (time last) except the layer-local channel; centred in space and
-    at the first index of other axes, with the spatial axes displayed (x, y, z)."""
-    dims = {n: v for n, v in dimensions(info).items() if n in _SPATIAL}
+    at the first index of other axes, with the spatial axes displayed (x, y, z). Data
+    without z, y, x axes (time, lat, lon) shows its last three in their place; images in y, x
+    over another axis (time) scroll through that one as z."""
+    spatial = [a for a in info.axes if a in _SPATIAL]
+    others = [a for a in info.axes if a not in _SPATIAL and a != "c"]
+    if not spatial:
+        spatial = [a for a in info.axes if a != "c"][-3:]
+    elif len(spatial) == 2 and others:
+        spatial = [a for a in info.axes if a in spatial or a == others[-1]]
+    dims = {n: v for n, v in dimensions(info).items() if n in spatial}
     dims |= {n: v for n, v in dimensions(info).items() if n not in dims and not n.endswith("'")}
     shape = dict(zip(info.axes, info.shape))
-    position = [shape[n] / 2 if n in _SPATIAL else 0.5 for n in dims]
-    return dims, position, [a for a in _SPATIAL[::-1] if a in dims]
+    position = [shape[n] / 2 if n in spatial else 0.5 for n in dims]
+    return dims, position, spatial[::-1]
 
 
 def viewer_state(pipelines: Mapping[str, Pipeline], sources: Mapping[str, str]) -> dict:

@@ -66,8 +66,10 @@ export async function openImage(url: string): Promise<Image> {
 }
 
 /** Index of the lead axes (time, channel) to read: `channel` on c, 0 on anything else. */
-export function leadIndex(img: Image, channel: number): number[] {
-  return img.names.slice(0, img.lead).map((n) => (n === "c" ? channel : 0));
+/** The index along each leading (non-spatial) axis: `channel` along c, `at`'s along the
+ * others (t, say), else the first. */
+export function leadIndex(img: Image, channel: number, at: Record<string, number> = {}): number[] {
+  return img.names.slice(0, img.lead).map((n) => (n === "c" ? channel : at[n] ?? 0));
 }
 
 /** One channel of level `i`, all of its spatial extent. */
@@ -82,38 +84,35 @@ export const TYPED: Record<string, TypedCtor> = {
   uint8: Uint8Array, uint16: Uint16Array, uint32: Uint32Array, int8: Int8Array, int16: Int16Array, int32: Int32Array,
   float32: Float32Array, float64: Float64Array,
 };
-const MAX_PIECE = 1 << 22;  // voxels: a store chunk bigger than this (a shard, say) is read in 64³ pieces
-
 interface Piece { data: Numbers; shape: number[] }
 
 /** Regions of an image's levels, one channel at a time, assembled from pieces aligned to the
  * store's own chunks and kept (least recently used out past `maxBytes`), so each chunk is
  * decoded once however many regions overlap it: neighbouring chunks and blocks, their
- * halos, different outputs. One per image in each context (the page, each chunk worker);
- * the service worker below them keeps the fetched bytes for all of them. */
+ * halos, different outputs. A piece is a whole store chunk (the inner chunk of a shard),
+ * since reading part of one decodes all of it, and at least two are kept however large
+ * (a sea-temperature tile is 65 MB). One per image in each context (the page, each chunk
+ * worker); the service worker below them keeps the fetched bytes for all of them. */
 export class RegionReader {
   readonly Typed: TypedCtor;
   private pieces = new Map<string, Promise<Piece>>();  // in use order
   private bytes = 0;
   constructor(readonly img: Image, private maxBytes: number) { this.Typed = TYPED[img.dtype] ?? Float32Array; }
 
-  private pieceShape(li: number): number[] {
-    const c = this.img.levels[li].arr.chunks.slice(-3);
-    return prod(c) <= MAX_PIECE ? c : [64, 64, 64];
-  }
+  private pieceShape(li: number): number[] { return this.img.levels[li].arr.chunks.slice(-3); }
 
-  private piece(li: number, channel: number, b: number[], P: number[]): Promise<Piece> {
-    const key = `${li}/${channel}/${b.join(",")}`;
+  private piece(li: number, channel: number, b: number[], P: number[], at: Record<string, number> = {}): Promise<Piece> {
+    const key = `${li}/${channel}/${JSON.stringify(at)}/${b.join(",")}`;
     let hit = this.pieces.get(key);
     if (hit) { this.pieces.delete(key); this.pieces.set(key, hit); return hit; }
     const lvl = this.img.levels[li];
     const lo = b.map((v, a) => v * P[a]), hi = lo.map((v, a) => Math.min(v + P[a], lvl.shape[a]));
-    hit = zarr.get(lvl.arr, [...leadIndex(this.img, channel), ...lo.map((v, a) => zarr.slice(v, hi[a]))])
+    hit = zarr.get(lvl.arr, [...leadIndex(this.img, channel, at), ...lo.map((v, a) => zarr.slice(v, hi[a]))])
       .then((r) => ({ data: r.data as Numbers, shape: hi.map((v, a) => v - lo[a]) }))
       .catch((e) => { this.pieces.delete(key); throw e; });  // a failed read is retried next time
     this.pieces.set(key, hit);
     this.bytes += prod(P) * this.Typed.BYTES_PER_ELEMENT;
-    while (this.bytes > this.maxBytes && this.pieces.size > 1) {
+    while (this.bytes > this.maxBytes && this.pieces.size > 2) {
       const [oldest] = this.pieces.keys();
       this.pieces.delete(oldest);
       this.bytes -= prod(this.pieceShape(Number(oldest.split("/")[0]))) * this.Typed.BYTES_PER_ELEMENT;
@@ -121,14 +120,15 @@ export class RegionReader {
     return hit;
   }
 
-  /** Voxels [lo, hi) of level `li`, one channel, and that region's own origin. */
-  async read(li: number, channel: number, lo: number[], hi: number[]) {
+  /** Voxels [lo, hi) of level `li`, one channel (at `at` along other leading axes, such as
+   * {t: 12}), and that region's own origin. */
+  async read(li: number, channel: number, lo: number[], hi: number[], at: Record<string, number> = {}) {
     const lvl = this.img.levels[li], P = this.pieceShape(li), shape = hi.map((v, a) => v - lo[a]);
     const out = new this.Typed(prod(shape));
     const b0 = lo.map((v, a) => Math.floor(v / P[a])), b1 = hi.map((v, a) => Math.floor((v - 1) / P[a]));
     const wanted: number[][] = [];
     for (let z = b0[0]; z <= b1[0]; z++) for (let y = b0[1]; y <= b1[1]; y++) for (let x = b0[2]; x <= b1[2]; x++) wanted.push([z, y, x]);
-    const got = await Promise.all(wanted.map((b) => this.piece(li, channel, b, P)));
+    const got = await Promise.all(wanted.map((b) => this.piece(li, channel, b, P, at)));
     wanted.forEach((b, n) => {
       const { data, shape: bs } = got[n];
       const start = b.map((v, a) => v * P[a]);

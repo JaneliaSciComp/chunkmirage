@@ -20,7 +20,7 @@ const SHORT: Record<string, string> = { micrometer: "µm", nanometer: "nm", mill
 // this page's share of /virtual/ (getRandomValues: randomUUID exists on secure pages only)
 const PAGE = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
 
-type FieldName = "fixed" | "moving" | "fixed_channel" | "moving_channel" | "affine" | "mirrored" | "levels" | "iterations" | "smooth" | "grid" | "window" | "refine" | "halo" | "block";
+type FieldName = "fixed" | "moving" | "fixed_channel" | "moving_channel" | "affine" | "levels" | "iterations" | "smooth" | "grid" | "window" | "refine" | "halo" | "block";
 type Form = Record<FieldName, string>;
 interface Ranges { fixed: number[]; moving: number[]; field?: number }
 interface Sources { before?: string; after?: string; field?: string }
@@ -37,7 +37,7 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const form = $<HTMLFormElement>("form");
 const input = (name: FieldName) => form.elements.namedItem(name) as HTMLInputElement | HTMLTextAreaElement;
 // the form's values; a checkbox reads "true" when ticked, "" when not, as a link carries it
-const values = () => ({ ...Object.fromEntries(new FormData(form)), mirrored: String((input("mirrored") as HTMLInputElement).checked) }) as Form;
+const values = () => Object.fromEntries(new FormData(form)) as Form;
 
 // RegisterParams' properties: the form's defaults and lower bounds
 const REGISTER = schema.$defs.RegisterParams.properties as Record<string,
@@ -82,7 +82,7 @@ function showCommand(solvedLevels?: number[]) {
   let affine = "auto";  // Python finds one as this page does, until this page has
   try { if (f.affine.trim()) affine = parseAffine(f.affine).flat().map((v) => +v.toPrecision(6)).join(","); } catch { /* shown once fixed */ }
   const params: RegisterParams = {
-    fixed: f.fixed, affine, mirrored: f.mirrored === "true" && affine === "auto",
+    fixed: f.fixed, affine,
     fixed_channel: Number(f.fixed_channel), moving_channel: Number(f.moving_channel),
     levels: f.levels.trim() ? numbers(f.levels) : solvedLevels ?? null,
     iterations: numbers(f.iterations), smooth: Number(f.smooth), grid: Number(f.grid),
@@ -614,7 +614,7 @@ async function run() {
         setBar(row, (stage + iteration / iterations) / stages);
         setRow(row, ".t", `fit ${stage + 1} / ${stages}`);
         setRow(row, ".sim", `similarity ${similarity?.toFixed(3)}`);
-      }, f.mirrored === "true");
+      });
       affine = fa.affine;
       const ref = exampleRef && f.fixed === exampleRef.fixed && f.moving === exampleRef.moving ? exampleRef.affine : null;
       fa.distance = ref ? affineDistance(data[0][0], affine, ref) : null;
@@ -698,7 +698,6 @@ showCommand();
 if (INSECURE) { $("status").hidden = false; $("error").hidden = false; $("error").textContent = INSECURE; }
 else schedulePreview();  // a link shows its images; Register solves
 for (const k of ["fixed", "moving", "fixed_channel", "moving_channel", "affine"] as const) input(k).addEventListener("change", schedulePreview);
-input("mirrored").addEventListener("change", () => showCommand());
 if (query.has("3d")) { view3d.checked = query.get("3d") === "1"; view3dChosen = true; }
 view3d.addEventListener("change", () => {
   view3dChosen = true;

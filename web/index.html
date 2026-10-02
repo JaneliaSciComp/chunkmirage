@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>chunkmirage demos</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0e1014; --panel: #161a20; --line: #262c36; --fg: #e7e9ec; --muted: #939cab; --faint: #5d6675;
+    --accent: #7ab0ff; --accent-ink: #081225;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header, main { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+  header { padding-top: 32px; padding-bottom: 8px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  header p { margin: 0; color: var(--muted); max-width: 760px; }
+  a { color: var(--accent); text-decoration: none; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 18px; padding: 24px 0 48px; }
+  .card { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .card img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #000; }
+  .body { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px 16px; flex: 1; }
+  h2 { font-size: 15px; margin: 0; }
+  .blurb { margin: 0; color: var(--muted); font-size: 13px; }
+  .data { margin: 0; color: var(--faint); font-size: 12px; }
+  .actions { display: flex; gap: 10px; align-items: center; margin-top: auto; padding-top: 6px; }
+  .open { padding: 7px 12px; border-radius: 6px; background: var(--accent); color: var(--accent-ink); font-weight: 650; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  .why { margin: 0; color: var(--faint); font-size: 12px; }
+  pre { margin: 6px 0 0; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<header>
+  <h1>chunkmirage demos</h1>
+  <p>Each runs in this browser with nothing to install: images are read from public buckets, and
+    every chunk on screen is computed here when the viewer asks for it (chunkmirage's own Python
+    ops in Pyodide, or the registration solver on your GPU). Each also shows the command that serves
+    the same from Python, for Neuroglancer, Fiji, napari or a dask script; one, whose data no
+    browser page may read, runs from Python only.
+    <a href="https://yuriyzubov.github.io/chunkmirage/">Documentation</a>.</p>
+</header>
+<main><div class="cards" id="cards"></div></main>
+<script type="module" src="./src/gallery.ts"></script>
+</body>
+</html>

@@ -36,6 +36,7 @@ def build_registry(
     cache_gb: float = 2.0,
     source_cache_gb: float = 0.5,
     select: str | None = None,
+    mesh: str | None = None,
 ):
     """Build the registry the CLI serves (separated from `serve` so it can be tested)."""
     from chunkmirage.cache import LRUCache
@@ -61,6 +62,9 @@ def build_registry(
             ops=[_parse_op(o) for o in ops],
             chunk_shape=chunk_shape,
             select=pinned,
+            mesh={k: v for k, v in _parse_op(f"mesh:{mesh}").items() if k != "op"}
+            if mesh is not None
+            else None,
         ),
     )
     return registry
@@ -89,6 +93,12 @@ def serve(
         None,
         help="pin non-spatial axes, e.g. c=1,t=0: process that channel of that time point "
         "(ops such as spots need a z, y, x volume)",
+    ),
+    mesh: str | None = typer.Option(
+        None,
+        help="mesh the result, served at <name>/mesh as Neuroglancer meshes computed when "
+        "fetched: kind=surface,threshold=128 (an isosurface) or kind=terrain,exaggeration=2 "
+        "(an elevation model), level=N to choose the level; '' for the defaults",
     ),
     host: str = typer.Option("0.0.0.0"),
     port: int | None = typer.Option(
@@ -159,6 +169,7 @@ def serve(
         cache_gb=cache_gb,
         source_cache_gb=source_cache_gb,
         select=select,
+        mesh=mesh,
     )
     if port is None:
         port = free_port(host, 8000)

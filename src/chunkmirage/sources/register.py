@@ -31,8 +31,8 @@ Query parameters:
 * ``affine``: the fixed-to-moving affine in physical units, C order: a ``.npy`` or text
   file holding a 4x4 or 3x4 matrix, or its 12 or 16 values inline, row by row (default:
   identity), or ``auto`` to find one from the images' intensity moments and a correlation
-  fit (``mirrored``: the moving image is a mirror image, so the search tries only mirrored
-  orientations). The moving image is sampled at ``affine(p + u(p))``.
+  fit, among orientations that do not mirror the image (a mirror image needs its affine
+  given). The moving image is sampled at ``affine(p + u(p))``.
 * ``fixed_channel``, ``moving_channel``: the channel each image is matched on, for images
   with a ``c`` axis (default 0). The output has every channel of the moving image.
 * ``levels``: fixed-image levels to solve on, coarse to fine, e.g. ``6,5,4`` (default:
@@ -114,14 +114,6 @@ class RegisterParams(BaseModel):
             "The fixed-to-moving affine in physical units, C order: a .npy or text file holding a 4x4"
             " or 3x4 matrix, or its 12 or 16 values inline, row by row; or auto, to find one from"
             " the images' intensity moments and a correlation fit. Default: identity."
-        ),
-    )
-    mirrored: bool = Field(
-        False,
-        description=(
-            "The moving image is a mirror image of the fixed one (one axis reversed, as when a stack is"
-            " acquired the other way round), for affine=auto: the search then tries only mirrored"
-            " orientations. Correlation cannot tell handedness on a nearly symmetric specimen."
         ),
     )
     fixed_channel: int = Field(
@@ -627,13 +619,10 @@ def open_register(
 
     if p.affine == "auto":
         pair = [fix.levels[levels[0]].cache_key(), mov.levels[mlevels[0]].cache_key(), flead, mlead]
-        pair.append(p.mirrored)
         akey = _digest(json.dumps(pair), 16)
         if akey not in _affines:
             with _solve_lock:
-                _affines[akey] = find_affine(
-                    *read_coarsest(), device=p.device, mirrored=p.mirrored
-                )[0]
+                _affines[akey] = find_affine(*read_coarsest(), device=p.device)[0]
         affine = _affines[akey]
     else:
         affine = _affine(p.affine)

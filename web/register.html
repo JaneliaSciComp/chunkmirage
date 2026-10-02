@@ -71,9 +71,6 @@
   .example p { margin: 0; }
   .start { display: grid; gap: 4px; margin: 8px 0; }
   .start label { display: flex; gap: 6px; align-items: baseline; color: var(--muted); cursor: pointer; }
-  .mirror { display: flex; gap: 8px; align-items: flex-start; font-size: 11px; color: var(--faint); cursor: pointer; }
-  .mirror b { color: var(--muted); font-weight: 600; }
-  .mirror input { width: 16px; height: 16px; flex: none; margin: 1px 0 0; padding: 0; accent-color: var(--accent); cursor: pointer; }
   main { position: relative; min-width: 0; background: #000; }
   main iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
   .empty { position: absolute; inset: 0; display: grid; place-content: center; gap: 6px; padding: 24px; text-align: center; color: var(--faint); }
@@ -120,9 +117,6 @@
         roughly right; the left panel shows it alone. Empty: Register finds one first, by matching the
         images' centres and principal axes and then fitting it.</span>
       <textarea name="affine" rows="3" wrap="off" spellcheck="false" placeholder="12 or 16 numbers, row by row, in physical units. Empty: identity."></textarea></label>
-    <label class="mirror"><input type="checkbox" name="mirrored" value="true"><span><b>Moving image is mirrored</b>
-      (one axis reversed, as when a stack is taken the other way round): the search then tries only mirrored
-      placements. It cannot tell by itself: on a brain, left and right look alike.</span></label>
     <details>
       <summary>Solver settings</summary>
       <div class="settings">

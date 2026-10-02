@@ -20,7 +20,11 @@ dependencies = [
 
 [project.optional-dependencies]
 hdf5 = ["h5py>=3.10"]
+# GeoTIFF / cloud-optimized GeoTIFF sources (tensorstore's tiff driver reads only uint8)
+tiff = ["tifffile>=2024.1", "imagecodecs>=2024.1"]
 ops = ["scipy>=1.12"]
+# meshes computed on demand (marching cubes)
+mesh = ["scikit-image>=0.22", "DracoPy>=1.4"]
 mcp = ["mcp>=1.0"]
 viewer = ["neuroglancer>=2.40"]
 https = ["cryptography>=42"]
@@ -28,7 +32,7 @@ https = ["cryptography>=42"]
 # ~3 GB of wheels, so not in `all`; cpu is its CPU-only build (CI, laptops). Pick one.
 gpu = ["torch>=2.6", "scipy>=1.12"]
 cpu = ["torch>=2.6", "scipy>=1.12"]
-all = ["chunkmirage[hdf5,ops,mcp,viewer,https]"]
+all = ["chunkmirage[hdf5,tiff,ops,mesh,mcp,viewer,https]"]
 
 [project.scripts]
 chunkmirage = "chunkmirage.cli:app"

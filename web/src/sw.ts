@@ -17,7 +17,7 @@ sw.addEventListener("activate", (event) => event.waitUntil(sw.clients.claim()));
 
 sw.addEventListener("fetch", (event) => {
   const req = event.request, url = new URL(req.url), own = url.origin === sw.location.origin;
-  if (own && url.pathname.includes("/virtual/")) return event.respondWith(relay(url.pathname));
+  if (own && url.pathname.includes("/virtual/")) return event.respondWith(relay(url.pathname, req.headers.get("range")));
   // data a script fetches (not pages, scripts or this site's own assets and viewer)
   const asset = own && /\/(assets|ng)\//.test(url.pathname);
   if (req.method === "GET" && req.destination === "" && !asset) event.respondWith(fromStore(req));
@@ -75,16 +75,17 @@ function evict() {
   }
 }
 
-async function relay(path: string): Promise<Response> {
+async function relay(path: string, range: string | null): Promise<Response> {
   // every open page on this site is asked at once: the one whose share of /virtual/ this is
   // answers, the rest (the viewer's frame, other tabs) never do
   const pages = await sw.clients.matchAll({ type: "window", includeUncontrolled: true });
-  const asks = pages.map((page) => ask(page, path));
+  const asks = pages.map((page) => ask(page, path, range));
   const reply = await first(asks.map((a) => a.reply));
   const owner = reply ? asks.find((a) => a.answered === reply) : undefined;
   for (const a of asks) if (a !== owner || !reply || !("stream" in reply)) a.cancel();
   if (!reply) return new Response("the registration page that serves this volume is closed", { status: 503 });
-  const headers = { "content-type": reply.type, "cache-control": "no-store" };
+  const headers: Record<string, string> = { "content-type": reply.type, "cache-control": "no-store" };
+  if (reply.range) headers["content-range"] = reply.range;  // a part of a file (mesh fragments)
   if (!("stream" in reply)) return new Response(reply.body, { status: reply.status, headers });
   // A chunk: the head now, the body when the page has computed it. A client that stops waiting
   // cancels this stream (a service worker sees no other sign of it), and the page is told, so
@@ -112,7 +113,7 @@ function first(replies: Promise<Reply>[]): Promise<Reply> {
 
 /** Ask one page for `path`: its first message is the reply (or its head), later ones a
  * streamed body's contents. */
-function ask(client: Client, path: string) {
+function ask(client: Client, path: string, range: string | null) {
   const channel = new MessageChannel();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const a = {
@@ -131,6 +132,6 @@ function ask(client: Client, path: string) {
       resolve(a.answered);
     };
   });
-  client.postMessage({ path }, [channel.port2]);
+  client.postMessage({ path, range }, [channel.port2]);
   return a;
 }

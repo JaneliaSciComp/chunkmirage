@@ -32,14 +32,17 @@ speculatively, and the operation is one a viewer's shader cannot do:
 * **non-local**: filters, morphology, distance transforms;
 * **learned**: model inference where GPU and weights live server-side;
 * **geometric**: resampling under a registration transform (including OME-Zarr 0.6
-  displacement fields, which viewers cannot apply: [`scene://`](concepts/formats.md#scene-sources-ome-zarr-06-transformations)),
-  on-the-fly pyramids;
+  displacement fields, which viewers cannot apply: [`scene://`](concepts/formats.md#scene-sources-ome-zarr-06-transformations));
 * **multi-source**: masking one volume by another, comparing two model versions;
 * **format bridging**: exposing HDF5 or a custom reader as zarr to any viewer.
 
-Registration also runs entirely in the browser, with no server and nothing to install:
-[browser/register.html](https://yuriyzubov.github.io/chunkmirage/browser/register.html)
-solves on your GPU and opens with an example.
+Nothing in it is particular to microscopy: a time series is an array too, and xarray-written
+zarr (sea temperature, weather, images of the sun) reads with its own axes and coordinates,
+so a day-to-day change is an op along time.
+
+The demos also run entirely in the browser, with no server and nothing to install:
+[the gallery](https://yuriyzubov.github.io/chunkmirage/browser/) has registration solved on
+your GPU and pipelines of chunkmirage's own ops run in the page (see [Demos](demos.md)).
 
 See [FAQ](faq.md) for when *not* to use it.
 

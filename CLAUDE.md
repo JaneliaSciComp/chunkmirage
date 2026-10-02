@@ -35,5 +35,6 @@ update the matching page in the same commit:
 
 - Arrays are numpy C order `(z, y, x)`; N5 and precomputed reverse axis lists at the edge.
 - Every pipeline stage is a `ChunkedSource`; caching and halos live there, not in ops.
-- Ops are pydantic models with class-level `name`, `halo`, `cache`; register via
+- Ops are pydantic models with class-level `name`, `halo`, `cache` (and `packages` they import
+  beyond numpy, for the browser engine); register via
   `@register` and the `chunkmirage.ops` entry point.

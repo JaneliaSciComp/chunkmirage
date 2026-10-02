@@ -9,7 +9,8 @@ uv sync --extra all --group dev        # or: pip install -e ".[all]"; add --extr
 ```
 
 Requires Python 3.11+. Core dependencies are tensorstore, numpy, numcodecs, starlette,
-uvicorn, pydantic and typer. Optional extras: `hdf5` (h5py), `ops` (scipy filters),
+uvicorn, pydantic and typer. Optional extras: `hdf5` (h5py), `tiff` (tifffile and
+imagecodecs, for GeoTIFFs), `ops` (scipy filters),
 `mcp` (planned MCP server), and for `register://` either `gpu` (PyTorch with CUDA, about
 3 GB) or `cpu` (its CPU-only build, for machines without an NVIDIA GPU). Neither is in
 `all`, and they cannot be installed together.

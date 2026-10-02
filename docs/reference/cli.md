@@ -9,7 +9,7 @@ chunkmirage schema [--out FILE]
 
 `SOURCE` is anything chunkmirage reads: a stored array or multiscale group (zarr, N5,
 precomputed; local, `s3://`, `gs://`, `http(s)://`), `file.h5::/dataset`, or a computed
-`synthetic://`, `scene://`, `warp://` or `register://` URL
+`synthetic://`, `scene://`, `warp://`, `register://` or `stitch://` URL
 ([sources](../concepts/formats.md#sources)).
 
 ## `serve`
@@ -21,6 +21,7 @@ precomputed; local, `s3://`, `gs://`, `http(s)://`), `file.h5::/dataset`, or a c
 | `--raw` / `--no-raw`  | on                                        | also serve the unprocessed source as `raw`; shares the cache, appears as a second layer |
 | `--chunk`             | source chunks                             | output chunk shape, e.g. `64,64,64` |
 | `--select`            | none                                      | pin non-spatial axes, e.g. `c=1,t=0`: the pipeline sees that channel of that time point as a `z, y, x` volume (the spec's `select`) |
+| `--mesh`              | none                                      | what the [mesh frontend](../concepts/formats.md#meshes-computed-when-fetched) meshes (the spec's `mesh`): `kind=surface,threshold=255` (an isosurface), `kind=terrain,exaggeration=2` (an elevation model), `level=N`, `lods=4` (levels of detail: finer meshes where the viewer zooms in); `''` for the defaults. The python viewer then shows the mesh too |
 | `--host` / `--port`   | `0.0.0.0` / `8000`                        | bind address; without `--port`, the first free port from 8000 up |
 | `--https`             | off                                       | serve https; a self-signed certificate is generated in `~/.cache/chunkmirage/` on first use (needs the `https` extra or the `openssl` CLI) |
 | `--cert` / `--key`    | auto-generated                            | use your own certificate and key with `--https` |

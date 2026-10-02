@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>chunkmirage demo</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0e1014; --panel: #161a20; --line: #262c36; --fg: #e7e9ec; --muted: #939cab; --faint: #5d6675;
+    --accent: #7ab0ff; --accent-ink: #081225;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: grid; grid-template-columns: minmax(280px, 330px) 1fr;
+    background: var(--bg); color: var(--fg); font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  aside { display: flex; flex-direction: column; gap: 16px; padding: 18px 16px; background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; }
+  a { color: var(--accent); text-decoration: none; }
+  h1 { font-size: 15px; font-weight: 650; margin: 0; }
+  p { margin: 0; }
+  .muted { color: var(--muted); }
+  .faint { color: var(--faint); font-size: 12px; }
+  .label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  pre { margin: 6px 0 0; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
+  button { padding: 6px 10px; border: 0; border-radius: 6px; background: var(--accent); color: var(--accent-ink); font: inherit; font-weight: 650; cursor: pointer; }
+  .state { color: var(--fg); }
+  .date { font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  #when { display: flex; flex-direction: column; gap: 4px; min-height: 64px; }
+  #when[hidden] { display: none; }
+  [hidden] { display: none !important; }
+  .controls { display: flex; flex-direction: column; gap: 10px; }
+  .control { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; }
+  .control input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
+  .control output { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .counts { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  main { position: relative; min-width: 0; background: #000; }
+  main iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .empty { position: absolute; inset: 0; display: grid; place-content: center; padding: 24px; text-align: center; color: var(--faint); }
+  @media (max-width: 720px) { body { grid-template-columns: 1fr; grid-template-rows: auto 70vh; } aside { border-right: 0; border-bottom: 1px solid var(--line); } }
+</style>
+</head>
+<body>
+<aside>
+  <p><a href="./">← All demos</a></p>
+  <div>
+    <h1 id="title">chunkmirage demo</h1>
+  </div>
+  <section id="when" hidden>
+    <p class="date" id="date"></p>
+    <p class="muted" id="event"></p>
+  </section>
+  <p class="muted" id="blurb"></p>
+  <p class="faint">Data: <span id="data"></span></p>
+  <section class="controls" id="controls" hidden><div class="label">Settings</div></section>
+  <section>
+    <div class="label">Status</div>
+    <p class="state" id="state">Starting…</p>
+    <p class="counts" id="counts"></p>
+  </section>
+  <section>
+    <div class="label">The same from Python</div>
+    <pre id="command"></pre>
+    <p style="margin-top: 6px"><button id="copy" type="button">Copy</button></p>
+  </section>
+  <p class="faint">Everything here runs in this browser: the images are read from their public
+    buckets, and each chunk is computed by chunkmirage's own Python ops, run by Pyodide in web
+    workers, then served to the Neuroglancer viewer through a service worker. Nothing is uploaded.</p>
+</aside>
+<main>
+  <div class="empty" id="empty">Loading…</div>
+  <iframe id="ng" title="Neuroglancer" hidden></iframe>
+</main>
+<script type="module" src="./src/pipeline.ts"></script>
+</body>
+</html>

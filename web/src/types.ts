@@ -59,5 +59,47 @@ export interface StoreStats { requests: number; hits: number; fetches: number; f
  * A chunk's answer comes in two parts: its head at once ({stream: true}), its body later as a
  * Later, so the service worker can stream it and tell the page ({cancel: true}) if the client
  * gives up first. */
-export type Reply = { status: number; body: string | ArrayBuffer; type: string } | { status: number; type: string; stream: true } | null;
+export type Reply = { status: number; body: string | ArrayBuffer; type: string; range?: string } | { status: number; type: string; stream: true; range?: string } | null;
 export type Later = { body: ArrayBuffer } | { error: string };
+
+// ------------------------------------------------ the pipeline page, its reader and its Pyodide workers
+/** One view a pipeline page serves: chunkmirage's PipelineSpec, as far as the browser goes. */
+export interface PipelineView {
+  source: string;                    // stack://, flip://, an OME-Zarr or N5 group, an xarray array
+  select?: Record<string, number>;   // pin non-spatial axes, e.g. {c: 1, t: 0}
+  ops?: Record<string, unknown>[];   // op specs, as the CLI and REST API take them
+  chunk: number[];                   // output chunks, one per axis
+  mesh?: { kind?: "surface" | "terrain"; level?: number; threshold?: number; exaggeration?: number; lods?: number };  // served at <view>/mesh
+}
+/** An axis of a view: its name (z, or time, lat, ...) and the unit of its voxel size. */
+export interface ViewAxis { name: string; unit: string }
+export interface ViewLevel { shape: number[]; voxel: number[]; origin: number[] }
+/** A view's source as the reader opened it: three axes, and channels for a stack. */
+export interface SourceInfo { dtype: string; channels: number; axes: ViewAxis[]; levels: ViewLevel[]; geo?: { bbox: number[] } }
+/** A view as served: its source's axes and levels, and what its ops make of them. */
+export interface ViewInfo extends SourceInfo { halo: number[]; lead: number; out: string }
+
+/** A mesh made from a view's voxels: a legacy fragment, part of the coarsest level's mask
+ * (for the multi-resolution octree), or a multi-resolution node's fragment. */
+export type MeshCall = NonNullable<PipelineView["mesh"]> & {
+  mode: "legacy" | "mask" | "node"; levels?: ViewLevel[]; size?: number; bits?: number;
+  core_lo?: number[]; core_hi?: number[];  // mask: the part's core within the box asked for
+  raw?: boolean;                           // node: the data is the coarsest level's mask, no ops to run
+};
+/** What the page asks the reader, which opens the views' sources once for the page. */
+export type ToReader =
+  | { type: "open"; reqId: number; views: Record<string, PipelineView> }
+  | { type: "read"; reqId: number; view: string; level: number; lo: number[]; hi: number[]; at?: Record<string, number> }
+  | { type: "sample"; reqId: number; view: string; ps: number[] };
+/** What the page asks a Pyodide worker. */
+export type ToPyWorker =
+  | { type: "describe"; reqId: number; source: string }  // a source computed in the worker (synthetic://)
+  | { type: "plan"; reqId: number; packages?: string[]; views: Record<string, { ops: Record<string, unknown>[]; shape: number[]; dtype: string; chunk: number[]; voxel: number[]; source?: string }> }
+  // data: the input region read by the reader, or null for a source the worker computes
+  | { type: "compute"; reqId: number; view: string; level: number; data: ArrayBuffer | null; readShape: number[]; inLo: number[]; inHi: number[]; outLo: number[]; outHi: number[]; full: number[]; voxel: number[]; origin: number[]; unit?: string; mesh?: MeshCall }
+  // a multi-resolution mesh's octree and index, from its coarsest level's surface band (`mesh.levels` the view's)
+  | { type: "octree"; reqId: number; band: ArrayBuffer; shape: number[]; mesh: MeshCall; chunk: number[]; unit: string }
+  // a step of a page's work (chunkmirage.stitching, chunkmirage.tracking): JSON arguments, arrays as raw bytes
+  | { type: "call"; reqId: number; fn: string; args: string; arrays?: ArrayBuffer[] };
+/** Either's answer to request `reqId`. */
+export type Answer = { reqId: number; value: unknown } | { reqId: number; error: string };

@@ -6,11 +6,16 @@ URL form (accepted by ``open_source``)::
     synthetic://noise?...        fractal (fBm) value noise
     synthetic://shells?...       hollow spheres (membrane-like)
     synthetic://julia?...        3-D slice of a quaternion Julia set
+    synthetic://mandelbulb?shape=1073741824,1073741824,1073741824   the Mandelbulb, to zoom into
     synthetic://blobs+noise?...  sum of kinds
 
 Every voxel is a deterministic function of its world coordinate, so level *i* is simply
 the same function sampled with a 2**i voxel spacing: ``s1[z, y, x] == s0[2z, 2y, 2x]``.
-That makes the pyramid free and exactly self-consistent, unlike averaging.
+That makes the pyramid free and exactly self-consistent, unlike averaging. The one
+exception is ``mandelbulb``, which iterates more the finer the level (as fractal zoomers
+do: detail a coarse level could not show needs more iterations to resolve), so a coarse
+level's boundary is a little fuller than a fine one's. Its coordinates are float64, so an
+array 2**30 voxels across, 23 levels deep, still resolves its finest voxels.
 
 Generation is numpy on ~260k voxels per chunk; numpy releases the GIL for those
 operations, so the server's threadpool already computes chunks on all cores.
@@ -25,7 +30,7 @@ import numpy as np
 from chunkmirage.core import ArrayInfo, Box
 from chunkmirage.sources.base import MultiscaleSource, Source
 
-_KINDS = ("blobs", "noise", "julia", "shells")
+_KINDS = ("blobs", "noise", "julia", "shells", "mandelbulb")
 F32 = np.float32
 
 
@@ -192,6 +197,44 @@ def _julia(z, y, x, seed: int, scale: float, max_iter: int = 14) -> np.ndarray:
     return F32(255.0 / max_iter) * count
 
 
+BULB = 1.25  # the Mandelbulb's array spans [-BULB, BULB] on each axis
+BULB_POWER = 8.0
+
+
+def _mandelbulb(start, stop, step: int, full_shape) -> np.ndarray:
+    """The power-8 Mandelbulb's escape time: 4 x the (smooth) iteration at which a point
+    leaves radius 2, so a colour stays a colour from level to level, 255 for points that
+    have not left (inside). The array spans [-1.25, 1.25] on every axis, in float64 from
+    integer indices; a level of voxels ``v`` across iterates 10 + 3 log2(256 / v) times
+    (10 for the whole bulb on 256 voxels, a few more for every halving)."""
+    across = BULB * 2 / max(full_shape)  # the finest voxel, in bulb units
+    iters = int(np.clip(10 + 3 * np.log2(max(full_shape) / (256 * step)), 10, 80))
+    axes = [
+        ((np.arange(a, b, dtype=np.float64) + 0.5) * step) * across - BULB
+        for a, b in zip(start, stop)
+    ]
+    pz, py, px = np.meshgrid(*axes, indexing="ij")
+    x, y, z = px.copy(), py.copy(), pz.copy()
+    out = np.full(px.shape, 255.0)
+    alive = np.ones(px.shape, dtype=bool)
+    for i in range(iters):
+        r = np.sqrt(x * x + y * y + z * z)
+        gone = alive & (r > 2)
+        if gone.any():  # smooth escape: the fraction of an iteration past radius 2
+            out[gone] = 4 * (i + 1 - np.log(np.log(r[gone]) / np.log(2)) / np.log(BULB_POWER))
+            alive &= ~gone
+        if not alive.any():
+            break
+        ra = r[alive]
+        theta = BULB_POWER * np.arccos(np.clip(z[alive] / np.maximum(ra, 1e-300), -1, 1))
+        phi = BULB_POWER * np.arctan2(y[alive], x[alive])
+        rn = ra**BULB_POWER
+        x[alive] = rn * np.sin(theta) * np.cos(phi) + px[alive]
+        y[alive] = rn * np.sin(theta) * np.sin(phi) + py[alive]
+        z[alive] = rn * np.cos(theta) + pz[alive]
+    return np.where(alive, 255, np.clip(out, 0, 254)).astype(np.float32)
+
+
 def generate(
     kinds: tuple[str, ...], full_shape: tuple[int, ...], level: int, seed: int, start, stop
 ) -> np.ndarray:
@@ -209,6 +252,8 @@ def generate(
             out += F32(80) * _fbm(z, y, x, seed)
         elif kind == "julia":
             out += _julia(z, y, x, seed, scale=max(full_shape) / 2.8)
+        elif kind == "mandelbulb":
+            out += _mandelbulb(start, stop, step, full_shape)
     return np.clip(out, 0, 255).astype(np.uint8)
 
 

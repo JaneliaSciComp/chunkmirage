@@ -51,6 +51,36 @@ deformable solver, and the `scene://`, `warp://` and `register://` sources built
 ::: chunkmirage.registration.find_affine
 ::: chunkmirage.sources.register.open_register
 
+## Stitching
+
+Tiles stitched by interest points and RANSAC, and fused, behind `stitch://` and the
+browser's stitch page.
+
+::: chunkmirage.stitching.StitchParams
+::: chunkmirage.stitching.detect
+::: chunkmirage.stitching.match
+::: chunkmirage.stitching.ransac
+::: chunkmirage.stitching.optimize
+::: chunkmirage.stitching.register
+::: chunkmirage.stitching.fuse
+::: chunkmirage.stitching.tiles_from_bdv
+::: chunkmirage.sources.stitch.open_stitch
+
+## Tracking
+
+An object followed through a time series of labels by its overlap, frame by frame, and
+through its divisions into its likely daughters (new objects appearing near where it was: a
+guess, not something the labels record), behind the browser's track page and
+`examples/track_nucleus.py`.
+
+::: chunkmirage.tracking.lineage
+::: chunkmirage.tracking.follow
+::: chunkmirage.tracking.step
+::: chunkmirage.tracking.newborns
+::: chunkmirage.tracking.daughters
+::: chunkmirage.tracking.mother_of
+::: chunkmirage.tracking.measure
+
 ## Frontends
 
 ::: chunkmirage.frontends.base.Frontend

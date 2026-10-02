@@ -9,6 +9,7 @@ Every dataset is served through every frontend simultaneously. Given a dataset n
 | `zarr`        | `zarr2://http://localhost:8000/em/zarr`                | Zarr v2 + OME-NGFF 0.4 `multiscales`; consolidated `.zmetadata` too |
 | `zarr3`       | `zarr3://http://localhost:8000/em/zarr3`               | Zarr v3 + OME-NGFF 0.5 in group attributes       |
 | `precomputed` | `precomputed://http://localhost:8000/em/precomputed`   | `raw` encoding, 3-D or 4-D (c,z,y,x) only; HTTP gzip when accepted |
+| `mesh`        | `precomputed://http://localhost:8000/em/mesh`          | a surface of the dataset as Neuroglancer meshes, segment `1`, each fragment meshed when fetched, at one resolution or several (finer where you zoom); see [Meshes](#meshes-computed-when-fetched) |
 
 A cache-busting token may be inserted after the name: `/em/@{digest}/zarr3`. The API always
 hands out this form; the plain form always serves the current pipeline.
@@ -50,8 +51,75 @@ the server applies `Content-Encoding: gzip` when the client accepts it.
 
 ## Edge chunks
 
-Zarr requires full-size chunks, so edge chunks are zero-padded. N5 and precomputed encode
-the clipped size.
+Zarr requires full-size chunks, so edge chunks are zero-padded (by the browser engine too).
+N5 and precomputed encode the clipped size.
+
+## GeoZarr, for map clients (browser engine)
+
+The browser engine serves each view twice: as OME-Zarr 0.5 for Neuroglancer
+(`virtual/<page>/<view>/`) and, for a view read from a georeferenced source (a GeoTIFF), as
+GeoZarr for map clients such as OpenLayers (`virtual/<page>/geo/<view>/`). The GeoZarr
+group carries the zarr-conventions `multiscales` (one `layout` entry per level, its
+`spatial:shape`), `proj:` (`proj:code`, the projection the page names: a map client must
+know it, as the Moon page registers the lunar south polar stereographic) and `spatial:`
+(`spatial:dimensions` `[y, x]`, `spatial:bbox` the pixels' corners) attributes; level `<i>`
+is a group holding the view as its one band, `<i>/<view>`, a 2-D `y, x` array (the view's
+one z plane; a map reads 2-D bands). Chunks are the same chunks, computed once whichever
+layout asks. The Python server has no GeoZarr frontend yet.
+
+## Meshes, computed when fetched
+
+The `mesh` frontend serves a dataset's surface in Neuroglancer's precomputed mesh formats,
+for a segmentation layer whose source is `precomputed://.../<name>/mesh`, segment `1`.
+
+**One resolution** (the default): the legacy format. `info`
+(`{"@type": "neuroglancer_legacy_mesh"}`), the manifest `1:0` listing one fragment per chunk
+of one level, and each fragment `1:0:i_j_k`, meshed when it is fetched (`uint32` vertex
+count, `float32` x, y, z per vertex in nanometres, `uint32` triangle corners). A fragment is
+its chunk plus one voxel on its high sides, so neighbouring fragments meet exactly (the
+surface is watertight across them), and closed at the array's edges. Neuroglancer fetches
+every fragment of the manifest, so the level bounds the work, and zooming in shows nothing
+finer.
+
+**Several resolutions** (`lods` above 1): the multi-resolution format, whose meshes get finer
+where the viewer zooms in. Level of detail `i` is the pyramid level `level - lods + 1 + i`,
+its octree nodes that level's chunks, so each finer level splits a node in eight. `info`
+(`neuroglancer_multilod_draco`, 16-bit positions), the index `1.index` (per level of detail
+its nodes and their sizes; each level's voxel size is its scale, the offset of its origin
+its vertex offset) and the fragments' file `1`, which Neuroglancer reads by HTTP Range
+requests, one node at a time, for the nodes in view at the detail it wants (a segmentation
+layer's `meshRenderScale`: larger is coarser). The format wants every fragment's size before
+any is fetched, which on-demand meshing cannot know, so every fragment is padded to one size
+(128 KB; Draco decoders read what they need and ignore the rest, and the server gzips them,
+so a padded fragment costs a few hundred bytes to a few tens of kilobytes on the wire). A
+node's mesh is marching cubes on each of its octants apart (no triangle may cross one, so
+Neuroglancer can show part of a coarse node while its children load), its vertices integers
+across the node, coarsened past 100,000 triangles, and encoded with Draco (DracoPy, in the
+`mesh` extra; the browser engine uses Draco's own WebAssembly build). Only nodes within two
+voxels of the coarsest level's surface are listed, which the index is made from when it is
+first asked for (the whole coarsest level is read once): a finer level's surface lies near
+the coarser one's, and a listed node that turns out empty costs only its fetch. Four levels
+of detail of the Mandelbulb from its 256³ level list about 47,000 nodes, a 750 KB index;
+more than two million are refused.
+
+The spec's `mesh` (CLI `--mesh`) says what is meshed: `kind: surface` (default) is the
+boundary of the voxels at or above `threshold` (128), by marching cubes (scikit-image, the
+`mesh` extra); `kind: terrain` is an elevation model (`y, x`, or `z, y, x` with one z) as
+two triangles per cell, its elevation times `exaggeration` as height, cells with a NaN
+corner left out (one resolution only). `level` picks the level, the coarsest with `lods`
+(default: the finest whose longest side is at most 512 voxels), and `lods` the levels of
+detail. The browser engine serves the same at `virtual/<page>/<view>/mesh`, its workers
+running the same module (`chunkmirage.meshes`); for the multi-resolution index it masks the
+coarsest level's eighths in its workers at once (each with a border, for its surface band),
+and cuts the coarsest nodes' fragments from that mask (the Python server does the same), so
+the coarsest level is computed once. The index has to be made from the whole coarsest level
+before Neuroglancer can ask for any fragment: the Mandelbulb's appears after about 16 s in a
+browser, against 8 s for its single-resolution mesh.
+
+```bash
+chunkmirage serve 'synthetic://mandelbulb?shape=268435456,268435456,268435456&voxel_size=1&unit=nm' \
+  --mesh threshold=255,level=20,lods=4 --chunk 32,32,32 --python-viewer
+```
 
 ## Data types
 
@@ -68,9 +136,18 @@ generates data on the fly from voxel coordinates. Nothing is stored, so the volu
 as large as you like, and each scale level is the same function sampled at a coarser
 spacing, so the pyramid is exact (`s1[z,y,x] == s0[2z,2y,2x]`). Kinds: `blobs` (Gaussian
 blobs), `shells` (hollow spheres, membrane-like), `noise` (fractal value noise), `julia`
-(a 3-D slice of a quaternion Julia set); combine with `+`, e.g. `blobs+noise`. Useful for
-demos and for stress-testing pipelines without I/O. Generation is vectorised numpy, so
-the server's threadpool runs it on all cores.
+(a 3-D slice of a quaternion Julia set), `mandelbulb` (the power-8 Mandelbulb, to zoom
+into); combine with `+`, e.g. `blobs+noise`. Useful for demos and for stress-testing
+pipelines without I/O. Generation is vectorised numpy, so the server's threadpool runs it
+on all cores, and the browser engine's Pyodide workers run the same module for a view
+whose source is `synthetic://` (nothing is read).
+
+`mandelbulb` spans `[-1.25, 1.25]` on every axis in float64 from integer indices, so an
+array 2^28 voxels across (21 levels, 10^25 voxels) still resolves its finest voxels. Its
+value is 4 × the smooth escape iteration (255 inside), the same at every level, so a
+colour stays a colour as the viewer changes level; and it is the one kind whose levels are
+not exactly the same function: a level iterates `10 + 3 log2(256 / voxels across)` times,
+more the finer it is, as fractal zoomers do, so zooming in resolves new detail.
 
 ### Scene sources (OME-Zarr 0.6 transformations)
 
@@ -276,12 +353,10 @@ chunkmirage serve "register://$E/NP31_R2_2_1_SS00090_FMRFa_546_Proc_647_1x_Centr
 turn about y) and tilted about 22° in the z-y plane. Level 3 (the default, 54 M voxels)
 solves in 20 s on an RTX 2080 Ti, and levels 2 to 0 are fitted as you zoom. Whether round 2
 is instead a mirror image (z alone reversed, as a stack taken the other way round would be)
-the images cannot say: the brain is nearly symmetric, so with `mirrored=true` the search
-finds a tilted mirror that correlates as well (0.826 against 0.822), and full-resolution
-chunks split between the two. The half turn needs the smaller field afterwards (a median
-0.2 µm against 0.5 µm), and the acquisition metadata fits it (both stacks scanned in the
-same direction, the sample moved on the stage), so it is kept here; `mirrored=true` is
-there for whoever knows otherwise.
+the images cannot say: the brain is nearly symmetric, and a tilted mirror, given as the
+affine, correlates as well (0.826 against 0.822), full-resolution chunks splitting between
+the two. The half turn needs the smaller field afterwards (a median 0.2 µm against 0.5 µm),
+so the search's rotation is kept; whoever knows the round was a mirror gives its affine.
 Three full-resolution chunks in the tissue correlate with the fixed image at 0.75, 0.64 and
 0.86 through the level-3 field, and at 0.85, 0.77 and 0.87 through blocks fitted with the
 command above. Measured with blocks of 128³ voxels, the window matters most: 7 gives 0.79,
@@ -297,13 +372,15 @@ faster the longer it is looked at.
 `affine=auto` finds the starting affine from the images (the coarsest solved level of
 each, halved to a few hundred thousand voxels): their intensity moments are matched, centre
 to centre and principal axis to principal axis, the best-correlated of the orientations
-that do not mirror the image is kept (with `mirrored=true`, of those that do), and the 12
+that do not mirror the image is kept, and the 12
 numbers are then fitted by gradient ascent
 on the normalized cross-correlation at two resolutions, as the browser page does. The
 moments assume both images show the same whole object; a crop of one needs an affine given.
-Handedness is the caller's to say, not the search's: on a nearly symmetric specimen a mirror
-correlates as well as the right rotation while swapping left and right (on the fly
-templates exactly as well, 0.872, and 226 µm from the published affine). A found affine is
+A mirror image is not searched for: on a nearly symmetric specimen a mirror correlates as
+well as the right rotation while swapping left and right (on the fly templates exactly as
+well, 0.872, and 226 µm from the published affine), and a fit cannot reach one from a
+rotation (it would pass through a matrix that flattens the volume). An affine with a
+negative determinant, such as z reversed, is used as given. A found affine is
 remembered per image pair, like the solves.
 
 `show=pair` serves a `(c, z, y, x)` volume whose two channels are the fixed image's
@@ -321,7 +398,6 @@ re-solves when you type new settings, the viewer keeping its camera.
 | --------- | ------- | ------- |
 | `fixed` | (required) | the fixed image: anything `open_source` reads, with the same spatial units as `<moving>`; percent-encode it if it has a query |
 | `affine` | identity | fixed-to-moving affine in physical units, C order: a `.npy` or text file with a 4×4 or 3×4 matrix, or its 12 or 16 values inline, row by row; `auto` finds one from the images |
-| `mirrored` | `false` | the moving image is a mirror image of the fixed one (one axis reversed, as when a stack is taken the other way round): `affine=auto` then tries only mirrored orientations. Correlation cannot tell handedness on a nearly symmetric specimen |
 | `fixed_channel`, `moving_channel` | `0` | the channel each image is matched on, for images with a `c` axis |
 | `levels` | from the coarsest with ≥ 16 voxels on every axis to the finest with ≤ 2²⁵ | fixed-image levels to solve on, coarse to fine, e.g. `6,5,4`; each is matched with the moving level nearest its voxel size |
 | `iterations` | `100` | Adam steps per level: one value, one per level, or one per level with the refined ones; `0` leaves the affine alone (no GPU needed) |
@@ -373,15 +449,16 @@ below), followed by `label` to colour and size-filter the sites:
 ```
 P=https://janelia-cosem-datasets.s3.amazonaws.com/jrc_hela-2/jrc_hela-2.n5/labels
 chunkmirage serve "stack://flip://$P/mito_pred?axes=y|flip://$P/er_pred?axes=y" \
-    --op contacts:radius=3 --op label:min_size=50 --chunk 16,128,128 --python-viewer
+    --op contacts:distance=12 --op label:min_size=50 --chunk 16,128,128 --python-viewer
 ```
 
 `examples/contact_sites.py` serves the same with the EM underneath and the two predictions
 tinted, opens where the two organelles touch most, and takes new settings at a prompt.
 Only the chunks on screen are computed, out of 122 gigavoxels of cell, and a change of
-radius recomputes just those, from predictions the first pass left in the cache. Like every
-op's parameters, `radius` counts voxels of the level being served, so a zoomed-out view
-reaches proportionally further.
+distance recomputes just those, from predictions the first pass left in the cache. The
+`distance` is in nanometres and each level counts it in its own voxels, so a contact means
+the same at every zoom (`radius`, in voxels, would reach proportionally further on a
+zoomed-out level, as op parameters in voxels do).
 
 ### Flip sources (images stored the other way round)
 
@@ -400,6 +477,69 @@ pyramids whose extents halve evenly do, since a level mirrored about its own cen
 otherwise drift from the others; `flip://` refuses a pyramid whose levels share their
 corner instead (as `synthetic://` levels do).
 
+### Stitch sources (tiles stitched by interest points and RANSAC)
+
+```
+stitch://<BigStitcher project.xml>?channel=0&model=translation&epsilon=5&threshold=0.005
+```
+
+stitches the tiles of one channel of a BigStitcher project when opened, as BigStitcher's
+interest-point registration does, then serves them fused, region by region: no fused copy
+is written. Each overlap of two tiles' stage positions, grown by `margin`, is read at the
+tiles' level `level`, and its bright blobs found in both tiles: local maxima of a
+difference of Gaussians (`sigma`, and 2^(1/4) times it, scaled to the same physical size on
+every axis) at least `threshold` of the region's intensity range, located to a fraction of
+a voxel. A point's descriptor is the offsets to `neighbors` of its `neighbors + redundancy`
+nearest neighbours (every such subset), which a shift leaves unchanged; two points match
+when their descriptors are the closest pair both ways and `significance` times closer than
+the next candidate. RANSAC then draws `iterations` minimal samples of the matches, keeps the
+`model` (`translation`, `rigid` or `affine`) that most matches agree with to within
+`epsilon`, refits it to them until they settle, and keeps the pair if it has `min_inliers`
+inliers and `min_inlier_ratio` of its matches. Finally every tile's correction is fitted to
+all the kept matches at once (each round refits each tile to where its neighbours put their
+ends of its matches), one tile of each linked group held still.
+
+The fused volume has a level for each level every tile has, the first tile's voxel size
+there, covering every placed tile. A region of it is each tile that reaches it, sampled
+trilinearly where its placement puts it, averaged with weights that fall off as a half
+cosine over `blend` at the tiles' edges in y and x, so the seams do not show. The project's
+images must be OME-Zarr (BigStitcher-Spark's `bdv.multimg.zarr` loader); a tile's stage
+position is its view transforms but the outermost ones named "Stitching Transform" (a
+stitching done before), and the log says how far the result lies from that one. The steps
+are functions of arrays in `chunkmirage.stitching` (numpy and scipy, so the `ops` extra), the
+same code the browser's stitch page runs in Pyodide.
+
+```bash
+chunkmirage serve 'stitch://https://janelia-bigstitcher-spark.s3.amazonaws.com/Stitching/dataset.xml' --python-viewer
+```
+
+On BigStitcher-Spark's example (a larval fly CNS in 2 × 3 tiles), the defaults keep 8 of
+its 11 overlaps and put the tiles 0.4 µm (RMS) from BigStitcher's own phase-correlation
+stitching; opening takes about 9 s, most of it reading the overlaps.
+
+### GeoTIFF sources (cloud-optimized GeoTIFFs)
+
+```text
+https://.../site.tif        (s3://, gs:// or a local path too; .tif or .tiff)
+```
+
+The tiled GeoTIFFs most geospatial and planetary rasters are published as, cloud-optimized
+ones (COGs) above all, read where they are looked at: the header once (a few range
+requests), then each tile a read covers, fetched by range, decoded by tifffile and kept in a
+256 MB cache. The pages of decreasing size inside a COG (its overviews) are the levels, so
+a zoomed-out view reads the small ones; masks are skipped. One sample per pixel; the axes
+are `y, x` in the projection's units (metres, unitless for a geographic raster in degrees),
+`y` counting down the image as rows do (minus the northing), voxel `(0, 0)` at the tiepoint
+(`ModelTiepoint`, `ModelPixelScale`). A float raster's `GDAL_NODATA` reads as NaN. Strip
+TIFFs (untiled) are refused: every read would fetch whole rows. Needs the `tiff` extra
+(tensorstore's own `tiff` driver reads only uint8 images). The browser engine reads them
+with geotiff.js, the same way, as `z, y, x` with one z.
+
+```bash
+chunkmirage serve 'https://astrogeo-ard.s3.us-west-2.amazonaws.com/moon/lro/lola/barker_south_pole_dems/Site01/Site01.tif' \
+  --op hillshade:azimuth=135,altitude=10 --chunk 256,256 --python-viewer
+```
+
 ### Stored sources
 
 Sources are detected by content, not extension: `zarr.json` → zarr v3, `.zarray` → zarr v2,
@@ -411,10 +551,24 @@ Voxel size, translation, units and axes are read per level, first match wins:
 
 | Format      | Metadata, in order of precedence                                                   |
 |-------------|------------------------------------------------------------------------------------|
-| zarr v2/v3  | parent OME-NGFF `multiscales` entry whose `path` is this array, composed with the multiscale-level `coordinateTransformations` if present (0.4/0.5; in 0.6 those lead to other coordinate systems and are applied only through a [`scene://`](#scene-sources-ome-zarr-06-transformations) source, and axes come from the intrinsic coordinate system); else the array's own `resolution`/`voxel_size`, `offset`, `units`, `axis_names` (funlib) or `transform` (COSEM), C order |
+| zarr v2/v3  | parent OME-NGFF `multiscales` entry whose `path` is this array, composed with the multiscale-level `coordinateTransformations` if present (0.4/0.5; in 0.6 those lead to other coordinate systems and are applied only through a [`scene://`](#scene-sources-ome-zarr-06-transformations) source, and axes come from the intrinsic coordinate system); else, for an array xarray wrote (geo, climate and solar data), its dimension names (`_ARRAY_DIMENSIONS`, or zarr v3 `dimension_names`) as the axes and the 1-D coordinate array named after each dimension as its spacing and origin, where evenly spaced and increasing (`days since …` and other CF time units become seconds, degrees unitless); else the array's own `resolution`/`voxel_size`, `offset`, `units`, `axis_names` (funlib) or `transform` (COSEM), C order |
 | N5          | the array's `transform` (COSEM, C order); the parent's `multiscales[].datasets[].transform` for this path; `pixelResolution`/`resolution` (array, else group) × `downsamplingFactors`, plus `offset`, x-first |
 | precomputed | `resolution` (nm) and `voxel_offset` × `resolution` as the translation             |
 | HDF5        | `resolution`/`voxel_size` and `offset` attributes, C order                         |
+
+A zarr array with CF packing attributes (`scale_factor`, `add_offset`) is read as float32
+in its units, `stored × scale_factor + add_offset`, and its `_FillValue` (else the array's
+fill value) as NaN: NASA's MUR sea temperature, stored as int16 hundredths of a degree
+offset from 298.15 K, reads as kelvin with land NaN. Arrays without those attributes are
+read as stored. Data whose axes are not named `z, y, x` (`time, lat, lon`) keeps its own
+names: the OME frontends type a time axis as `time` (by name or a time unit), and the
+viewer helpers show its last three axes as x, y and z.
+
+Unitless `z, y, x` axes are served as nanometres by every frontend (left without a unit,
+Neuroglancer would read OME axes as metres). Neuroglancer counts zoom
+(`crossSectionScale`) in the smallest scale among the viewer's dimensions, whatever their
+units, so beside a time axis in seconds a zoom of 1 is not one pixel per voxel:
+`chunkmirage.neuroglancer.cross_section_scale(dims, axis, voxels_per_pixel)` converts.
 
 `offset`/`translate` are in world units. Anything in the spec (`voxel_size`, `units`,
 `axes`, `translation`) overrides what was read. The spec's `select` pins non-spatial axes

@@ -5,6 +5,7 @@ chunk path into ``(level, chunk_index)``, and (c) how to encode a numpy block as
 """
 
 from chunkmirage.frontends.base import FRONTENDS, ChunkRequest, Frontend, Metadata, get_frontend
+from chunkmirage.frontends.mesh import MeshFrontend
 from chunkmirage.frontends.n5 import N5Frontend
 from chunkmirage.frontends.precomputed import PrecomputedFrontend
 from chunkmirage.frontends.zarr2 import Zarr2Frontend
@@ -14,6 +15,7 @@ __all__ = [
     "FRONTENDS",
     "ChunkRequest",
     "Frontend",
+    "MeshFrontend",
     "Metadata",
     "N5Frontend",
     "PrecomputedFrontend",

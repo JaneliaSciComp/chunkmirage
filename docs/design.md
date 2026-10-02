@@ -307,11 +307,12 @@ much of what was read came from the cache. Fed the same affine and
 * With the affine left empty the page finds one before the field (`affine.ts`, on the CPU:
   a few hundred thousand voxels are enough). It matches the two images' intensity
   moments, centre to centre and principal axis to principal axis, which leaves the axes'
-  signs open; of the four orientations that do not mirror the image (with the page's
-  "mirrored" box, `mirrored=true` in Python, of the four that do), the best correlated is
-  kept. Handedness is left to the user because correlation cannot tell it on a nearly
+  signs open; of the four orientations that do not mirror the image, the best correlated is
+  kept. Mirrors are not searched for, since correlation cannot tell handedness on a nearly
   symmetric specimen: on the fly templates a mirror scores exactly as well (0.872) while
-  226 µm from the published affine. Then it fits the 12 numbers by gradient ascent on the normalized
+  226 µm from the published affine. (A switch to search mirrors instead was tried and
+  removed: nothing tells a user when to turn it on.) A mirror image is registered by giving
+  its affine. Then it fits the 12 numbers by gradient ascent on the normalized
   cross-correlation, at two resolutions. On the fly templates, which start 58 µm apart
   (mean distance from where the published affine puts each voxel), that takes the
   correlation from 0.14 to 0.84 (moments) and 0.87 (fit), and ends 2 µm from the published
@@ -324,6 +325,25 @@ much of what was read came from the cache. Fed the same affine and
   field moves tissue by 7 µm (median). Python's `register://` finds the same affine with
   `affine=auto` (`registration.find_affine`, the page's search ported: PyTorch's autograd
   supplies the gradient the page writes out by hand).
+* Pipelines of ops run in the page without a second implementation: `pipeline.html` loads
+  Pyodide in a few web workers, writes the package's ops and `chunkmirage.fused` (the code
+  a pipeline stage runs, which imports nothing beyond numpy and the ops) into its file
+  system, and has them compute each chunk from a padded block the page's one reader
+  worker reads in TypeScript. One reader rather than one per worker: each store chunk is
+  decoded once for the page, and a piece it keeps is a whole store chunk (the inner chunk of
+  a shard), since zarrita decodes all of a chunk to read any of it; a 65 MB sea-temperature
+  tile in every worker, or decoded again for each part read, would not fit.
+* The page's engine (`engine.ts`) is shared by the Neuroglancer page and a map page, and
+  serves each view as OME-Zarr and as GeoZarr: the map page's OpenLayers reads the latter
+  as it reads any GeoZarr store, the point being that chunkmirage's output is not tied to
+  one viewer. A map client keeps no chunk cache of its own, so the engine keeps computed
+  chunks (256 MB), and a slider that changes an op parameter serves the view under a new
+  name, which the client fetches afresh while the old chunks stay valid. Porting the ops to TypeScript or WebGPU shaders, the plan before, would have
+  meant one more implementation per op and parity tests to keep them equal; Pyodide made
+  the Python itself the browser's, at the cost of a 6 s start and single-threaded
+  WebAssembly per worker, which the ops' 0.05 to 0.13 s per block easily afford. The
+  readers stay in TypeScript (tensorstore has no WebAssembly build), and the gallery
+  (`index.html`) lists the demos; see [Demos](demos.md).
 
 ## Deployment shapes
 

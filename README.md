@@ -140,6 +140,8 @@ class MyModel(Op):
         return run_my_network(block)
 ```
 
+Demos that run in the browser with nothing to install: **https://yuriyzubov.github.io/chunkmirage/browser/** (see [Demos](docs/demos.md)).
+
 Full documentation: **https://yuriyzubov.github.io/chunkmirage/** (built from `docs/` with MkDocs; run `uv run mkdocs serve` locally).
 
 See [docs/design.md](docs/design.md) for the architecture, language/stack rationale,
@@ -153,17 +155,29 @@ Early, but working:
 * **Sources:** zarr v2/v3, N5 and precomputed (file, S3, GCS, HTTP) and HDF5; computed
   `synthetic://` volumes, `scene://` registration through OME-Zarr 0.6 transformations,
   `warp://` procedural deformations, `register://` deformable registration solved on
-  a GPU, `stack://` several images as one array's channels, and `flip://` images stored
-  the other way round.
-* **Frontends:** N5, Zarr v2, Zarr v3 and precomputed, all served at once.
+  a GPU, `stitch://` a BigStitcher project's tiles stitched by interest points and RANSAC
+  and fused as read, `stack://` several images as one array's channels, and `flip://`
+  images stored the other way round. Arrays xarray wrote (geo, climate, solar) read with their own axes
+  (`time, lat, lon`), coordinates and CF packing; (cloud-optimized) GeoTIFFs tile by tile,
+  their overviews as levels.
+* **Frontends:** N5, Zarr v2, Zarr v3 and precomputed, all served at once, and meshes
+  (Neuroglancer's precomputed meshes, each fragment made when fetched: isosurfaces or
+  terrain from an elevation model).
 * **Ops:** threshold, cast, scale, Gaussian, uniform and difference-of-Gaussians filters,
   morphology, connected components, FISH spot detection, contact sites between two
-  stacked images; halos handled for you.
+  stacked images, change along an axis (`diff`, e.g. day to day), slope and hillshade of an
+  elevation model; halos handled for you.
 * **Live editing:** per-stage LRU cache, REST edits, a control page, and a
   python-neuroglancer viewer that keeps the camera while layers refetch.
 
-Not yet: GPU ops (only registration uses the GPU), MCP server, and in the browser anything
-but registration. See the [roadmap](docs/roadmap.md).
+* **In the browser:** registration on WebGPU, and pipelines of the package's own ops in
+  Pyodide: organelle contact sites, FISH spots, a 3-D fractal 2^28 voxels across computed
+  as you zoom, landing ground at the Moon's south pole drawn by OpenLayers from the page's
+  GeoZarr, and hurricanes' cold wakes in NASA's sea temperature
+  ([gallery](https://yuriyzubov.github.io/chunkmirage/browser/)).
+
+Not yet: GPU ops (only registration uses the GPU), MCP server. See the
+[roadmap](docs/roadmap.md).
 
 ## License
 

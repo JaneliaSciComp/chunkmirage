@@ -195,16 +195,14 @@ def solve(
     return out
 
 
-def find_affine(
-    fixed: Level, moving: Level, device: str = "auto", mirrored: bool = False
-) -> tuple[np.ndarray, dict]:
+def find_affine(fixed: Level, moving: Level, device: str = "auto") -> tuple[np.ndarray, dict]:
     """The fixed-to-moving affine (4x4, physical units) to start from when none is given,
     as the browser page's ``affine.ts`` finds it. The images' intensity moments are
     matched first, centre to centre and principal axis to principal axis, which leaves
-    each axis's sign open: of the orientations that do not mirror the image (with
-    ``mirrored``, of those that do), the best correlated is kept. Handedness is the caller's
-    to say: on a nearly symmetric specimen (a brain) a mirror correlates as well as the
-    right rotation, while swapping left and right. Then the 12 numbers are fitted by gradient ascent on the
+    each axis's sign open: of the orientations that do not mirror the image, the best
+    correlated is kept. A mirror image (one axis reversed) is not searched for: on a nearly
+    symmetric specimen (a brain) it correlates as well as the right rotation, so the images
+    cannot tell, and a fit cannot reach one from a rotation; give it as an affine. Then the 12 numbers are fitted by gradient ascent on the
     normalized cross-correlation, on a copy of at most ``MAX_FIT_VOXELS`` voxels after a
     coarser one. The moments assume both images show the same whole object. Also returns
     the correlation with no affine, after the moments and after the fit."""
@@ -234,7 +232,7 @@ def find_affine(
     for s in np.array(np.meshgrid([1, -1], [1, -1], [1, -1])).reshape(3, -1).T:
         # A = Vm sqrt(em) S / sqrt(ef) Vf^T: takes the fixed second moments to the moving ones
         a = vm @ np.diag(np.sqrt(np.maximum(em, 1e-12) / np.maximum(ef, 1e-12)) * s) @ vf.T
-        if (np.linalg.det(a) < 0) != mirrored:  # the other handedness
+        if np.linalg.det(a) < 0:  # a mirror: not searched for (see above)
             continue
         v = _ncc(f0, m0, a, cm, cf, dev)
         if best is None or v > best[0]:

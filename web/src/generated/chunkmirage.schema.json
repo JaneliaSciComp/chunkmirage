@@ -10,6 +10,9 @@
     "register": {
       "$ref": "#/$defs/RegisterParams"
     },
+    "stitch": {
+      "$ref": "#/$defs/StitchParams"
+    },
     "op": {
       "$ref": "#/$defs/OpSpec"
     }
@@ -53,6 +56,19 @@
           "maximum": 32,
           "type": "number"
         },
+        "distance": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reach in the data's units (nm, say), instead of radius: each level counts it in its own voxels, so a contact means the same at every zoom (a level whose voxels are bigger than it keeps the voxels in both structures)."
+        },
         "a_low": {
           "default": 128.0,
           "description": "Values at or above this in the first channel are the first structure: 128 for a uint8 probability map, 1 for a segmentation.",
@@ -65,6 +81,36 @@
         }
       },
       "title": "Contacts",
+      "type": "object",
+      "required": [
+        "op"
+      ],
+      "x-packages": [
+        "scipy"
+      ]
+    },
+    "Diff": {
+      "additionalProperties": false,
+      "description": "Change along one axis: each voxel minus the one ``lag`` steps before it on ``axis``\n(float32). Along time, what changed since the frame or day before: a hurricane's cold\nwake in sea temperature, a flare brightening the sun. The first ``lag`` steps of the\narray compare against its first.",
+      "properties": {
+        "op": {
+          "const": "diff"
+        },
+        "axis": {
+          "default": 0,
+          "description": "The axis to difference along, counted from the first (0: time in a t, y, x series).",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lag": {
+          "default": 1,
+          "description": "How many steps back to compare with.",
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "title": "Diff",
       "type": "object",
       "required": [
         "op"
@@ -101,6 +147,9 @@
       "type": "object",
       "required": [
         "op"
+      ],
+      "x-packages": [
+        "scipy"
       ]
     },
     "Gaussian": {
@@ -125,6 +174,43 @@
         }
       },
       "title": "Gaussian",
+      "type": "object",
+      "required": [
+        "op"
+      ],
+      "x-packages": [
+        "scipy"
+      ]
+    },
+    "Hillshade": {
+      "additionalProperties": false,
+      "description": "Shaded relief: the brightness of the terrain lit by a distant sun at ``azimuth`` and\n``altitude`` (local illumination only: no shadows cast across the terrain). Output\nuint8, 1 (unlit) to 255 (facing the sun), 0 where the elevation is NaN.",
+      "properties": {
+        "op": {
+          "const": "hillshade"
+        },
+        "azimuth": {
+          "default": 315.0,
+          "description": "Direction the sun shines from, degrees clockwise from the top of the image.",
+          "maximum": 360,
+          "minimum": 0,
+          "type": "number"
+        },
+        "altitude": {
+          "default": 45.0,
+          "description": "Height of the sun above the horizon, in degrees.",
+          "exclusiveMinimum": 0,
+          "maximum": 90,
+          "type": "number"
+        },
+        "z_factor": {
+          "default": 1.0,
+          "description": "Elevation units per unit of the pixel spacing; above 1 exaggerates relief.",
+          "exclusiveMinimum": 0,
+          "type": "number"
+        }
+      },
+      "title": "Hillshade",
       "type": "object",
       "required": [
         "op"
@@ -155,7 +241,57 @@
       "type": "object",
       "required": [
         "op"
+      ],
+      "x-packages": [
+        "scipy"
       ]
+    },
+    "MeshSpec": {
+      "description": "What a dataset's ``mesh`` frontend meshes.",
+      "properties": {
+        "kind": {
+          "default": "surface",
+          "description": "surface: an isosurface of the volume; terrain: an elevation model",
+          "enum": [
+            "surface",
+            "terrain"
+          ],
+          "type": "string"
+        },
+        "level": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The level meshed; default the finest whose longest side is at most 512"
+        },
+        "threshold": {
+          "default": 128.0,
+          "description": "surface: values at or above this are inside",
+          "type": "number"
+        },
+        "exaggeration": {
+          "default": 1.0,
+          "description": "terrain: the elevation's scale",
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "lods": {
+          "default": 1,
+          "description": "surface: levels of detail. 1 is one mesh of `level`; more serve Neuroglancer's multi-resolution format, `level` the coarsest and each further one a pyramid level finer, meshed where the viewer zooms in",
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "title": "MeshSpec",
+      "type": "object"
     },
     "Morphology": {
       "additionalProperties": false,
@@ -182,6 +318,9 @@
       "type": "object",
       "required": [
         "op"
+      ],
+      "x-packages": [
+        "scipy"
       ]
     },
     "OpSpec": {
@@ -195,10 +334,16 @@
           "$ref": "#/$defs/Contacts"
         },
         {
+          "$ref": "#/$defs/Diff"
+        },
+        {
           "$ref": "#/$defs/DoG"
         },
         {
           "$ref": "#/$defs/Gaussian"
+        },
+        {
+          "$ref": "#/$defs/Hillshade"
         },
         {
           "$ref": "#/$defs/Label"
@@ -208,6 +353,9 @@
         },
         {
           "$ref": "#/$defs/Scale"
+        },
+        {
+          "$ref": "#/$defs/Slope"
         },
         {
           "$ref": "#/$defs/Spots"
@@ -321,6 +469,18 @@
           ],
           "default": null,
           "description": "Pin non-spatial axes to one index each, e.g. {\"c\": 1, \"t\": 0}: the pipeline sees that channel of that time point, without those axes"
+        },
+        "mesh": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeshSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What the dataset's mesh frontend meshes (default: a surface at 128)"
         }
       },
       "required": [
@@ -348,11 +508,6 @@
           ],
           "default": null,
           "description": "The fixed-to-moving affine in physical units, C order: a .npy or text file holding a 4x4 or 3x4 matrix, or its 12 or 16 values inline, row by row; or auto, to find one from the images' intensity moments and a correlation fit. Default: identity."
-        },
-        "mirrored": {
-          "default": false,
-          "description": "The moving image is a mirror image of the fixed one (one axis reversed, as when a stack is acquired the other way round), for affine=auto: the search then tries only mirrored orientations. Correlation cannot tell handedness on a nearly symmetric specimen.",
-          "type": "boolean"
         },
         "fixed_channel": {
           "default": 0,
@@ -535,6 +690,26 @@
         "op"
       ]
     },
+    "Slope": {
+      "additionalProperties": false,
+      "description": "Slope of an elevation model in degrees (0 flat, 90 a cliff), from the level's pixel\nspacing; output float32, NaN where the elevation is.",
+      "properties": {
+        "op": {
+          "const": "slope"
+        },
+        "z_factor": {
+          "default": 1.0,
+          "description": "Elevation units per unit of the pixel spacing (1 when both are metres).",
+          "exclusiveMinimum": 0,
+          "type": "number"
+        }
+      },
+      "title": "Slope",
+      "type": "object",
+      "required": [
+        "op"
+      ]
+    },
     "Spots": {
       "additionalProperties": false,
       "description": "Bright diffraction-limited spots, such as single mRNA molecules in smFISH or EASI-FISH:\na difference of Gaussians, its local maxima above ``threshold``, each drawn as a small\nball. A spot's id comes from its position in the volume, so one spot keeps its id and\ncolour whichever chunk finds it.",
@@ -581,7 +756,114 @@
       "type": "object",
       "required": [
         "op"
+      ],
+      "x-packages": [
+        "scipy"
       ]
+    },
+    "StitchParams": {
+      "description": "How tiles are stitched: the interest points, their matching, RANSAC and the fit.",
+      "properties": {
+        "channel": {
+          "default": 0,
+          "description": "The tiles' channel (setup attribute) stitched",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "level": {
+          "default": 1,
+          "description": "The tiles' level interest points are found on",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sigma": {
+          "default": 1.8,
+          "description": "Blob size: the difference of Gaussians' smaller sigma, in voxels of that level along x (scaled along the other axes by their spacing)",
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "threshold": {
+          "default": 0.005,
+          "description": "Smallest difference-of-Gaussians peak kept, in units of the tile's intensity range (BigStitcher's threshold)",
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "margin": {
+          "default": 20.0,
+          "description": "How far tiles may be from their stage positions: the overlaps searched are grown by this (physical units)",
+          "minimum": 0,
+          "type": "number"
+        },
+        "neighbors": {
+          "default": 3,
+          "description": "Nearest neighbours a point's descriptor holds",
+          "maximum": 6,
+          "minimum": 2,
+          "type": "integer"
+        },
+        "redundancy": {
+          "default": 1,
+          "description": "Extra neighbours: subsets of them are tried too",
+          "maximum": 3,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "significance": {
+          "default": 3.0,
+          "description": "A match's descriptor must be this many times closer than the next best candidate's",
+          "minimum": 1,
+          "type": "number"
+        },
+        "model": {
+          "default": "translation",
+          "description": "What each tile may do beyond its stage position",
+          "enum": [
+            "translation",
+            "rigid",
+            "affine"
+          ],
+          "type": "string"
+        },
+        "epsilon": {
+          "default": 5.0,
+          "description": "RANSAC: largest error of an inlier (physical units)",
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "min_inlier_ratio": {
+          "default": 0.1,
+          "description": "RANSAC: smallest share of inliers",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "min_inliers": {
+          "default": 6,
+          "description": "RANSAC: fewest inliers for a pair to count",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "iterations": {
+          "default": 10000,
+          "description": "RANSAC: hypotheses tried",
+          "maximum": 200000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "seed": {
+          "default": 0,
+          "description": "RANSAC's random draws",
+          "type": "integer"
+        },
+        "blend": {
+          "default": 40.0,
+          "description": "Fusion: the band at a tile's edges its weight falls off over (physical units along y and x)",
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "title": "StitchParams",
+      "type": "object"
     },
     "Threshold": {
       "additionalProperties": false,
@@ -640,6 +922,9 @@
       "type": "object",
       "required": [
         "op"
+      ],
+      "x-packages": [
+        "scipy"
       ]
     }
   }

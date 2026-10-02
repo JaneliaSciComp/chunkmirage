@@ -4,20 +4,34 @@ from __future__ import annotations
 
 from chunkmirage.pipeline import Pipeline
 
-_AXIS_TYPES = {"x": "space", "y": "space", "z": "space", "t": "time", "c": "channel"}
+_AXIS_TYPES = {
+    "x": "space",
+    "y": "space",
+    "z": "space",
+    "t": "time",
+    "time": "time",
+    "c": "channel",
+}
+_TIME_UNITS = {"s", "second", "ms", "millisecond", "min", "minute", "h", "hour", "d", "day"}
 
 
 def multiscales(pipeline: Pipeline, version: str) -> dict:
     info0 = pipeline.info(0)
     axes = []
     for name, unit in zip(info0.axes, info0.units):
-        ax = {"name": name, "type": _AXIS_TYPES.get(name, "space")}
+        kind = "time" if unit in _TIME_UNITS else _AXIS_TYPES.get(name, "space")
+        ax = {"name": name, "type": kind}
+        if not unit and name in ("z", "y", "x"):
+            # unitless z, y, x are nanometres, as the N5 and precomputed frontends and the
+            # viewer helpers take them; left out, Neuroglancer would read them as metres
+            unit = "nm"
         if unit:
             ax["unit"] = {
                 "nm": "nanometer",
                 "um": "micrometer",
                 "µm": "micrometer",
                 "m": "meter",
+                "km": "kilometer",
                 "s": "second",
             }.get(unit, unit)
         axes.append(ax)

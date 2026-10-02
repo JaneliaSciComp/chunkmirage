@@ -30,6 +30,8 @@ class Op(BaseModel):
     name: ClassVar[str] = ""
     halo: ClassVar[int | tuple[int, ...]] = 0
     cache: ClassVar[bool] = False
+    # packages its apply imports beyond numpy (the browser engine loads them up front)
+    packages: ClassVar[tuple[str, ...]] = ()
     _cache: bool | None = PrivateAttr(None)  # this op's own setting, over the class's
 
     @property
@@ -49,6 +51,13 @@ class Op(BaseModel):
 
     def apply(self, block: np.ndarray) -> np.ndarray:  # pragma: no cover - abstract
         raise NotImplementedError
+
+    def for_level(self, info: ArrayInfo) -> Op:
+        """This op as it runs on a scale level described by ``info`` (the stage's output, on
+        the input's grid). Ops that work in physical units override it to take the level's
+        voxel size: a slope in degrees needs the pixel spacing, which doubles from level to
+        level. The default is the op itself."""
+        return self
 
     def apply_at(self, block: np.ndarray, box) -> np.ndarray:
         """Like ``apply`` but told where ``block`` sits (``box`` = its halo-padded extent in

@@ -25,6 +25,7 @@ import contextlib
 import gzip
 import json
 import logging
+import re
 import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -332,7 +333,12 @@ def create_app(
             if directory:
                 return Response("not found", 404)
         try:
-            resolved = fe.resolve(p, rest)
+            resolved = None
+            span = re.fullmatch(r"bytes=(\d+)-(\d+)", request.headers.get("range", "").strip())
+            if span:  # files read in parts (multi-resolution mesh fragments)
+                resolved = fe.resolve_range(p, rest, int(span.group(1)), int(span.group(2)) + 1)
+            if resolved is None:
+                resolved = fe.resolve(p, rest)
         except ValueError as e:
             return JSONResponse({"error": str(e)}, 400)
         if resolved is None:
@@ -365,12 +371,16 @@ def create_app(
             watch.cancel()
         headers = {"Cache-Control": "no-cache"}
         if (
-            fe.name == "precomputed"
+            fe.name in ("precomputed", "mesh")  # a padded mesh fragment is mostly zeros
             and "gzip" in request.headers.get("accept-encoding", "")
             and len(body) > 1024
         ):
             body = await run_in_threadpool(gzip.compress, body, 3)
             headers["Content-Encoding"] = "gzip"
+        if resolved.part is not None:
+            a, b = resolved.part
+            headers["Content-Range"] = f"bytes {a}-{b - 1}/{resolved.total}"
+            return Response(body, 206, media_type="application/octet-stream", headers=headers)
         return Response(body, media_type="application/octet-stream", headers=headers)
 
     routes = [
@@ -401,6 +411,7 @@ def create_app(
             allow_origins=["*"],
             allow_methods=["*"],
             allow_headers=["*"],
+            expose_headers=["Content-Range"],  # range reads (mesh fragments) check it
             allow_private_network=True,
         ),
     ]
@@ -470,8 +481,7 @@ async def _watch_disconnect(request: Request, claim: demand.Claim) -> None:
 
 
 def _compute_and_encode(p: Pipeline, fe: Frontend, req: ChunkRequest) -> bytes:
-    block = p.chunk(req.level, req.index)
-    return fe.encode(p.info(req.level), req.index, block)
+    return fe.compute(p, req)
 
 
 __all__: list[Any] = ["DatasetRegistry", "create_app", "event_stream", "event_payload"]

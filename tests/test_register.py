@@ -264,17 +264,18 @@ def test_pair_and_field_views_say_how_to_show_themselves():
     assert plain == {"type": "image", "source": "zarr3://u", "name": "image"}
 
 
-def test_a_mirrored_affine_is_found_when_asked(tmp_path):
+def test_a_mirror_image_needs_its_affine_given(tmp_path):
     pytest.importorskip("torch")
     # the moving image is the fixed one with z reversed, as a stack acquired the other way
-    # round: no rotation maps one onto the other, and the search finds it only when told
+    # round: no rotation maps one onto the other, so the search (rotations only) cannot find
+    # it, and the mirror given as an affine registers it exactly
     fixed = _read(FIXED)
     mirrored = _zarr(tmp_path / "mirrored.zarr", np.ascontiguousarray(fixed[::-1]))
-    rot = _corr(fixed[INNER], _read(_url("affine=auto&iterations=0", moving=mirrored))[INNER])
-    mir = _corr(
-        fixed[INNER], _read(_url("affine=auto&mirrored=true&iterations=0", moving=mirrored))[INNER]
-    )
-    assert mir > 0.999 and rot < 0.97, (rot, mir)  # exact only as a mirror (the blobs are smooth)
+    found = _corr(fixed[INNER], _read(_url("affine=auto&iterations=0", moving=mirrored))[INNER])
+    z = (fixed.shape[0] - 1) * 64.0  # z' = z_max - z, in physical units (64 per voxel)
+    given = f"affine=-1,0,0,{z},0,1,0,0,0,0,1,0&iterations=0"
+    mirror = _corr(fixed[INNER], _read(_url(given, moving=mirrored))[INNER])
+    assert mirror > 0.999 and found < 0.97, (found, mirror)
 
 
 def test_channels_are_matched_and_all_registered(tmp_path):

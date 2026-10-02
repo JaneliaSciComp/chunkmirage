@@ -5,5 +5,5 @@
     "types": ["@webgpu/types", "vite/client"]
   },
   "include": ["src", "vite.config.ts"],
-  "exclude": ["src/sw.ts", "src/chunks.ts"]
+  "exclude": ["src/sw.ts", "src/chunks.ts", "src/pyworker.ts", "src/reader.ts"]
 }

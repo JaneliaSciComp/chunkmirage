@@ -238,3 +238,65 @@ def test_hdf5_resolution_and_offset(tmp_path):
     info = open_source(f"{tmp_path / 'v.h5'}::/raw")[0].info
     assert info.voxel_size == (8.0, 4.0, 4.0)
     assert info.translation == (80.0, 40.0, 40.0)
+
+
+def _xarray_array(path, arr, dims, attrs=None, fill=None, chunks=None):
+    """One array as xarray writes it to zarr v2: its dimension names in ``.zattrs``."""
+    t = ts.open(
+        {
+            "driver": "zarr",
+            "kvstore": {"driver": "file", "path": str(path)},
+            "metadata": {
+                "shape": list(arr.shape),
+                "chunks": chunks or list(arr.shape),
+                "dtype": arr.dtype.str,
+                "fill_value": fill,
+            },
+        },
+        create=True,
+    ).result()
+    t.write(arr).result()
+    (path / ".zattrs").write_text(json.dumps({"_ARRAY_DIMENSIONS": dims, **(attrs or {})}))
+
+
+def test_xarray_dimensions_coordinates_and_packing(tmp_path):
+    """Geo and climate zarr (xarray, CF conventions): axes from the dimension names, an
+    evenly spaced coordinate as voxel size and translation (time in seconds, degrees
+    unitless), an uneven one left alone, and packed integers read as float32 in their
+    units with the fill value as NaN."""
+    root = tmp_path / "sst.zarr"
+    _zgroup(root, {"title": "sea surface temperature"})
+    stored = np.arange(3 * 4 * 5, dtype=np.int16).reshape(3, 4, 5)
+    stored[0, 0, 0] = -32768
+    _xarray_array(
+        root / "sst",
+        stored,
+        ["time", "lat", "lon"],
+        {"scale_factor": 0.5, "add_offset": 270.0, "units": "kelvin"},
+        fill=-32768,
+        chunks=[2, 4, 5],
+    )
+    days = np.array([10, 11, 12], dtype=np.int64)
+    _xarray_array(root / "time", days, ["time"], {"units": "days since 2002-06-01"}, chunks=[1])
+    lat = np.float32(-1.5) + np.float32(0.25) * np.arange(4, dtype=np.float32)
+    _xarray_array(root / "lat", lat, ["lat"], {"units": "degrees_north"})
+    _xarray_array(root / "lon", np.array([0, 1, 3, 4, 9], np.float32), ["lon"])
+
+    src = open_source(str(root / "sst"))[0]
+    i = src.info
+    assert i.axes == ("time", "lat", "lon")
+    assert i.dtype == np.float32
+    assert i.voxel_size == pytest.approx((86400.0, 0.25, 1.0))
+    assert i.translation == pytest.approx((10 * 86400.0, -1.5, 0.0))
+    assert i.units == ("s", "", "")
+    data = src.read(Box((0, 0, 0), (3, 4, 5)))
+    assert np.isnan(data[0, 0, 0])
+    np.testing.assert_array_equal(data.ravel()[1:], stored.ravel()[1:] * 0.5 + 270.0)
+
+
+def test_unpacked_arrays_keep_their_dtype_and_fill(tmp_path):
+    """Without scale_factor or add_offset nothing is decoded: a zero fill stays zero."""
+    _xarray_array(tmp_path / "labels", DATA, ["z", "y", "x"], fill=0)
+    src = open_source(str(tmp_path / "labels"))[0]
+    assert src.info.dtype == np.uint8 and src.info.axes == ("z", "y", "x")
+    np.testing.assert_array_equal(src.read(Box((0, 0, 0), DATA.shape)), DATA)

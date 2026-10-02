@@ -22,12 +22,20 @@ class Contacts(Op):
     size-filter the sites."""
 
     name = "contacts"
+    packages = ("scipy",)
     radius: float = Field(
         3.0,
         gt=0,
         le=32,
         description="Reach, in voxels: a voxel is a contact site when both structures lie within "
         "this distance of it (Euclidean). The halo is radius + 1.",
+    )
+    distance: float | None = Field(
+        None,
+        gt=0,
+        description="Reach in the data's units (nm, say), instead of radius: each level counts "
+        "it in its own voxels, so a contact means the same at every zoom (a level whose voxels "
+        "are bigger than it keeps the voxels in both structures).",
     )
     a_low: float = Field(
         128.0,
@@ -42,6 +50,14 @@ class Contacts(Op):
     @property
     def halo(self):  # type: ignore[override]
         return math.ceil(self.radius) + 1
+
+    def for_level(self, info: ArrayInfo) -> Op:
+        """With ``distance``, the radius in this level's voxels (its finest spatial axis)."""
+        if self.distance is None:
+            return self
+        op = self.model_copy(update={"radius": self.distance / min(info.voxel_size[-3:])})
+        op._cache = self._cache
+        return op
 
     def output_dtype(self, in_dtype):
         return np.dtype("uint8")
