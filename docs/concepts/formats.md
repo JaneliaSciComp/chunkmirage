@@ -65,7 +65,10 @@ know it, as the Moon page registers the lunar south polar stereographic) and `sp
 (`spatial:dimensions` `[y, x]`, `spatial:bbox` the pixels' corners) attributes; level `<i>`
 is a group holding the view as its one band, `<i>/<view>`, a 2-D `y, x` array (the view's
 one z plane; a map reads 2-D bands). Chunks are the same chunks, computed once whichever
-layout asks. The Python server has no GeoZarr frontend yet.
+layout asks. The Python server has no GeoZarr frontend yet. The engine also serves each
+view as zarr v2 with OME-Zarr 0.4 (`virtual/<page>/zarr2/<view>/`), the same chunks, for
+readers that predate zarr v3's final spec: GDAL 3.8, as the fires demo runs it in the page
+(gdal3.js), opens a level as a zarr array and translates it to a GeoTIFF.
 
 ## Meshes, computed when fetched
 

@@ -6,7 +6,8 @@
 // while (a map client keeps none itself). Two layouts of the same chunks: OME-Zarr 0.5 for
 // Neuroglancer (virtual/<page>/<view>/...) and GeoZarr for map clients such as OpenLayers
 // (virtual/<page>/geo/<view>/<level>/<view>/...), the zarr-conventions multiscales, proj:
-// and spatial: attributes on the group.
+// and spatial: attributes on the group. And zarr v2 with OME 0.4 (virtual/<page>/zarr2/<view>/),
+// for readers that predate zarr v3's final spec, such as GDAL 3.8.
 import { Cancelled, Claim, Queue } from "./demand";
 import schema from "./generated/chunkmirage.schema.json";
 import type { Answer, Later, MeshCall, PipelineView, Reply, SourceInfo, ToPyWorker, ToReader, ViewAxis, ViewInfo } from "./types";
@@ -19,6 +20,9 @@ const CONVENTIONS = [
   { uuid: "689b58e2-cf7b-45e0-9fff-9cfc0883d6b4", name: "spatial:" },
 ];
 const KEPT_BYTES = 256 * 2 ** 20;
+const V2_DTYPE: Record<string, string> = {
+  uint8: "|u1", int8: "|i1", uint16: "<u2", int16: "<i2", uint32: "<u4", int32: "<i4", uint64: "<u8", int64: "<i8", float32: "<f4", float64: "<f8",
+};
 /** The Pyodide packages each op imports beyond numpy, by op name (chunkmirage's schema). */
 const OP_PACKAGES: Record<string, string[]> = Object.fromEntries(Object.values(schema.$defs as Record<string, { properties?: { op?: { const?: string } }; "x-packages"?: string[] }>)
   .flatMap((d) => (d.properties?.op?.const && d["x-packages"] ? [[d.properties.op.const, d["x-packages"]]] : [])));  // computed chunks kept for clients that refetch
@@ -175,6 +179,8 @@ export class Engine {
 
   /** OME-Zarr URL of a view (for Neuroglancer: `zarr3://` + it). */
   url(view: string): string { return new URL(`virtual/${this.page}/${view}/`, location.href).href; }
+  /** Zarr v2 URL of a view (OME-Zarr 0.4): the same chunks. */
+  zarr2Url(view: string): string { return new URL(`virtual/${this.page}/zarr2/${view}/`, location.href).href; }
   /** GeoZarr URL of a view: a group whose levels hold the view as their one band. */
   geoUrl(view: string): string { return new URL(`virtual/${this.page}/geo/${view}`, location.href).href; }
 
@@ -320,9 +326,10 @@ export class Engine {
     const parts = path.split("/virtual/")[1]?.split("/");
     if (!parts || parts[0] !== this.page) return null;
     if (!this.chunks) return notFound;
-    const named = parts[1] === "geo" ? parts[2] : parts[1];
+    const named = parts[1] === "geo" || parts[1] === "zarr2" ? parts[2] : parts[1];
     if (named && !this.infos[named] && this.sources[named]) await this.ready;  // its ops are being planned
     let rest = parts.slice(1), view: string;
+    if (rest[0] === "zarr2") return this.zarr2(rest[1], rest.slice(2));
     const map = rest[0] === "geo";
     if (map) {  // geo/<view>/zarr.json, geo/<view>/<level>/zarr.json, geo/<view>/<level>/<view>/...
       view = rest[1];
@@ -348,6 +355,31 @@ export class Engine {
     const added = map ? 0 : this.infos[view].added?.length ?? 0, key = rest.slice(2).map(Number);
     if (rest[1] !== "c" || key.length !== added + this.infos[view].levels[level].shape.length || key.slice(0, added).some((i) => i !== 0)) return notFound;
     return this.chunk(view, level, key.slice(added));  // a channel axis is one chunk: the volume's index
+  }
+
+  /** A view in the zarr v2 layout: .zgroup, .zattrs (OME 0.4 multiscales), each level's
+   * .zarray and .zattrs (its dimension names), and the chunks, keyed <level>/<i>/<j>/... */
+  private zarr2(view: string, rest: string[]): Answered {
+    const v = this.infos[view];
+    if (!v) return notFound;
+    const added = v.added ?? [], names = [...added.map(() => "c"), ...v.axes.map((a) => a.name)];
+    if (rest.length === 1 && rest[0] === ".zgroup") return asJson({ zarr_format: 2 });
+    if (rest.length === 1 && rest[0] === ".zattrs") {
+      const g = this.omeGroup(view).attributes.ome.multiscales[0];
+      return asJson({ multiscales: [{ ...g, version: "0.4" }] });
+    }
+    const level = Number(rest[0]), l = v.levels[level];
+    if (!l) return notFound;
+    if (rest.length === 2 && rest[1] === ".zattrs") return asJson({ _ARRAY_DIMENSIONS: names });
+    if (rest.length === 2 && rest[1] === ".zarray") {
+      return asJson({
+        zarr_format: 2, shape: [...added, ...l.shape], chunks: [...added, ...this.views[view].chunk], dtype: V2_DTYPE[v.out] ?? v.out,
+        compressor: null, fill_value: 0, order: "C", filters: null, dimension_separator: "/",
+      });
+    }
+    const key = rest.slice(1).map(Number);
+    if (key.length !== added.length + l.shape.length || key.some((i) => !Number.isInteger(i)) || key.slice(0, added.length).some((i) => i !== 0)) return notFound;
+    return this.chunk(view, level, key.slice(added.length));
   }
 
   private octrees = new Map<string, Promise<Octree>>();

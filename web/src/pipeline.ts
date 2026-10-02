@@ -170,11 +170,42 @@ async function start() {
   ng.hidden = false;
   if (card.timeline) showDates(ng, card.timeline, state.displayDimensions);
   controls(card, ng);
+  consumers(card);
   $("empty").hidden = true;
   showCounts();
   Object.assign(window, { engine });  // for a console, and the headless checks
   await engine.ready;  // the viewer's requests wait for it
   status(`Python ready in ${((performance.now() - t0) / 1000).toFixed(1)} s. Chunks are computed as the viewer asks for them.`);
+}
+
+/** The "Read by" picker: the same views read by Neuroglancer, a web map or GDAL, each made
+ * the first time it is picked. */
+function consumers(card: PipelineCard) {
+  const c = card.consumers;
+  if (!c) return;
+  const pick = $<HTMLSelectElement>("consumer"), note = $("consumer-note");
+  const notes: Record<string, string> = {
+    neuroglancer: "Neuroglancer reads the views as OME-Zarr.",
+    map: "OpenLayers, a GIS web map, reads the views as GeoZarr: the same chunks, laid out as map tiles.",
+    gdal: "GDAL, the library under most GIS software, compiled to WebAssembly: it opens a view as a zarr and writes a GeoTIFF.",
+  };
+  for (const [v, t] of [["neuroglancer", "Neuroglancer"], ["map", "OpenLayers (web map)"], ["gdal", "GDAL (WebAssembly)"]]) pick.append(new Option(t, v));
+  const made = new Set<string>();
+  const show = async () => {
+    const which = pick.value;
+    note.textContent = `${notes[which]} Desktop readers: ${c.python}`;
+    $("ng").hidden = which !== "neuroglancer";
+    $("map").hidden = which !== "map";
+    $("gdal").hidden = which !== "gdal";
+    if (made.has(which) || which === "neuroglancer") return;
+    made.add(which);
+    const m = await import("./consumers");
+    if (which === "map") await m.showMap($("map"), engine, c, card.position.slice(1), card.zoom);
+    else m.gdalPanel($("gdal"), engine, c);
+  };
+  pick.addEventListener("change", () => void show().catch((e) => status(`Failed: ${(e as Error).message ?? e}`)));
+  $("consumers").hidden = false;
+  void show();
 }
 
 $("copy").addEventListener("click", () => void navigator.clipboard.writeText($("command").textContent ?? ""));
