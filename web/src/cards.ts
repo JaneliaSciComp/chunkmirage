@@ -163,6 +163,36 @@ const OL_GREY = { color: ["interpolate", ["linear"], ["band", 1], 0, [0, 0, 0, 1
 
 export const CARDS: DemoCard[] = [
   {
+    kind: "pipeline", id: "fires", image: "cards/fires.jpg",
+    title: "Los Angeles, January 2025: the fires' burn severity, from two satellite passes, for any reader",
+    blurb: "Sentinel-2 imaged Los Angeles on 2 January 2025, five days before the Palisades and Eaton fires, and again on 1 February. Burn severity (dNBR, the usual measure: how much the near against the shortwave infrared fell) is computed for each tile as it is read, by chunkmirage's normalized_difference op in this page, from the two passes' stored bands: a map that exists nowhere. Pick who reads it: Neuroglancer; OpenLayers, a web map, reading it as GeoZarr; or GDAL itself, compiled to WebAssembly, opening it as a zarr and writing a GeoTIFF you can download. Yellow is low severity, orange moderate, red and purple high; underneath, the shortwave infrared after.",
+    data: "Sentinel-2 L2A, tile 11SLT, 2 January and 1 February 2025 (ESA Copernicus; AWS Open Data, Element 84)",
+    views: {
+      after: { source: `${AFTER}/B12.tif`, chunk: [1, 256, 256] },
+      severity: { source: BURN, chunk: [1, 256, 256], ops: [DNBR] },
+    },
+    layers: [
+      { name: "after (shortwave infrared)", view: "after", type: "image", range: [500, 4000] },
+      { name: "burn severity", view: "severity", type: "image", shader: SEVERITY },
+    ],
+    panels: [["after (shortwave infrared)", "burn severity"]],
+    position: [0, 1080, 3800], zoom: 2.4,  // between the Palisades fire and the Eaton fire
+    consumers: {
+      code: "EPSG:32611",
+      map: { layers: [{ name: "after", view: "after", style: OL_GREY }, { name: "burn severity", view: "severity", style: OL_SEVERITY }] },
+      gdal: {
+        view: "severity", level: 1, scale: [-0.2, 1.0],
+        areas: [
+          { name: "Palisades fire", rows: [1120, 1660], cols: [2220, 3080] },
+          { name: "Eaton fire", rows: [560, 940], cols: [4660, 5320] },
+          { name: "the whole tile" },
+        ],
+      },
+      python: "QGIS, xarray, rasterio: from chunkmirage serve (below), add the printed zarr URL (zarr://http://<host>:8000/<name>/zarr) as a raster layer, or xarray.open_zarr it.",
+    },
+    command: `chunkmirage serve '${BURN}' --op '${JSON.stringify(DNBR)}' --chunk 256,256`,
+  },
+  {
     kind: "link", id: "register-fly", image: "cards/register-fly.jpg",
     title: "Two fly brains registered on your GPU in seconds, served at every resolution",
     blurb: "Not just an affine: one is found from the images, then a deformable field is solved on top of it on this computer's GPU in seconds, and the moving brain is served through both at every resolution, chunk by chunk. Before (as stored), after, and the field (how far the deformable part moved each point) side by side.",
@@ -369,36 +399,6 @@ export const CARDS: DemoCard[] = [
     position: [5738, 12799, 11199], zoom: 2,  // 38° N, 68° W
     orientation: [1, 0, 0, 0],  // north up
     command: `chunkmirage serve '${MUR}' --op '{"op": "gradient", "axes": [1, 2], "sigma": 3}' --chunk 1,256,256 --python-viewer`,
-  },
-  {
-    kind: "pipeline", id: "fires", image: "cards/fires.jpg",
-    title: "Los Angeles, January 2025: the fires' burn severity, from two satellite passes, for any reader",
-    blurb: "Sentinel-2 imaged Los Angeles on 2 January 2025, five days before the Palisades and Eaton fires, and again on 1 February. Burn severity (dNBR, the usual measure: how much the near against the shortwave infrared fell) is computed for each tile as it is read, by chunkmirage's normalized_difference op in this page, from the two passes' stored bands: a map that exists nowhere. Pick who reads it: Neuroglancer; OpenLayers, a web map, reading it as GeoZarr; or GDAL itself, compiled to WebAssembly, opening it as a zarr and writing a GeoTIFF you can download. Yellow is low severity, orange moderate, red and purple high; underneath, the shortwave infrared after.",
-    data: "Sentinel-2 L2A, tile 11SLT, 2 January and 1 February 2025 (ESA Copernicus; AWS Open Data, Element 84)",
-    views: {
-      after: { source: `${AFTER}/B12.tif`, chunk: [1, 256, 256] },
-      severity: { source: BURN, chunk: [1, 256, 256], ops: [DNBR] },
-    },
-    layers: [
-      { name: "after (shortwave infrared)", view: "after", type: "image", range: [500, 4000] },
-      { name: "burn severity", view: "severity", type: "image", shader: SEVERITY },
-    ],
-    panels: [["after (shortwave infrared)", "burn severity"]],
-    position: [0, 1080, 3800], zoom: 2.4,  // between the Palisades fire and the Eaton fire
-    consumers: {
-      code: "EPSG:32611",
-      map: { layers: [{ name: "after", view: "after", style: OL_GREY }, { name: "burn severity", view: "severity", style: OL_SEVERITY }] },
-      gdal: {
-        view: "severity", level: 1, scale: [-0.2, 1.0],
-        areas: [
-          { name: "Palisades fire", rows: [1120, 1660], cols: [2220, 3080] },
-          { name: "Eaton fire", rows: [560, 940], cols: [4660, 5320] },
-          { name: "the whole tile" },
-        ],
-      },
-      python: "QGIS, xarray, rasterio: from chunkmirage serve (below), add the printed zarr URL (zarr://http://<host>:8000/<name>/zarr) as a raster layer, or xarray.open_zarr it.",
-    },
-    command: `chunkmirage serve '${BURN}' --op '${JSON.stringify(DNBR)}' --chunk 256,256`,
   },
   {
     kind: "python", id: "solar", image: "cards/solar.jpg",

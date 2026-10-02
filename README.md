@@ -32,6 +32,8 @@ format, any source, any per-chunk computation, for any client.
 install: every chunk on screen is computed in the page by chunkmirage's own Python, from
 public data, as the viewer asks for it. Among them:
 
+* the Los Angeles fires' burn severity from two satellite passes, read by your pick of
+  Neuroglancer, a web map, or GDAL itself in the page, which writes a GeoTIFF;
 * hurricanes' cold wakes, and the Gulf Stream's fronts, in 20 years of daily sea temperature;
 * a 3-D fractal 2^28 voxels across to zoom into, and its mesh;
 * landing slopes at the Moon's south pole, on a map;
