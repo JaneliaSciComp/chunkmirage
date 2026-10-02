@@ -1,7 +1,11 @@
 # REST API
 
 All endpoints are CORS-open. Editing endpoints can be disabled with
-`create_app(..., allow_edit=False)`.
+`create_app(..., allow_edit=False)`. A server given a token (`--token`, `CHUNKMIRAGE_TOKEN`,
+`create_app(..., token=...)`) answers `/api/*` only with it, as `Authorization: Bearer
+<token>` or `?token=<token>` (for `/api/events`: a browser's `EventSource` sends no
+headers), and 401 otherwise. The datasets themselves and `/` stay open, since viewers send
+no headers.
 
 | method   | path                                   | purpose |
 | -------- | -------------------------------------- | ------- |

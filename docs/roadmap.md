@@ -35,10 +35,9 @@ describe shipped features as future work.
        three channels added, 8 nm in and 16 nm out) served in every format with a correct
        pyramid, run once per chunk at one level. The browser engine refuses ops that declare
        an input voxel size until it learns this.
-    5. *A bearer token* on `/api/*` (`--token`, `CHUNKMIRAGE_TOKEN`; item 9 below). Chunk
-       routes stay open, since viewers send no headers; `/api/events` takes `?token=`.
+    5. *A bearer token* on `/api/*`: shipped, see the [API reference](reference/api.md).
 
-    Change 5 is independent; 4 comes next. The consumer's own
+    Change 4 is what is left. The consumer's own
     port (its ops as `Op` subclasses, its scripts that read the data themselves as a source
     scheme, its launcher starting `chunkmirage serve`) needs 1 and 2 for anything at the
     source's own voxel size and 4 for models that change it.
@@ -83,8 +82,8 @@ describe shipped features as future work.
    `neuroglancer_link`, `screenshot`. Off by default, local only. (The REST API, `/api/events`
    stream, control page and python-neuroglancer viewer it would wrap already exist; see
    [Interactivity](concepts/interactivity.md).)
-9. **Deployment hardening.** Bearer token on `/api/*`, shared-cache multi-worker mode.
-   (`--https` with an auto-generated self-signed certificate has shipped; see the
+9. **Deployment hardening.** Shared-cache multi-worker mode. (`--https` with an
+   auto-generated self-signed certificate, and `--token` on `/api/*`, have shipped; see the
    [CLI reference](reference/cli.md).)
 10. **Own-hosted Neuroglancer with a service worker.** The zero-install browser demo with
    WebGPU ops and ONNX Runtime Web inference, sharing the JSON pipeline spec with the

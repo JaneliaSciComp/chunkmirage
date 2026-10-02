@@ -1,6 +1,6 @@
 """Starlette ASGI app exposing pipelines through every frontend plus a small control API.
 
-URL layout (all CORS-open)::
+URL layout (all CORS-open; with a token, ``/api/*`` needs it)::
 
     /                                   index: datasets, formats, links
     /ui                                 built-in control page (live parameter editing)
@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import gzip
+import hmac
 import json
 import logging
 import re
@@ -162,6 +163,7 @@ def create_app(
     cache: LRUCache | None = None,
     allow_edit: bool = True,
     threads: int | None = None,
+    token: str | None = None,
 ) -> Starlette:
     # chunk requests computing at once (the rest wait their turn, or give theirs up while they
     # wait on queued work)
@@ -416,6 +418,8 @@ def create_app(
             allow_private_network=True,
         ),
     ]
+    if token:  # inside CORS, so a browser's preflight is answered without one
+        middleware.append(Middleware(_TokenGuard, token=token))
 
     @contextlib.asynccontextmanager
     async def lifespan(_app):
@@ -472,6 +476,26 @@ def _listing_html(path: str, entries: list[str]) -> str:
         f'<!DOCTYPE HTML><html><head><meta charset="utf-8"><title>{title}</title></head>'
         f"<body><h1>{title}</h1><hr><ul>{items}</ul><hr></body></html>\n"
     )
+
+
+class _TokenGuard:
+    """``/api/*`` only with ``Authorization: Bearer <token>``, or ``?token=`` (for the event
+    stream, which a browser's EventSource cannot give a header). Datasets and the index stay
+    open: viewers send no headers."""
+
+    def __init__(self, app, token: str):
+        self.app, self.token = app, token.encode()
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"].startswith("/api/"):
+            request = Request(scope)
+            given = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+            given = given or request.query_params.get("token", "")
+            if not hmac.compare_digest(given.encode(), self.token):
+                response = JSONResponse({"error": "this server's /api needs its token"}, 401)
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
 
 
 async def _watch_disconnect(request: Request, claim: demand.Claim) -> None:

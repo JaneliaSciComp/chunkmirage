@@ -97,6 +97,11 @@ control UI:    http://10.123.4.56:8000/ui
 python viewer: http://10.123.4.56:41595/v/<token>/
 ```
 
+Anyone who can reach the server can also edit its pipelines through `/api`. On a shared
+network, start it with `--token <secret>` (or `CHUNKMIRAGE_TOKEN`): `/api/*` then needs the
+token, and the printed control-page link carries it (`/ui?token=...`), which the page sends
+on with every call. The datasets stay open to viewers.
+
 The python viewer works over plain `http` from anywhere on the network because it serves
 its own Neuroglancer page from the same machine as the chunks.
 
