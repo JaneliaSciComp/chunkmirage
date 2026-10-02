@@ -14,6 +14,7 @@ export type OpSpec =
   | Hillshade
   | Label
   | Morphology
+  | NormalizedDifference
   | Scale
   | Slope
   | Spots
@@ -396,6 +397,40 @@ export interface Morphology {
    * Radius of the spherical structuring element, in voxels.
    */
   radius?: number;
+}
+/**
+ * ``(a - b) / (a + b)`` of two channels of a ``stack://`` source (float32): the indices
+ * remote sensing reads plants, water and burn scars from (NDVI is near infrared and red,
+ * NBR near and shortwave infrared). With ``minus``, a second pair's index is subtracted
+ * from the first's: a change between two dates. Burn severity (dNBR) is the NBR before a
+ * fire minus the NBR after, the before and after images' bands stacked as four channels.
+ * Where a band is zero or less, or the two sum to under ``floor`` (water), the index is NaN.
+ */
+export interface NormalizedDifference {
+  op: "normalized_difference";
+  /**
+   * The channels a and b, counted from the first.
+   *
+   * @minItems 2
+   * @maxItems 2
+   */
+  pair?: [number, number];
+  /**
+   * Two more channels, whose index is subtracted from the first pair's: [2, 3] for the after image of a stack of before and after.
+   */
+  minus?: [number, number] | null;
+  /**
+   * Added to every channel first, to make reflectances of stored numbers: Sentinel-2 since 2022 stores them plus 1000 (offset -1000).
+   */
+  offset?: number;
+  /**
+   * A stored value meaning no data (Sentinel-2: 0): the index there is NaN.
+   */
+  nodata?: number | null;
+  /**
+   * Where a pair's two values sum to less than this (after offset), its index is noise, a ratio of near zeros (water reflects almost no infrared), and is NaN.
+   */
+  floor?: number;
 }
 /**
  * Linear intensity rescale ``value * factor + offset`` (output is float32).

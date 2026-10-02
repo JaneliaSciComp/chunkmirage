@@ -332,7 +332,7 @@ function stack(parts: Source[], url: string): Source {
   for (const p of parts.slice(1)) for (let i = 0; i < levels; i++)
     if (p.levels[i].shape.join() !== a.levels[i].shape.join()) throw new Error(`stack:// level ${i}: ${p.url} is on a different grid from ${a.url}`);
   return {
-    url, dtype: a.dtype, axes: a.axes, channels: parts.length, levels: a.levels.slice(0, levels),
+    url, dtype: a.dtype, axes: a.axes, channels: parts.length, levels: a.levels.slice(0, levels), ...(a.geo ? { geo: a.geo } : {}),
     read: (li, c, lo, hi) => parts[c].read(li, 0, lo, hi),
   };
 }

@@ -93,3 +93,69 @@ class Contacts(Op):
         if mask.all():
             return np.ones(mask.shape, dtype=bool)
         return distance_transform_edt(~mask) <= self.radius
+
+
+@register
+class NormalizedDifference(Op):
+    """``(a - b) / (a + b)`` of two channels of a ``stack://`` source (float32): the indices
+    remote sensing reads plants, water and burn scars from (NDVI is near infrared and red,
+    NBR near and shortwave infrared). With ``minus``, a second pair's index is subtracted
+    from the first's: a change between two dates. Burn severity (dNBR) is the NBR before a
+    fire minus the NBR after, the before and after images' bands stacked as four channels.
+    Where a band is zero or less, or the two sum to under ``floor`` (water), the index is NaN."""
+
+    name = "normalized_difference"
+    pair: list[int] = Field(
+        [0, 1], min_length=2, max_length=2, description="The channels a and b, counted from the first."
+    )
+    minus: list[int] | None = Field(
+        None,
+        min_length=2,
+        max_length=2,
+        description="Two more channels, whose index is subtracted from the first pair's: [2, 3] "
+        "for the after image of a stack of before and after.",
+    )
+    offset: float = Field(
+        0.0,
+        description="Added to every channel first, to make reflectances of stored numbers: "
+        "Sentinel-2 since 2022 stores them plus 1000 (offset -1000).",
+    )
+    nodata: float | None = Field(
+        None, description="A stored value meaning no data (Sentinel-2: 0): the index there is NaN."
+    )
+    floor: float = Field(
+        0.0,
+        ge=0,
+        description="Where a pair's two values sum to less than this (after offset), its index is "
+        "noise, a ratio of near zeros (water reflects almost no infrared), and is NaN.",
+    )
+    output_kind = "image"
+
+    def _channels(self) -> list[int]:
+        return [*self.pair, *(self.minus or [])]
+
+    def output_info(self, info: ArrayInfo) -> ArrayInfo:
+        need = max(self._channels()) + 1
+        if info.ndim < 3 or info.axes[0] != "c" or info.shape[0] < need:
+            raise ValueError(
+                f"normalized_difference needs a source whose first axis holds {need} or more "
+                f"channels, such as stack://<a>|<b>; got axes {info.axes}, shape {info.shape}"
+            )
+        return ArrayInfo(
+            shape=info.shape[1:], dtype=np.dtype("float32"), chunk_shape=info.chunk_shape[1:],
+            voxel_size=info.voxel_size[1:], units=info.units[1:], axes=info.axes[1:],
+            translation=info.translation[1:], kind="image",
+        )
+
+    def apply(self, block: np.ndarray) -> np.ndarray:
+        def index(a: int, b: int) -> np.ndarray:
+            x, y = (block[c].astype(np.float32) + np.float32(self.offset) for c in (a, b))
+            with np.errstate(divide="ignore", invalid="ignore"):
+                out = (x - y) / (x + y)
+            out[(x <= 0) | (y <= 0) | (x + y < self.floor)] = np.nan  # positive, and not near zero
+            if self.nodata is not None:
+                out[(block[a] == self.nodata) | (block[b] == self.nodata)] = np.nan
+            return out
+
+        out = index(*self.pair)
+        return out - index(*self.minus) if self.minus else out

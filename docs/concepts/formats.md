@@ -434,7 +434,8 @@ with nothing installed:
 stack://<image>|<image>[|<image>...]
 ```
 
-serves images that share a grid as the channels of one `(c, z, y, x)` array: channel 0 is
+serves images that share a grid as the channels of one `(c, z, y, x)` array (`(c, y, x)` for
+images in y and x, such as GeoTIFF bands): channel 0 is
 the first image's first channel, channel 1 the second's, and so on. The images must agree
 level by level on shape, voxel size, translation and units (the stack has as many levels as
 the image with the fewest), and each is anything `open_source` reads, so a stack can hold a
