@@ -59,3 +59,28 @@ class MyOp(Op):
 
 Register it in `pyproject.toml` under `[project.entry-points."chunkmirage.ops"]` (or in your
 own package's entry points), add a test, and add a row to `docs/reference/ops.md`.
+
+## Adding a source
+
+```python
+import numpy as np
+from chunkmirage.core import ArrayInfo, Box
+from chunkmirage.sources import MultiscaleSource, Source
+
+class Ramp(Source):
+    def __init__(self, n):
+        self._info = ArrayInfo((n, n, n), np.float32, (64, 64, 64), (8, 8, 8), ("nm",) * 3, ("z", "y", "x"))
+    @property
+    def info(self): return self._info
+    def read(self, box: Box):  # exactly box.shape, within info.shape
+        z, y, x = np.mgrid[box.slices()]
+        return (x + y + z).astype(np.float32)
+
+def open_ramp(url: str) -> MultiscaleSource:  # ramp://512
+    return MultiscaleSource([Ramp(int(url.split("://")[1]))], name="ramp")
+```
+
+List it under `[project.entry-points."chunkmirage.sources"]` as `ramp = "mypackage:open_ramp"`
+(see [formats](concepts/formats.md#your-own-schemes-sources-from-other-packages)). Sources
+built into chunkmirage are listed in `chunkmirage.sources.registry` instead, and documented
+in `docs/concepts/formats.md`.

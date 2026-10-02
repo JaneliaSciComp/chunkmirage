@@ -18,9 +18,8 @@ describe shipped features as future work.
     1. *Ops that crop, ops that add a channel axis*: shipped, see
        [pipelines](concepts/pipelines.md#ops) (the `gradient` op, and the Gulf Stream
        fronts demo, use both).
-    2. *A `chunkmirage.sources` entry point* beside the ops one: name the scheme, value an
-       `open_x(url, *, cache_bytes, cache, **kw)` returning a `MultiscaleSource`; the
-       built-in schemes join the same table.
+    2. *A `chunkmirage.sources` entry point*: shipped, see
+       [formats](concepts/formats.md#your-own-schemes-sources-from-other-packages).
     3. *`kind` on `ArrayInfo`* (`image`, `label`, `mask`), set by `output_info`, read by the
        viewer glue (a segmentation layer), the precomputed `type` and the API's level info;
        the dtype heuristic stays as the fallback.
@@ -40,7 +39,7 @@ describe shipped features as future work.
     5. *A bearer token* on `/api/*` (`--token`, `CHUNKMIRAGE_TOKEN`; item 9 below). Chunk
        routes stay open, since viewers send no headers; `/api/events` takes `?token=`.
 
-    Changes 2, 3 and 5 are independent and come next; 4 follows. The consumer's own
+    Changes 3 and 5 are independent and come next; 4 follows. The consumer's own
     port (its ops as `Op` subclasses, its scripts that read the data themselves as a source
     scheme, its launcher starting `chunkmirage serve`) needs 1 and 2 for anything at the
     source's own voxel size and 4 for models that change it.

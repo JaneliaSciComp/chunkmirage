@@ -1,8 +1,73 @@
 from __future__ import annotations
 
+import importlib
+import inspect
+from collections.abc import Callable
+from importlib.metadata import entry_points
+
 from chunkmirage.cache import LRUCache
 from chunkmirage.sources.base import MultiscaleSource
 from chunkmirage.sources.tensorstore_source import open_multiscale_tensorstore
+
+Opener = Callable[..., MultiscaleSource]
+
+# URL schemes: ``scheme://...`` opened by ``module:function``. Other packages add theirs
+# through the ``chunkmirage.sources`` entry point (name: the scheme; value: an opener taking
+# the URL and, if it wants them, ``cache_bytes`` and ``cache``), or ``register_source``.
+_BUILTIN = {
+    "synthetic": "chunkmirage.sources.synthetic:open_synthetic",
+    "scene": "chunkmirage.sources.scene:open_scene",
+    "warp": "chunkmirage.sources.warp:open_warp",
+    "register": "chunkmirage.sources.register:open_register",
+    "stack": "chunkmirage.sources.stack:open_stack",
+    "stitch": "chunkmirage.sources.stitch:open_stitch",
+    "flip": "chunkmirage.sources.flip:open_flip",
+}
+_SCHEMES: dict[str, str | Opener] = dict(_BUILTIN)
+_ENTRYPOINTS_LOADED = False
+
+
+def register_source(scheme: str, opener: Opener) -> None:
+    """Open ``scheme://...`` URLs with ``opener(url, *, cache_bytes, cache)`` (it is passed
+    only those of the two it takes), returning a ``MultiscaleSource``. The built-in schemes
+    cannot be replaced."""
+    if scheme in _BUILTIN:
+        raise ValueError(f"{scheme}:// is built in")
+    _SCHEMES[scheme] = opener
+
+
+def _load_entrypoints() -> None:
+    global _ENTRYPOINTS_LOADED
+    if _ENTRYPOINTS_LOADED:
+        return
+    _ENTRYPOINTS_LOADED = True
+    for ep in entry_points(group="chunkmirage.sources"):
+        if ep.name not in _BUILTIN:
+            _SCHEMES.setdefault(ep.name, ep.value)
+
+
+def schemes() -> list[str]:
+    """The URL schemes ``open_source`` knows: the built-in ones and any registered."""
+    _load_entrypoints()
+    return sorted(_SCHEMES)
+
+
+def _opener(scheme: str) -> Opener | None:
+    _load_entrypoints()
+    found = _SCHEMES.get(scheme)
+    if isinstance(found, str):
+        module, _, name = found.partition(":")
+        found = _SCHEMES[scheme] = getattr(importlib.import_module(module), name)
+    return found
+
+
+def _call(opener: Opener, path: str, **kw) -> MultiscaleSource:
+    """``opener(path, ...)`` with those of ``kw`` it takes (all of them if it takes ``**``)."""
+    params = inspect.signature(opener).parameters.values()
+    if not any(p.kind is p.VAR_KEYWORD for p in params):
+        names = {p.name for p in params}
+        kw = {k: v for k, v in kw.items() if k in names}
+    return opener(path, **kw)
 
 
 def open_source(
@@ -23,40 +88,17 @@ def open_source(
     (see ``sources.flip``); ``stitch://project.xml`` stitches a BigStitcher project's tiles by
     interest points and RANSAC when opened, and fuses them as they are read (see
     ``sources.stitch``); ``.tif``/``.tiff`` paths are (cloud-optimized) GeoTIFFs, read
-    tile by tile with their overviews as levels (see ``sources.geotiff``).
+    tile by tile with their overviews as levels (see ``sources.geotiff``). Other packages
+    add schemes of their own (``register_source``, or the ``chunkmirage.sources`` entry
+    point).
 
     ``cache_bytes`` is tensorstore's pool of decoded source chunks; ``cache`` is the chunk
     cache that computed sources keep their expensive intermediates in (``register://``'s
     refined blocks), normally the pipeline's.
     """
-    if path.startswith("synthetic://"):
-        from chunkmirage.sources.synthetic import open_synthetic
-
-        return open_synthetic(path)
-    if path.startswith("scene://"):
-        from chunkmirage.sources.scene import open_scene
-
-        return open_scene(path, cache_bytes=cache_bytes)
-    if path.startswith("warp://"):
-        from chunkmirage.sources.warp import open_warp
-
-        return open_warp(path, cache_bytes=cache_bytes)
-    if path.startswith("register://"):
-        from chunkmirage.sources.register import open_register
-
-        return open_register(path, cache_bytes=cache_bytes, cache=cache)
-    if path.startswith("stack://"):
-        from chunkmirage.sources.stack import open_stack
-
-        return open_stack(path, cache_bytes=cache_bytes, cache=cache)
-    if path.startswith("stitch://"):
-        from chunkmirage.sources.stitch import open_stitch
-
-        return open_stitch(path, cache_bytes=cache_bytes, cache=cache)
-    if path.startswith("flip://"):
-        from chunkmirage.sources.flip import open_flip
-
-        return open_flip(path, cache_bytes=cache_bytes, cache=cache)
+    scheme, sep, _ = path.partition("://")
+    if sep and (opener := _opener(scheme)) is not None:
+        return _call(opener, path, cache_bytes=cache_bytes, cache=cache)
     from chunkmirage.sources.geotiff import is_geotiff
 
     if is_geotiff(path):
