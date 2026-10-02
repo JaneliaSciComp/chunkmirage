@@ -15,13 +15,9 @@ describe shipped features as future work.
 
     The plan, five changes with the fourth the big one:
 
-    1. *Ops that crop, ops that add a channel axis* (`fused.py`, `ops/base.py`,
-       `pipeline.py`; the browser engine runs the same `fused.py`). `apply` may return the
-       padded block, as now, or the block shaved by its `halo` on every side, as a valid
-       convolution does: `fused.run` tracks the block's box instead of asserting its shape.
-       `output_info` may prepend one axis (`c`, N entries, unitless); the stage's chunk
-       spans it whole. Tests: an op returning the interior equals the full-shape version;
-       an op adding three channels served through every frontend against `np.gradient`.
+    1. *Ops that crop, ops that add a channel axis*: shipped, see
+       [pipelines](concepts/pipelines.md#ops) (the `gradient` op, and the Gulf Stream
+       fronts demo, use both).
     2. *A `chunkmirage.sources` entry point* beside the ops one: name the scheme, value an
        `open_x(url, *, cache_bytes, cache, **kw)` returning a `MultiscaleSource`; the
        built-in schemes join the same table.
@@ -44,7 +40,7 @@ describe shipped features as future work.
     5. *A bearer token* on `/api/*` (`--token`, `CHUNKMIRAGE_TOKEN`; item 9 below). Chunk
        routes stay open, since viewers send no headers; `/api/events` takes `?token=`.
 
-    Changes 1, 2, 3 and 5 are independent and come first; 4 follows. The consumer's own
+    Changes 2, 3 and 5 are independent and come next; 4 follows. The consumer's own
     port (its ops as `Op` subclasses, its scripts that read the data themselves as a source
     scheme, its launcher starting `chunkmirage serve`) needs 1 and 2 for anything at the
     source's own voxel size and 4 for models that change it.

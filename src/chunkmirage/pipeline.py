@@ -104,9 +104,7 @@ def select_axes(source: MultiscaleSource, select: dict[str, int]) -> MultiscaleS
     return MultiscaleSource(levels, name=source.name)
 
 
-def _fused_stage(
-    prev: Source, ops: Sequence[Op], cache: LRUCache | None, key: str, chunk_shape
-) -> ChunkedSource:
+def _fused_stage(prev: Source, ops: Sequence[Op], cache: LRUCache | None, key: str) -> ChunkedSource:
     """One pipeline stage running ``ops`` back to back on a block padded by their total halo.
 
     Fusing consecutive uncached ops keeps the read footprint small: one output chunk reads
@@ -116,17 +114,18 @@ def _fused_stage(
     sum of halos so the cropped centre is correct.
     """
     prev_info = prev.info
-    # An op may consume leading axes (the channels of a stack:// source, for `contacts`):
-    # those are read whole, and the halo pads the axes the output keeps (chunkmirage.fused,
-    # which the browser engine runs too).
+    # An op may consume leading axes (the channels of a stack:// source, for `contacts`), or
+    # add some (a model's channels): those are read, and chunked, whole; the halo pads the
+    # axes the ops keep (chunkmirage.fused, which the browser engine runs too).
     info, lead, total_halo = fused.plan(prev_info, ops)
-    info = info.with_(chunk_shape=tuple(chunk_shape)[len(chunk_shape) - info.ndim :])
+    kept = len(total_halo)
+    info = info.with_(chunk_shape=info.shape[: info.ndim - kept] + prev_info.chunk_shape[-kept:])
 
     def compute(idx: tuple[int, ...]) -> np.ndarray:
         out_box = info.chunk_box(idx)
         in_box = fused.input_box(prev_info, out_box, lead, total_halo)
         block = prev.read_padded(in_box, edge=True)  # no step at the volume border
-        return fused.run(ops, block, in_box, out_box, info)
+        return fused.run(ops, block, in_box, out_box, info, total_halo)
 
     return ChunkedSource(info, compute, cache, key)
 
@@ -173,9 +172,7 @@ class Pipeline:
             for seg in segments:
                 for op in seg:
                     h = hashlib.sha1(f"{h}|{op.digest()}".encode()).hexdigest()[:12]
-                stage = _fused_stage(
-                    stage, seg, self.cache if seg[-1].cached else None, f"{seg[-1].name}:{h}", cs
-                )
+                stage = _fused_stage(stage, seg, self.cache if seg[-1].cached else None, f"{seg[-1].name}:{h}")
             self.levels.append(stage)  # type: ignore[arg-type]
 
     @classmethod

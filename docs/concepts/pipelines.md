@@ -45,9 +45,22 @@ schema for free (`GET /api/ops`).
 | `cache`                | whether this stage's output chunks are memoized; see [Caching](caching.md) |
 | `packages`             | packages `apply` imports beyond numpy, e.g. `("scipy",)`; the schema carries them (`x-packages`) so the browser engine loads them with Python, only for pages whose ops need them |
 | `output_dtype(dtype)`  | result dtype; default unchanged                                         |
-| `apply(block)`         | the computation; must return an array of the same spatial shape        |
+| `output_info(info)`    | the result's `ArrayInfo`; default the input's with `output_dtype`. An op that adds leading axes (channels) prepends them here |
+| `apply(block)`         | the computation: returns the block's own shape, or the block shaved by `halo` on every side (a valid convolution), with leading axes dropped or added as `output_info` says |
 | `apply_at(block, box)` | optional; same but told the block's (halo-padded) position, for position-dependent results such as unique per-chunk labels |
 | `for_level(info)`      | optional; the op as it runs on a scale level, given that level's `ArrayInfo`; ops in physical units take its voxel size (`slope` and `hillshade` their pixel spacing, which doubles from level to level). Default: the op itself |
+
+What an op returns may differ from what it was given in two ways, the two a model's
+output differs from its input:
+
+* **Shaved by its halo.** A valid convolution computes only where its whole kernel lies
+  inside the block, so it returns the block `2 × halo` smaller on each axis. Return that
+  interior and the stage crops the rest; return the full block and it crops as before.
+  `gradient` returns its interior.
+* **New leading axes.** An op whose `output_info` prepends axes (a model's channels, the
+  components of `gradient`) returns them first; the halo pads only the axes every op keeps,
+  and the stage's chunks span the new axes whole (one chunk along `c`). Ops after it in the
+  pipeline see the channels as the block's first axis.
 
 Ops are discovered through the `chunkmirage.ops` entry point, so plugins ship as ordinary
 packages. See [Contributing](../contributing.md#adding-an-op) for a template and the

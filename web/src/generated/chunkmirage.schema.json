@@ -182,6 +182,35 @@
         "scipy"
       ]
     },
+    "Gradient": {
+      "additionalProperties": false,
+      "description": "Rate of change along each of ``axes``, one channel each on a new leading ``c`` axis\n(float32), per unit of the axes (a level's voxel size): central differences. It returns\nonly the interior it can compute, one voxel less on each side of those axes, as a valid\nconvolution (or a model) does. Where temperature changes fastest at sea, ocean fronts;\non terrain, the slope's components; in a volume, edges and their direction.",
+      "properties": {
+        "op": {
+          "const": "gradient"
+        },
+        "axes": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The axes to differentiate along, counted from the first (1, 2: latitude and longitude of a time, lat, lon series); default the last three, or all if fewer."
+        }
+      },
+      "title": "Gradient",
+      "type": "object",
+      "required": [
+        "op"
+      ]
+    },
     "Hillshade": {
       "additionalProperties": false,
       "description": "Shaded relief: the brightness of the terrain lit by a distant sun at ``azimuth`` and\n``altitude`` (local illumination only: no shadows cast across the terrain). Output\nuint8, 1 (unlit) to 255 (facing the sun), 0 where the elevation is NaN.",
@@ -341,6 +370,9 @@
         },
         {
           "$ref": "#/$defs/Gaussian"
+        },
+        {
+          "$ref": "#/$defs/Gradient"
         },
         {
           "$ref": "#/$defs/Hillshade"

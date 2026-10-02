@@ -16,6 +16,7 @@ export interface CardLayer {
   alpha?: number;            // image layers drawn over others: opacity at full intensity; segmentations: opacity
   additive?: boolean;        // image layers: add to what is below (channels of one image)
   shader?: string;           // image layers: a Neuroglancer shader of its own, over the above
+  channels?: boolean;        // image layers: the view's channel axis is the shader's (getDataValue(0), (1), ...)
   volume?: boolean;          // image layers: volume rendered in 3-D panels
   samples?: number;          // volume rendering: depth samples (finer levels need more)
   gain?: number;             // volume rendering: brightness (more samples are each fainter)
@@ -110,6 +111,18 @@ void main() { float v = getDataValue(); if (isnan(v)) { emitTransparent(); retur
 const MUR = "https://mur-sst.s3.us-west-2.amazonaws.com/zarr-v1/analysed_sst";
 const LAND = "if (isnan(v)) { emitRGB(vec3(0.18)); return; }";  // MUR has no value on land
 const CELSIUS = `#uicontrol invlerp temperature(range=[25, 32])
+void main() { float v = getDataValue(); ${LAND} emitRGB(colormapJet(clamp(temperature(), 0.0, 1.0))); }`;
+// a gradient's two channels, °C per degree northward and eastward: the direction warmer
+// water lies in as hue, how fast it warms as brightness
+const FRONTS = `#uicontrol float strength slider(min=1, max=100, default=20)
+void main() {
+  float north = getDataValue(0), east = getDataValue(1);
+  if (isnan(north) || isnan(east)) { emitRGB(vec3(0.18)); return; }
+  float m = clamp(length(vec2(north, east)) / strength, 0.0, 1.0);
+  float hue = atan(north, east) / 6.2832;
+  emitRGB(m * (0.5 + 0.5 * cos(6.2832 * (hue + vec3(0.0, 0.33, 0.67)))));
+}`;
+const COLD = `#uicontrol invlerp temperature(range=[0, 26])
 void main() { float v = getDataValue(); ${LAND} emitRGB(colormapJet(clamp(temperature(), 0.0, 1.0))); }`;
 const CHANGE = `#uicontrol invlerp change(range=[-2, 2])
 void main() {
@@ -305,6 +318,25 @@ export const CARDS: DemoCard[] = [
       ],
     },
     command: `chunkmirage serve '${MUR}' --op diff:axis=0,lag=1 --chunk 1,256,256 --python-viewer`,
+  },
+  {
+    kind: "pipeline", id: "fronts", image: "cards/fronts.jpg",
+    title: "The Gulf Stream's fronts: where sea temperature changes fastest, and which way",
+    blurb: "The same 4 trillion sea temperatures, and for each chunk the rate the temperature changes northward and eastward, computed as you look by chunkmirage's gradient op in this page. Where the Gulf Stream's warm water meets the cold water north of it, the change is sharpest: its fronts, and the eddies it sheds, on 15 February 2018. Right, the brightness is how fast it warms and the colour the direction warmer water lies in: green to the south (the Gulf Stream's north wall), purple to the north, red to the east, cyan to the west. The op returns two channels and only the interior it can compute, a voxel in from each side, as a model does: the same contract a neural network's op uses.",
+    data: "MUR sea-surface temperature, v4.1 (NASA JPL; AWS Open Data)",
+    views: {
+      sst: { source: MUR, chunk: [1, 256, 256], ops: [{ op: "scale", offset: -273.15 }] },
+      // along latitude and longitude, not time: °C per degree (a kelvin is a degree Celsius)
+      fronts: { source: MUR, chunk: [1, 256, 256], ops: [{ op: "gradient", axes: [1, 2] }] },
+    },
+    layers: [
+      { name: "temperature", view: "sst", type: "image", shader: COLD },
+      { name: "fronts", view: "fronts", type: "image", shader: FRONTS, channels: true },
+    ],
+    panels: [["temperature"], ["fronts"]],
+    position: [5738, 12799, 11199], zoom: 2,  // 38° N, 68° W
+    orientation: [1, 0, 0, 0],  // north up
+    command: `chunkmirage serve '${MUR}' --op '{"op": "gradient", "axes": [1, 2]}' --chunk 1,256,256 --python-viewer`,
   },
   {
     kind: "python", id: "solar", image: "cards/solar.jpg",

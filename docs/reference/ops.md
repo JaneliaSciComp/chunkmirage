@@ -24,6 +24,7 @@ new op; `tests/test_docs.py` requires it.
 |             | `gain`      | 4.0     | scales the difference into 0..255 (output uint8, 128 = zero) |
 | `diff`      | `axis`      | 0       | change along one axis: each voxel minus the one `lag` steps before it on `axis` (0: time in a `t, y, x` series); output float32; halo = `lag` on that axis only; the first `lag` steps compare against the first |
 |             | `lag`       | 1       | how many steps back to compare with |
+| `gradient`  | `axes`      | last three | rate of change along each axis listed (counted from the first: `[1, 2]` for latitude and longitude of a `time, lat, lon` series), per unit of the axes (the level's voxel size): central differences, one channel each on a new leading `c` axis; output float32; halo = 1 on those axes, and only the interior is returned (a valid convolution) |
 | `morphology`| `operation` | open    | `open`, `close`, `erode`, `dilate` on a mask (input > 0); output uint8 |
 |             | `radius`    | 2       | spherical structuring element radius in voxels; halo = `2 × radius + 1` |
 | `label`     | `min_size`  | 0       | connected components of a mask, output uint32 segment ids; drop components smaller than this |
