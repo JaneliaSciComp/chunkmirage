@@ -10,6 +10,7 @@ Conventions
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 
@@ -124,6 +125,21 @@ class ArrayInfo:
         from dataclasses import replace
 
         return replace(self, **changes)
+
+    def rescaled(self, voxel_size: Sequence[float]) -> ArrayInfo:
+        """This array's extent on voxels of ``voxel_size`` along its last axes (as many as
+        given): the shape rounded up, chunks as they were (in voxels), and the translation
+        moved so each voxel's position is its centre, as OME-Zarr's is (a voxel twice as big
+        covers two, its centre half an old voxel on)."""
+        k = len(voxel_size)
+        old, new = self.voxel_size[-k:], tuple(float(v) for v in voxel_size)
+        shape = tuple(math.ceil(n * o / v - 1e-9) for n, o, v in zip(self.shape[-k:], old, new))
+        shift = tuple(t + (v - o) / 2 for t, o, v in zip(self.translation[-k:], old, new))
+        return self.with_(
+            shape=self.shape[:-k] + shape,
+            voxel_size=self.voxel_size[:-k] + new,
+            translation=self.translation[:-k] + shift,
+        )
 
     @staticmethod
     def default_axes(ndim: int) -> tuple[str, ...]:

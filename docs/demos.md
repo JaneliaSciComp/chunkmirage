@@ -65,6 +65,7 @@ in 512³ blocks (268 MB decoded) at full resolution; `examples/contact_sites.py
 | `examples/contact_sites.py` | the contact-sites demo served by Python, recomputing at a prompt; `--segmentations` starts from OpenOrganelle's segmentations and shows its published contact sites too | `uv sync --extra all` |
 | `examples/fish_spots.py` | the spots demo served by Python, thresholds at a prompt | `uv sync --extra all` |
 | `examples/hurricane_wakes.py` | the hurricanes demo served by Python, any date and place, the lag at a prompt | `uv sync --extra all` |
+| `examples/model_at_one_resolution.py` | the shape of a live-inference op: a stand-in network that reads 8 nm voxels and writes two channels of 16 nm ones, served over OpenOrganelle's HeLa EM with the coarser levels downsampled from what it made ([ops at one resolution](concepts/pipelines.md#ops-at-one-resolution)) | `uv sync --extra all` |
 | `examples/solar_flares.py` | the running difference of NASA's SDO images of the sun (no browser access to that bucket, so Python only), on the X1.6 flare of 10 September 2014 | `uv sync --extra all` |
 | `examples/fly_brain_registration.py` | the fly templates through their published OME-Zarr 0.6 transformations (`scene://`) | `uv sync --extra all` |
 | `examples/track_nucleus.py` | a nucleus and its descendants followed through the colony time-lapse (`tracking.lineage`), volumes per frame written as CSV (the track page's work, from Python) | `uv sync --extra all` |

@@ -61,7 +61,11 @@ def _info(shape, dtype, chunk, voxel, origin=None, unit=""):
 
 def plan(view, ops, shape, dtype, chunk, voxel, source=None):
     ops = [op_from_spec(s) for s in json.loads(ops)]
-    out, lead, halo = fused.plan(_info(list(shape), dtype, list(chunk), list(voxel)), ops)
+    info = _info(list(shape), dtype, list(chunk), list(voxel))
+    if any(op.input_voxel_size() is not None for op in ops) or any(abs(r - 1) > 1e-9 for r in fused.scale(info, ops)):
+        raise ValueError("this page runs ops on every level, each on its level's grid: one that reads at a "
+                         "voxel size of its own, or changes the grid (downsample), runs from Python")
+    out, lead, halo = fused.plan(info, ops)
     if source:
         describe(source)
     VIEWS[view] = (ops, dtype, list(chunk), source)

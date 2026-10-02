@@ -21,6 +21,7 @@ from chunkmirage.cache import LRUCache
 from chunkmirage.core import ArrayInfo, Box
 from chunkmirage.meshes import MeshSpec
 from chunkmirage.ops.base import Op, ops_from_specs
+from chunkmirage.ops.filters import Downsample
 from chunkmirage.sources.base import ChunkedSource, MultiscaleSource, Source
 
 
@@ -117,21 +118,56 @@ def _fused_stage(prev: Source, ops: Sequence[Op], cache: LRUCache | None, key: s
     prev_info = prev.info
     # An op may consume leading axes (the channels of a stack:// source, for `contacts`), or
     # add some (a model's channels): those are read, and chunked, whole; the halo pads the
-    # axes the ops keep (chunkmirage.fused, which the browser engine runs too).
+    # axes the ops keep. The first op may change the grid (`downsample`, a model writing
+    # coarser voxels than it reads): its input is then read on the input's grid
+    # (chunkmirage.fused, which the browser engine runs too).
     info, lead, total_halo = fused.plan(prev_info, ops)
+    scale = fused.scale(prev_info, ops)
     kept = len(total_halo)
     info = info.with_(chunk_shape=info.shape[: info.ndim - kept] + prev_info.chunk_shape[-kept:])
+    fused.input_box(prev_info, info.chunk_box((0,) * info.ndim), lead, total_halo, scale)  # whole voxels, or why not
 
     def compute(idx: tuple[int, ...]) -> np.ndarray:
         out_box = info.chunk_box(idx)
-        in_box = fused.input_box(prev_info, out_box, lead, total_halo)
+        in_box = fused.input_box(prev_info, out_box, lead, total_halo, scale)
         block = prev.read_padded(in_box, edge=True)  # no step at the volume border
-        return fused.run(ops, block, in_box, out_box, info, total_halo)
+        return fused.run(ops, block, in_box, out_box, info, total_halo, scale)
 
     return ChunkedSource(info, compute, cache, key)
 
 
+def _digest(*parts) -> str:
+    return hashlib.sha1("|".join(map(str, parts)).encode()).hexdigest()[:12]
+
+
+def _changes_grid(a: ArrayInfo, b: ArrayInfo) -> bool:
+    k = min(a.ndim, b.ndim)
+    return any(abs(float(w) - float(v)) > 1e-9 * max(abs(float(v)), 1.0)
+               for v, w in zip(a.voxel_size[-k:], b.voxel_size[-k:]))
+
+
+def _resampled(src: Source, voxel_size: Sequence[float]) -> Source:
+    """``src`` on voxels of ``voxel_size`` along its last axes, over the same extent (voxel
+    centres as ``ArrayInfo.rescaled`` puts them): linear, or nearest for labels and masks."""
+    from chunkmirage.sources.scene import SceneLevelSource
+    from chunkmirage.transforms import Affine
+
+    info, m = src.info, len(voxel_size)
+    out = info.rescaled(voxel_size)
+    step = [w / v for v, w in zip(info.voxel_size[-m:], out.voxel_size[-m:])]
+    shift = [(t_out - t) / v for t, t_out, v in zip(info.translation[-m:], out.translation[-m:], info.voxel_size[-m:])]
+    order = 0 if info.kind in ("label", "mask") else 1
+    key = f"resampled:{tuple(voxel_size)}:{src.cache_key()}"
+    return SceneLevelSource(src, Affine.scale_translation(step, shift), out, info.ndim - m, order, key)
+
+
 class Pipeline:
+    """A source's levels through ``ops``. Ops run on every level, except from the first op
+    with an input voxel size (``Op.input_voxel_size``, a model trained at one resolution):
+    that one runs on one level (the source's at that size, else one resampled to it), its
+    output is cached, and the coarser levels are made from it by ``downsample``, by the
+    source pyramid's own factors; the ops after it run on every level."""
+
     def __init__(
         self,
         source: MultiscaleSource,
@@ -147,34 +183,70 @@ class Pipeline:
         self.cache = cache if cache is not None else LRUCache()
         self.spec = spec
         self.levels: list[ChunkedSource] = []
-        for lvl_i, raw in enumerate(source.levels):
-            cs = tuple(chunk_shape) if chunk_shape else raw.info.chunk_shape
-            if len(cs) < raw.info.ndim:  # spatial chunks given for a source with leading axes
-                cs = raw.info.chunk_shape[: raw.info.ndim - len(cs)] + cs
-            h = hashlib.sha1(f"{raw.cache_key()}|{lvl_i}|{cs}".encode()).hexdigest()[:12]
-            # Stage 0: the raw source, re-chunked to `cs` and (optionally) cached.
-            stage: Source = ChunkedSource(
-                raw.info.with_(chunk_shape=cs),
-                lambda idx, raw=raw, cs=cs: raw.read(raw.info.with_(chunk_shape=cs).chunk_box(idx)),
-                self.cache if cache_source else None,
-                f"raw:{h}",
-            )
-            # Group ops into segments; a segment ends at an op with cache=True (its output is
-            # memoized) or at the end of the pipeline. Each segment is one fused stage.
-            segments: list[list[Op]] = []
-            current: list[Op] = []
-            for op in self.ops:
-                current.append(op)
-                if op.cached:
-                    segments.append(current)
-                    current = []
-            if current:
+        pinned = next((i for i, op in enumerate(self.ops) if op.input_voxel_size() is not None), None)
+        if pinned is None:
+            for lvl_i, raw in enumerate(source.levels):
+                stage, h = self._raw(raw, lvl_i, chunk_shape, cache_source)
+                self.levels.append(self._chain(stage, self.ops, h)[0])
+            return
+        pre, op, post = self.ops[:pinned], self.ops[pinned], self.ops[pinned + 1 :]
+        want = tuple(float(v) for v in op.input_voxel_size())
+        at, exact = source.level_for(want)
+        raw = source.levels[at] if exact else _resampled(source.levels[at], want)
+        stage, h = self._raw(raw, at, chunk_shape, cache_source)
+        stage, h = self._chain(stage, pre, h)
+        h = _digest(h, op.digest())
+        # cached whatever the op says: every coarser level is made from it
+        finer: Source = _fused_stage(stage, [op], self.cache, f"{op.name}:{h}")
+        self.levels.append(self._chain(finer, post, h)[0])
+        for k in range(at + 1, len(source.levels)):
+            a, b = (source.levels[i].info.voxel_size[-len(want) :] for i in (k - 1, k))
+            factor = [max(1, round(float(y) / float(x))) for x, y in zip(a, b)]
+            if all(f == 1 for f in factor):
+                break
+            down = Downsample(factor=factor)
+            h = _digest(h, down.digest())
+            finer = _fused_stage(finer, [down], self.cache, f"downsample:{h}")
+            self.levels.append(self._chain(finer, post, h)[0])
+
+    def _raw(self, raw: Source, lvl_i: int, chunk_shape, cache_source: bool) -> tuple[Source, str]:
+        """Stage 0: a source level, re-chunked to the pipeline's chunks and (optionally) cached."""
+        cs = tuple(chunk_shape) if chunk_shape else raw.info.chunk_shape
+        if len(cs) < raw.info.ndim:  # spatial chunks given for a source with leading axes
+            cs = raw.info.chunk_shape[: raw.info.ndim - len(cs)] + cs
+        h = _digest(raw.cache_key(), lvl_i, cs)
+        stage = ChunkedSource(
+            raw.info.with_(chunk_shape=cs),
+            lambda idx, raw=raw, cs=cs: raw.read(raw.info.with_(chunk_shape=cs).chunk_box(idx)),
+            self.cache if cache_source else None,
+            f"raw:{h}",
+        )
+        return stage, h
+
+    def _chain(self, stage: Source, ops: Sequence[Op], h: str) -> tuple[Source, str]:
+        """``ops`` after ``stage``, in segments: one ends at an op with cache=True (its output
+        is memoized) or at the end, and an op that changes the grid starts one. Each segment
+        is one fused stage."""
+        segments: list[list[Op]] = []
+        current: list[Op] = []
+        info = stage.info
+        for op in ops:
+            nxt = op.output_info(info)
+            if current and _changes_grid(info, nxt):
                 segments.append(current)
-            for seg in segments:
-                for op in seg:
-                    h = hashlib.sha1(f"{h}|{op.digest()}".encode()).hexdigest()[:12]
-                stage = _fused_stage(stage, seg, self.cache if seg[-1].cached else None, f"{seg[-1].name}:{h}")
-            self.levels.append(stage)  # type: ignore[arg-type]
+                current = []
+            current.append(op)
+            info = nxt
+            if op.cached:
+                segments.append(current)
+                current = []
+        if current:
+            segments.append(current)
+        for seg in segments:
+            for op in seg:
+                h = _digest(h, op.digest())
+            stage = _fused_stage(stage, seg, self.cache if seg[-1].cached else None, f"{seg[-1].name}:{h}")
+        return stage, h
 
     @classmethod
     def from_spec(

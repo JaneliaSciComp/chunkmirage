@@ -152,6 +152,38 @@
         "scipy"
       ]
     },
+    "Downsample": {
+      "additionalProperties": false,
+      "description": "Coarser voxels: each block of ``factor`` voxels becomes one, their mean, or for labels\nand masks their most common value. The grid changes with it: voxels ``factor`` times\nbigger, the shape divided (rounded up), each voxel's position the centre of its block.\nA pipeline makes the coarser levels of an op with an input voxel size this way.",
+      "properties": {
+        "op": {
+          "const": "downsample"
+        },
+        "factor": {
+          "default": [
+            2,
+            2,
+            2
+          ],
+          "description": "Voxels per output voxel along each of the data's last axes (z, y, x): 2, 2, 2 halves each; 1 keeps an axis as it is.",
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "mode": {
+          "default": "auto",
+          "description": "mean of each block; mode, its most common value (labels, masks); auto: mode for labels and masks, mean for anything else.",
+          "pattern": "^(auto|mean|mode)$",
+          "type": "string"
+        }
+      },
+      "title": "Downsample",
+      "type": "object",
+      "required": [
+        "op"
+      ]
+    },
     "Gaussian": {
       "additionalProperties": false,
       "description": "Gaussian blur (smoothing). Reduces noise before thresholding; larger sigma = blurrier.",
@@ -367,6 +399,9 @@
         },
         {
           "$ref": "#/$defs/DoG"
+        },
+        {
+          "$ref": "#/$defs/Downsample"
         },
         {
           "$ref": "#/$defs/Gaussian"

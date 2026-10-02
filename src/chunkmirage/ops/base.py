@@ -55,6 +55,13 @@ class Op(BaseModel):
     def apply(self, block: np.ndarray) -> np.ndarray:  # pragma: no cover - abstract
         raise NotImplementedError
 
+    def input_voxel_size(self) -> tuple[float, ...] | None:
+        """The voxel size this op must read, along the data's last axes and in the source's
+        units: a model trained at one resolution. The pipeline then runs it on one level (the
+        source's at that size, else one resampled to it), caches what it makes, and makes the
+        coarser levels by downsampling that. ``None`` (the default): it runs on every level."""
+        return None
+
     def for_level(self, info: ArrayInfo) -> Op:
         """This op as it runs on a scale level described by ``info`` (the stage's output, on
         the input's grid). Ops that work in physical units override it to take the level's

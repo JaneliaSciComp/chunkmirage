@@ -8,6 +8,7 @@ export type OpSpec =
   | Contacts
   | Diff
   | DoG
+  | Downsample
   | Gaussian
   | Gradient
   | Hillshade
@@ -295,6 +296,23 @@ export interface DoG {
    * Multiply the difference so the result uses the 0..255 range.
    */
   gain?: number;
+}
+/**
+ * Coarser voxels: each block of ``factor`` voxels becomes one, their mean, or for labels
+ * and masks their most common value. The grid changes with it: voxels ``factor`` times
+ * bigger, the shape divided (rounded up), each voxel's position the centre of its block.
+ * A pipeline makes the coarser levels of an op with an input voxel size this way.
+ */
+export interface Downsample {
+  op: "downsample";
+  /**
+   * Voxels per output voxel along each of the data's last axes (z, y, x): 2, 2, 2 halves each; 1 keeps an axis as it is.
+   */
+  factor?: number[];
+  /**
+   * mean of each block; mode, its most common value (labels, masks); auto: mode for labels and masks, mean for anything else.
+   */
+  mode?: string;
 }
 /**
  * Gaussian blur (smoothing). Reduces noise before thresholding; larger sigma = blurrier.
