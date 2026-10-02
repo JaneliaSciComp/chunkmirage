@@ -11,6 +11,7 @@ class Threshold(Op):
     """Binary mask: voxels with ``low <= value < high`` become ``value``, everything else 0."""
 
     name = "threshold"
+    output_kind = "mask"
     low: float = Field(
         0.0,
         description="Lower bound (inclusive), in the source's intensity units. Voxels at or above it pass.",
@@ -52,6 +53,9 @@ class Cast(Op):
 
     def output_dtype(self, in_dtype):
         return np.dtype(self.dtype)
+
+    def output_info(self, info):
+        return info.with_(dtype=self.output_dtype(info.dtype))  # still what it was: labels stay labels
 
     def apply(self, block: np.ndarray) -> np.ndarray:
         out = np.dtype(self.dtype)

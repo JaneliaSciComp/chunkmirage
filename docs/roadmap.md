@@ -20,9 +20,8 @@ describe shipped features as future work.
        fronts demo, use both).
     2. *A `chunkmirage.sources` entry point*: shipped, see
        [formats](concepts/formats.md#your-own-schemes-sources-from-other-packages).
-    3. *`kind` on `ArrayInfo`* (`image`, `label`, `mask`), set by `output_info`, read by the
-       viewer glue (a segmentation layer), the precomputed `type` and the API's level info;
-       the dtype heuristic stays as the fallback.
+    3. *`kind` on `ArrayInfo`*: shipped, see [pipelines](concepts/pipelines.md#ops)
+       (`output_kind`).
     4. *Input and output voxel size* (depends on 1 and 3; item 2 below).
        `MultiscaleSource.level_for(voxel_size)` picks the level nearest a voxel size. An op
        may declare `input_voxel_size` and let `output_info` change `voxel_size`, through one
@@ -39,7 +38,7 @@ describe shipped features as future work.
     5. *A bearer token* on `/api/*` (`--token`, `CHUNKMIRAGE_TOKEN`; item 9 below). Chunk
        routes stay open, since viewers send no headers; `/api/events` takes `?token=`.
 
-    Changes 3 and 5 are independent and come next; 4 follows. The consumer's own
+    Change 5 is independent; 4 comes next. The consumer's own
     port (its ops as `Op` subclasses, its scripts that read the data themselves as a source
     scheme, its launcher starting `chunkmirage serve`) needs 1 and 2 for anything at the
     source's own voxel size and 4 for models that change it.

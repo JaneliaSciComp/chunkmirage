@@ -45,6 +45,7 @@ schema for free (`GET /api/ops`).
 | `cache`                | whether this stage's output chunks are memoized; see [Caching](caching.md) |
 | `packages`             | packages `apply` imports beyond numpy, e.g. `("scipy",)`; the schema carries them (`x-packages`) so the browser engine loads them with Python, only for pages whose ops need them |
 | `output_dtype(dtype)`  | result dtype; default unchanged                                         |
+| `output_kind`          | what the result's values are, `image`, `label` (segment ids) or `mask` (inside or not), carried as the output's `ArrayInfo.kind`: viewers show labels and masks as segmentations. Default `None` (not said); `threshold`, `morphology` and `contacts` make masks, `label` and `spots` labels, `cast` keeps its input's |
 | `output_info(info)`    | the result's `ArrayInfo`; default the input's with `output_dtype`. An op that adds leading axes (channels) prepends them here |
 | `apply(block)`         | the computation: returns the block's own shape, or the block shaved by `halo` on every side (a valid convolution), with leading axes dropped or added as `output_info` says |
 | `apply_at(block, box)` | optional; same but told the block's (halo-padded) position, for position-dependent results such as unique per-chunk labels |

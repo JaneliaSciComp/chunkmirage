@@ -63,6 +63,7 @@ class SelectSource(Source):
             units=tuple(i.units[a] for a in keep),
             axes=tuple(i.axes[a] for a in keep),
             translation=tuple(i.translation[a] for a in keep),
+            kind=i.kind,
         )
         tag = ",".join(f"{i.axes[a]}={v}" for a, v in sorted(pinned.items()))
         self._key = f"select:{tag}:{inner.cache_key()}"

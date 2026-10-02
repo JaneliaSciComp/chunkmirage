@@ -124,8 +124,10 @@ chunkmirage serve 'synthetic://mandelbulb?shape=268435456,268435456,268435456&vo
 ## Data types
 
 Precomputed supports `uint8`, `uint16`, `uint32`, `uint64`, `float32` only; add a `cast` op
-for anything else. Precomputed volumes with `uint32`/`uint64` are typed `segmentation`,
-others `image`; override with `PrecomputedFrontend(volume_type=...)`.
+for anything else. Precomputed volumes are typed by what their values are (`ArrayInfo.kind`,
+which ops declare): labels and masks `segmentation`, images `image`; where nothing says,
+`uint32`/`uint64` are `segmentation` and others `image`. Override with
+`PrecomputedFrontend(volume_type=...)`.
 
 ## Sources
 

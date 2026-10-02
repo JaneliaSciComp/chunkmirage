@@ -38,5 +38,5 @@ All endpoints are CORS-open. Editing endpoints can be disabled with
 ```
 
 Responses to `POST`, `PUT` and `GET /api/datasets/{name}` include `digest`, `source_dtype`,
-per-level `levels`, `ops_info` (per op: name, per-axis halo, docstring), and `sources`, a map
+per-level `levels` (shape, chunks, dtype, voxel size, units, axes, and `kind`: `image`, `label`, `mask` or `null`), `ops_info` (per op: name, per-axis halo, docstring), and `sources`, a map
 from format to Neuroglancer source URL carrying the new digest.

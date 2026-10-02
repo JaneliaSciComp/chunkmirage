@@ -143,7 +143,7 @@ class Gradient(Op):
         return info.with_(
             shape=(n, *info.shape), chunk_shape=(n, *info.chunk_shape), dtype=np.dtype("float32"),
             voxel_size=(1.0, *info.voxel_size), units=("", *info.units), axes=("c", *info.axes),
-            translation=(0.0, *info.translation),
+            translation=(0.0, *info.translation), kind="image",
         )
 
     def for_level(self, info: ArrayInfo) -> Op:

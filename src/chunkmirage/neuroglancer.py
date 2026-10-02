@@ -49,10 +49,12 @@ def source_url(public_url: str, name: str, fmt: str, scheme: str, digest: str | 
 
 
 def is_segmentation(pipeline: Pipeline) -> bool:
+    """Shown as a segmentation: labels or a mask (``ArrayInfo.kind``), or where the kind is
+    not known, integers of 32 bits or more."""
     info = pipeline.info(0)
-    if info.dtype.kind == "u" and info.dtype.itemsize >= 4:
-        return True
-    return bool(pipeline.ops) and pipeline.ops[-1].name == "threshold"
+    if info.kind is not None:
+        return info.kind in ("label", "mask")
+    return info.dtype.kind == "u" and info.dtype.itemsize >= 4
 
 
 def compare_shader(fixed: tuple[float, float], moving: tuple[float, float]) -> str:
@@ -93,8 +95,8 @@ void main() {{
 def layer_for(name: str, pipeline: Pipeline, src_url: str) -> dict:
     if is_segmentation(pipeline):
         layer = {"type": "segmentation", "source": src_url, "name": name}
-        if pipeline.ops and pipeline.ops[-1].name == "threshold":
-            value = getattr(pipeline.ops[-1], "value", 1)
+        if pipeline.info(0).kind == "mask":  # its one segment shown, over what is below
+            value = getattr(pipeline.ops[-1], "value", 1) if pipeline.ops else 1
             layer.update({"segments": [str(value)], "selectedAlpha": 0.4, "notSelectedAlpha": 0})
         return layer
     shader = getattr(pipeline.source, "shader", None)

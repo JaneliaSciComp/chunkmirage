@@ -3,6 +3,9 @@
 Run `chunkmirage ops` or `GET /api/ops` for the live list with JSON schemas. This page must
 list every registered op; `tests/test_docs.py` enforces it.
 
+Ops that make masks (`threshold`, `morphology`, `contacts`) and labels (`label`, `spots`)
+say so (`output_kind`), and viewers show what they make as segmentations.
+
 Every parameter carries a description (pydantic `Field(description=...)`) that the control
 page shows under the control and `GET /api/ops` returns in the JSON schema. Add one to any
 new op; `tests/test_docs.py` requires it.

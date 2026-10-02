@@ -68,9 +68,14 @@ class Box:
         return Box(start, stop)
 
 
+KINDS = (None, "image", "label", "mask")
+
+
 @dataclass(frozen=True)
 class ArrayInfo:
-    """Static description of one scale level of a chunked array (C-order axes)."""
+    """Static description of one scale level of a chunked array (C-order axes). ``kind`` is
+    what its values are, for viewers choosing how to show it: ``image`` (intensities),
+    ``label`` (segment ids) or ``mask`` (inside or not); ``None`` if unknown."""
 
     shape: tuple[int, ...]
     dtype: np.dtype
@@ -79,6 +84,7 @@ class ArrayInfo:
     units: tuple[str, ...]
     axes: tuple[str, ...]
     translation: tuple[float, ...] = field(default=None)  # type: ignore[assignment]
+    kind: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "dtype", np.dtype(self.dtype))
@@ -90,6 +96,8 @@ class ArrayInfo:
         for name in ("chunk_shape", "voxel_size", "units", "axes", "translation"):
             if len(getattr(self, name)) != n:
                 raise ValueError(f"{name} must have length {n}, got {getattr(self, name)}")
+        if self.kind not in KINDS:
+            raise ValueError(f"kind must be one of {KINDS}, got {self.kind!r}")
 
     @property
     def ndim(self) -> int:

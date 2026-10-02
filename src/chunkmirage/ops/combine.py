@@ -76,6 +76,7 @@ class Contacts(Op):
             units=info.units[1:],
             axes=info.axes[1:],
             translation=info.translation[1:],
+            kind="mask",
         )
 
     def apply(self, block: np.ndarray) -> np.ndarray:

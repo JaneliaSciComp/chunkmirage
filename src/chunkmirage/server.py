@@ -138,6 +138,7 @@ def _level_info(p: Pipeline) -> list[dict]:
             "voxel_size": list(p.info(i).voxel_size),
             "units": list(p.info(i).units),
             "axes": list(p.info(i).axes),
+            "kind": p.info(i).kind,
         }
         for i in range(p.num_levels)
     ]
