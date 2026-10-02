@@ -45,9 +45,24 @@ schema for free (`GET /api/ops`).
 | `cache`                | whether this stage's output chunks are memoized; see [Caching](caching.md) |
 | `packages`             | packages `apply` imports beyond numpy, e.g. `("scipy",)`; the schema carries them (`x-packages`) so the browser engine loads them with Python, only for pages whose ops need them |
 | `output_dtype(dtype)`  | result dtype; default unchanged                                         |
-| `apply(block)`         | the computation; must return an array of the same spatial shape        |
+| `output_kind`          | what the result's values are, `image`, `label` (segment ids) or `mask` (inside or not), carried as the output's `ArrayInfo.kind`: viewers show labels and masks as segmentations. Default `None` (not said); `threshold`, `morphology` and `contacts` make masks, `label` and `spots` labels, `cast` keeps its input's |
+| `output_info(info)`    | the result's `ArrayInfo`; default the input's with `output_dtype`. An op that adds leading axes (channels) prepends them here |
+| `apply(block)`         | the computation: returns the block's own shape, or the block shaved by `halo` on every side (a valid convolution), with leading axes dropped or added as `output_info` says |
 | `apply_at(block, box)` | optional; same but told the block's (halo-padded) position, for position-dependent results such as unique per-chunk labels |
+| `input_voxel_size()`   | optional; the voxel size the op must read (its last axes, in the source's units), as a model trained at one resolution does. The pipeline then runs it on one level and makes the coarser ones from its output; see [ops at one resolution](#ops-at-one-resolution). Default `None`: it runs on every level |
 | `for_level(info)`      | optional; the op as it runs on a scale level, given that level's `ArrayInfo`; ops in physical units take its voxel size (`slope` and `hillshade` their pixel spacing, which doubles from level to level). Default: the op itself |
+
+What an op returns may differ from what it was given in two ways, the two a model's
+output differs from its input:
+
+* **Shaved by its halo.** A valid convolution computes only where its whole kernel lies
+  inside the block, so it returns the block `2 × halo` smaller on each axis. Return that
+  interior and the stage crops the rest; return the full block and it crops as before.
+  `gradient` returns its interior.
+* **New leading axes.** An op whose `output_info` prepends axes (a model's channels, the
+  components of `gradient`) returns them first; the halo pads only the axes every op keeps,
+  and the stage's chunks span the new axes whole (one chunk along `c`). Ops after it in the
+  pipeline see the channels as the block's first axis.
 
 Ops are discovered through the `chunkmirage.ops` entry point, so plugins ship as ordinary
 packages. See [Contributing](../contributing.md#adding-an-op) for a template and the
@@ -76,11 +91,31 @@ the registered image. See [Interactivity](interactivity.md#transforms-on-the-fly
 around 64³; sources often use 128³ or larger; inference block sizes differ again. Stage 0
 reads whatever source chunks cover the requested output chunk.
 
-## Caveat: scale levels
+## Ops at one resolution
 
-Ops run per level with the same parameters. That is right for thresholding and filters in
-voxel units, and for ops that measure in physical units through `for_level` (a slope in
-degrees is a slope in degrees at every level), and wrong for models trained at a specific
-resolution. Until per-op level
-declarations land (roadmap item 2), serve only the levels your op is valid for, or apply it
-to a single-level source.
+Ops run on every level with the same parameters. That is right for thresholds and filters
+in voxels, and for ops that measure in physical units through `for_level` (a slope in
+degrees is a slope in degrees at every level). It is wrong for a model trained at one
+resolution, so an op can say which it reads (`input_voxel_size`), and may write another
+(its `output_info` changes the voxel size, through `ArrayInfo.rescaled`). From the first
+such op in a pipeline:
+
+* it runs on one level: the source's at that voxel size (`MultiscaleSource.level_for`), or
+  if none is, the coarsest finer one resampled to it (linear, nearest for labels and masks;
+  the `scene://` resampler). The ops before it run there too;
+* its output is cached, whatever its `cache` flag says, since the coarser levels are made
+  from it: each by `downsample` from the one above, by the source pyramid's own factors
+  (mean for images, the most common value for labels and masks), cached too. So the op runs
+  once per chunk of one level, whichever levels the viewer asks for;
+* the ops after it run on every level, as usual.
+
+The output has as many levels as the source has from the one read down. A coarse chunk is
+made from the finer ones under it, so a zoomed-out view costs the op its whole region at its
+own resolution, once, since that is cached; the work for a view the viewer has left is
+dropped as usual ([caching](caching.md#order-of-work-and-requests-given-up-on)). A voxel's position
+is its centre, as in OME-Zarr: a level of voxels twice as big starts half an old voxel on,
+and the served translations say so. An op that changes the grid starts a stage of its own,
+and its output chunks times the voxel ratio must be whole input voxels (checked when the
+pipeline is built). The browser engine runs ops on every level of their own grid, so ops
+like these run from Python.
+

@@ -4,10 +4,15 @@
 // the public bucket. Neuroglancer shows the images and the nuclei straight from the bucket.
 // Each nucleus double-clicked is a track of its own colour, followed both ways in time; when
 // one collapses into mitosis and is lost, its likely daughters are guessed (new nuclei
-// appearing near where it was) and followed too, so a track is a (guessed) lineage. The page keeps the
-// nuclei followed highlighted in each frame (their ids change from frame to frame) and plots
-// their volumes as frames come in. Double-click a tracked nucleus again to drop its track.
+// appearing near where it was) and followed too, so a track is a (guessed) lineage. The nuclei
+// followed are served to the viewer as a segmentation of their own, a zarr array that exists
+// nowhere: each chunk is the bucket's segmentation with this frame's nuclei followed given
+// their track's number, so each lineage is one segment, one colour, in every frame (the
+// bucket's own ids change from frame to frame). Their volumes are plotted as frames come in.
+// Double-click a nucleus to follow it, a tracked one again to drop its track.
 import { Engine } from "./engine";
+import { TYPED } from "./ome";
+import type { ViewInfo } from "./types";
 
 const BASE = "https://allencell.s3.amazonaws.com/aics/nuc-morph-dataset/hipsc_fov_nuclei_timelapse_dataset/"
   + "hipsc_fov_nuclei_timelapse_data_used_for_analysis/baseline_colonies_fov_timelapse_dataset/20200323_09_small";
@@ -27,7 +32,7 @@ interface Frame { frames: number; minutes: number }
  * movie's end). */
 interface Branch { frames: Map<number, Found>; from?: number; lost?: number; end?: "lost" | "mitosis" | "divided" | "movie" }
 /** A nucleus double-clicked and its descendants (and, going back, its ancestors). */
-interface Track { colour: string; picked: { t: number; label: number }; branches: Branch[]; dropped: boolean; running: number }
+interface Track { id: number; colour: string; picked: { t: number; label: number }; branches: Branch[]; dropped: boolean; running: number }
 const COLOURS = ["#45f07a", "#ff4fd8", "#7ab0ff", "#ffd21f", "#ff8a3d", "#3de0ff"];
 const MAX_BRANCHES = 8;  // per track: a lineage two or three divisions deep
 // chunkmirage.tracking's: a collapse (DIVIDED of the largest in the dozen frames before), and
@@ -62,14 +67,16 @@ async function read(t: number, lo: number[], hi: number[]): Promise<ArrayBuffer>
  * and both daughters at each division (forward). */
 async function follow(t0: number, label: number) {
   const shape = level().shape, dtype = engine.sources.seg.dtype;
-  const track: Track = { colour: COLOURS[picks++ % COLOURS.length], picked: { t: t0, label }, branches: [], dropped: false, running: 0 };
+  const track: Track = { id: picks + 1, colour: COLOURS[picks++ % COLOURS.length], picked: { t: t0, label }, branches: [], dropped: false, running: 0 };
   tracks.push(track);
+  changed();
   status(`Finding nucleus ${label} in frame ${t0}…`);
   const whole = await read(t0, [0, 0, 0], shape);
   const first = await engine.call<Found | null>("track_measure", { label, start: [0, 0, 0], voxel: voxel(), dtype, shape }, [whole]);
   if (!first) { drop(track); status(`No nucleus ${label} in frame ${t0}.`); return; }
   const main: Branch = { frames: new Map([[t0, first]]) };
   track.branches.push(main);
+  changed(t0);
   highlight(true);
   status("Following frame by frame, both ways, and the daughters of each division…");
   await Promise.all([along(track, main, first, t0, 1), along(track, main, first, t0, -1)]);
@@ -95,6 +102,7 @@ async function along(track: Track, branch: Branch, record: Found, t: number, dt:
         break;
       }
       branch.frames.set(nt, found);
+      changed(nt);
       record = found; t = nt;
       draw();
       showCounts();
@@ -138,6 +146,7 @@ async function daughters(track: Track, branch: Branch, mother: Found, lost: numb
       branch.end = "divided";
       const child: Branch = { frames: new Map([[t, d]]), from };
       track.branches.push(child);
+      changed(t);
       draw();
       followed.push(along(track, child, d, t, 1));
     }
@@ -148,6 +157,7 @@ async function daughters(track: Track, branch: Branch, mother: Found, lost: numb
 function drop(track: Track) {
   track.dropped = true;
   tracks.splice(tracks.indexOf(track), 1);
+  changed();
   draw();
   showCounts();
 }
@@ -159,6 +169,80 @@ async function stepTo(record: Found, t: number, nt: number, margin: number[]): P
   return engine.call<Found | null>("track_step", {
     label: record.label, start: lo, voxel: voxel(), dtype: engine.sources.seg.dtype, shape: hi.map((h, a) => h - lo[a]),
   }, [prev, next]);
+}
+
+// ------------------------------------------------ the lineages, served
+// The segmentation's levels served (its finest are 28 MB planes; the next matches the images),
+// and the chunks: one frame, its stored chunks' four planes deep
+const LINEAGE_LEVELS = [1, 2, 3], LINEAGE_CHUNK = [1, 4, 256, 256];
+let lineages = "", version = 0, stale = false;
+const served = new Set<number>();  // frames of the current version the viewer has asked for
+
+/** Track number for each nucleus followed in frame `t`, by its id there. */
+function idsAt(t: number): Map<number, number> {
+  return new Map(tracks.flatMap((k) => k.branches.flatMap((b) => (b.frames.has(t) ? [[b.frames.get(t)!.label, k.id] as [number, number]] : []))));
+}
+
+/** Serve the lineages again, under a new name (the viewer keeps what it fetched by URL). */
+function serveLineages(): string {
+  const s = engine.sources.seg;
+  const info: ViewInfo = {
+    dtype: "uint32", out: "uint32", channels: 1, lead: 0, halo: [0, 0, 0, 0],
+    axes: [{ name: "t", unit: "minute" }, ...s.axes],
+    levels: LINEAGE_LEVELS.map((l) => ({ shape: [time.frames, ...s.levels[l].shape], voxel: [time.minutes, ...s.levels[l].voxel], origin: [0, ...s.levels[l].origin] })),
+  };
+  lineages = `lineages~${++version}`;
+  served.clear();
+  stale = false;
+  engine.serve(lineages, info, LINEAGE_CHUNK, async (level, index) => {
+    const t = index[0], shape = s.levels[LINEAGE_LEVELS[level]].shape, C = LINEAGE_CHUNK.slice(1);
+    served.add(t);
+    const out = new Uint32Array(C[0] * C[1] * C[2]);  // a whole chunk, zero past the array's end
+    if (!idsAt(t).size) return out.buffer;
+    const lo = index.slice(1).map((i, a) => i * C[a]), hi = lo.map((v, a) => Math.min(v + C[a], shape[a])), d = hi.map((h, a) => h - lo[a]);
+    const Labels = TYPED[s.dtype] as unknown as new (b: ArrayBuffer) => ArrayLike<number | bigint>;
+    const labels = new Labels(await engine.read("seg", LINEAGE_LEVELS[level], lo, hi, { t }));
+    const ids = idsAt(t);  // as they are now, after the read
+    for (let z = 0; z < d[0]; z++) for (let y = 0; y < d[1]; y++) {
+      const from = (z * d[1] + y) * d[2], to = (z * C[1] + y) * C[2];
+      for (let x = 0; x < d[2]; x++) { const id = ids.get(Number(labels[from + x])); if (id) out[to + x] = id; }
+    }
+    return out.buffer;
+  });
+  return lineages;
+}
+
+/** The tracks changed at frame `t` (the lineages the viewer has of it are out of date), or
+ * a track was added or dropped (the layer's segments and colours too). */
+function changed(t?: number) {
+  if (t === undefined || served.has(t)) stale = true;
+}
+
+/** The lineages layer as it should be now: the current version, a segment per track. */
+function lineageLayer() {
+  return {
+    type: "segmentation", name: "lineages", source: `zarr3://${engine.url(lineages)}`,
+    segments: tracks.map((k) => String(k.id)), segmentColors: Object.fromEntries(tracks.map((k) => [String(k.id), k.colour])),
+    selectedAlpha: 0.45, notSelectedAlpha: 0, crossSectionRenderScale: 2,
+  };
+}
+
+/** Every second and a half: if the viewer has lineages that changed since, serve them again
+ * and point the layer at them, its segments and colours the tracks', touching nothing else
+ * (restoring the whole state would reorder the viewer's axes). */
+function refresh() {
+  const layer = viewer()?.layerManager?.getLayerByName("lineages")?.layer;
+  if (!stale || !layer?.dataSources?.[0]) return;
+  serveLineages();
+  const ds = layer.dataSources[0];
+  ds.spec = { ...ds.spec, url: `zarr3://${engine.url(lineages)}` };
+  const visible = layer.displayState.segmentationGroupState.value.visibleSegments, colours = layer.displayState.segmentStatedColors?.value;
+  visible.clear();
+  colours?.clear();
+  for (const k of tracks) {
+    visible.add(BigInt(k.id));
+    colours?.set(BigInt(k.id), BigInt(parseInt(k.colour.slice(1), 16)));
+  }
 }
 
 // ------------------------------------------------ the graph
@@ -225,9 +309,10 @@ function inFrame(t: number): { track: Track; found: Found }[] {
   return tracks.flatMap((k) => k.branches.flatMap((b) => (b.frames.has(t) ? [{ track: k, found: b.frames.get(t)! }] : [])));
 }
 
-/** Show the nuclei followed in the frame on screen (their ids there, in their tracks'
- * colours); a nucleus double-clicked starts a track, one followed and double-clicked again
- * drops its track. `force`: the tracks changed, not the viewer. */
+/** Keep the nuclei layer's visible segments this frame's nuclei followed (by their ids
+ * there; the lineages layer shows them, so this one is only for picking): a nucleus
+ * double-clicked starts a track, one followed and double-clicked again drops its track.
+ * `force`: the tracks changed, not the viewer. */
 function highlight(force: boolean | Event = false) {
   const v = viewer(), layer = v?.layerManager?.getLayerByName("nuclei")?.layer;
   if (!layer || updating) return;
@@ -246,11 +331,6 @@ function highlight(force: boolean | Event = false) {
     for (const id of [...group.selectedSegments].map(String)) if (!want.has(id)) group.selectedSegments.delete(BigInt(id));
     for (const id of ids) if (!want.has(id)) visible.delete(BigInt(id));
     for (const id of want) if (!ids.has(id)) visible.add(BigInt(id));
-    const colours = layer.displayState.segmentStatedColors?.value;
-    if (colours) {  // ids are numbered afresh each frame: this frame's colours only
-      colours.clear();
-      for (const h of here) colours.set(BigInt(h.found.label), BigInt(parseInt(h.track.colour.slice(1), 16)));
-    }
   } catch (e) {
     console.warn("highlighting the nuclei followed:", e);
   } finally {
@@ -284,13 +364,25 @@ function viewerState(dims: Record<string, [number, string]>, centroid: number[])
     layers: [
       { type: "image", name: "lamin B1", source: `zarr://${RAW}/`, localPosition: [0],
         shader: "#uicontrol invlerp normalized(range=[98, 135])\nvoid main() { emitGrayscale(normalized()); }\n" },
+      // the bucket's nuclei, unseen: double-click one to follow it (highlight)
       { type: "segmentation", name: "nuclei", source: `zarr://${SEG}/`, localPosition: [0], segments: [String(START.label)],
-        selectedAlpha: 0.45, notSelectedAlpha: 0,  // each shown in its track's colour (highlight)
-        crossSectionRenderScale: 3 },  // a coarser level: the finest's chunks are 28 MB planes
+        selectedAlpha: 0, notSelectedAlpha: 0, crossSectionRenderScale: 3 },  // a coarser level: the finest's chunks are 28 MB planes
+      lineageLayer(),  // the nuclei followed, computed here: a segment per track
     ],
     layout: "xy", selectedLayer: { visible: false },
     velocity: { t: { velocity: 4, atBoundary: "loop", paused: true } },  // the play button: 4 frames a second
   };
+}
+
+/** Listen to the viewer: its frame, and the nuclei layer's segments (picks). Again after a
+ * state is restored, for a layer made anew. */
+const listening = new WeakSet<object>();
+function attach() {
+  const v = viewer(), layer = v?.layerManager?.getLayerByName("nuclei")?.layer;
+  if (!v?.position || !layer) return void setTimeout(attach, 300);
+  if (!listening.has(v.position)) { listening.add(v.position); v.position.changed.add(() => highlight()); }
+  const visible = layer.displayState.segmentationGroupState.value.visibleSegments;
+  if (!listening.has(visible)) { listening.add(visible); visible.changed.add(() => highlight()); }
 }
 
 async function start() {
@@ -304,6 +396,7 @@ async function start() {
   const sc: number[] = rawAttrs.multiscales[0].datasets[0].coordinateTransformations[0].scale;
   const dims: Record<string, [number, string]> = { x: [sc[4] * toM, "m"], y: [sc[3] * toM, "m"], z: [sc[2] * toM, "m"], t: [time.minutes * 60, "s"] };
   await engine.ready;
+  serveLineages();
   const whole = await read(START.t, [0, 0, 0], level().shape);
   const first = await engine.call<Found | null>("track_measure", { label: START.label, start: [0, 0, 0], voxel: voxel(), dtype: s.dtype, shape: level().shape }, [whole]);
   const ng = $<HTMLIFrameElement>("ng");
@@ -311,13 +404,8 @@ async function start() {
   ng.hidden = false;
   $("empty").hidden = true;
   shownIds = new Set([String(START.label)]);
-  const attach = () => {
-    const v = viewer();
-    if (!v?.position || !v.layerManager?.getLayerByName("nuclei")) return void setTimeout(attach, 300);
-    v.position.changed.add(() => highlight());
-    v.layerManager.getLayerByName("nuclei").layer.displayState.segmentationGroupState.value.visibleSegments.changed.add(() => highlight());
-  };
   attach();
+  setInterval(refresh, 1500);
   $("command").textContent = `uv run python examples/track_nucleus.py --frame ${START.t} --label ${START.label}`;
   void follow(START.t, START.label);
   Object.assign(window, { engine, tracks });  // for a console, and the headless checks

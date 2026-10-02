@@ -8,7 +8,9 @@ export type OpSpec =
   | Contacts
   | Diff
   | DoG
+  | Downsample
   | Gaussian
+  | Gradient
   | Hillshade
   | Label
   | Morphology
@@ -296,6 +298,23 @@ export interface DoG {
   gain?: number;
 }
 /**
+ * Coarser voxels: each block of ``factor`` voxels becomes one, their mean, or for labels
+ * and masks their most common value. The grid changes with it: voxels ``factor`` times
+ * bigger, the shape divided (rounded up), each voxel's position the centre of its block.
+ * A pipeline makes the coarser levels of an op with an input voxel size this way.
+ */
+export interface Downsample {
+  op: "downsample";
+  /**
+   * Voxels per output voxel along each of the data's last axes (z, y, x): 2, 2, 2 halves each; 1 keeps an axis as it is.
+   */
+  factor?: number[];
+  /**
+   * mean of each block; mode, its most common value (labels, masks); auto: mode for labels and masks, mean for anything else.
+   */
+  mode?: string;
+}
+/**
  * Gaussian blur (smoothing). Reduces noise before thresholding; larger sigma = blurrier.
  */
 export interface Gaussian {
@@ -308,6 +327,26 @@ export interface Gaussian {
    * Kernel radius in units of sigma. Rarely needs changing; 3 keeps 99.7% of the kernel. Determines the halo: ceil(sigma × truncate) voxels of neighbouring data are read on each side.
    */
   truncate?: number;
+}
+/**
+ * Rate of change along each of ``axes``, one channel each on a new leading ``c`` axis
+ * (float32), per unit of the axes (a level's voxel size): central differences. It returns
+ * only the interior it can compute, one voxel less on each side of those axes, as a valid
+ * convolution (or a model) does. Where temperature changes fastest at sea, ocean fronts;
+ * on terrain, the slope's components; in a volume, edges and their direction. With
+ * ``sigma``, smoothed along the same axes first (a Gaussian derivative), so noise a voxel or
+ * two across does not point every voxel its own way.
+ */
+export interface Gradient {
+  op: "gradient";
+  /**
+   * Smoothing first, in voxels along the axes differentiated (0: none). The halo grows to 1 + ceil(3 × sigma).
+   */
+  sigma?: number;
+  /**
+   * The axes to differentiate along, counted from the first (1, 2: latitude and longitude of a time, lat, lon series); default the last three, or all if fewer.
+   */
+  axes?: number[] | null;
 }
 /**
  * Shaded relief: the brightness of the terrain lit by a distant sun at ``azimuth`` and

@@ -32,7 +32,7 @@ type Answered = null | { status: number; body: string | ArrayBuffer; type: strin
  * order), each fragment's size, the quantization and the index file. */
 type Octree = { nodes: Int32Array; size: number; bits: number; index: ArrayBuffer; mask: Uint8Array; level: number };
 const BAND = 2;  // chunkmirage.meshes.BAND: the border a part of the coarsest level is masked with
-type Plan = { dtype: string; lead: number; halo: number[] };
+type Plan = { dtype: string; lead: number; halo: number[]; added: number[] };
 
 /** A worker answering requests by reqId. */
 class Rpc<Req extends { reqId: number }> {
@@ -133,7 +133,10 @@ export class Engine {
       return [v, { ops: spec.ops ?? [], shape, dtype: s.dtype, chunk: spec.chunk, voxel: s.levels[0].voxel, source }];
     }));
     const plans = await Promise.all(this.pool.map((w) => w.call<Record<string, Plan>>({ type: "plan", views: specs })));
-    for (const v of Object.keys(views)) this.infos[v] = { ...this.sources[v], out: plans[0][v].dtype, lead: plans[0][v].lead, halo: plans[0][v].halo };
+    for (const v of Object.keys(views)) {
+      const p = plans[0][v];
+      this.infos[v] = { ...this.sources[v], out: p.dtype, lead: p.lead, halo: p.halo, added: p.added };
+    }
   }
 
   /** Serve `views` too. */
@@ -183,14 +186,15 @@ export class Engine {
   get waiting(): number { return this.chunks ? [...this.chunks.byLevel().waiting.values()].reduce((a, b) => a + b, 0) : 0; }
 
   private omeGroup(view: string) {
-    const v = this.infos[view];
+    const v = this.infos[view], added = (v.added ?? []).map(() => 0);  // channel axes the ops add
     return {
       zarr_format: 3, node_type: "group",
       attributes: { ome: { version: "0.5", multiscales: [{
         name: view,
-        axes: v.axes.map((a) => ({ name: a.name, type: isTime(a) ? "time" : "space", unit: OME_UNIT[a.unit] ?? (a.unit || undefined) })),
+        axes: [...added.map(() => ({ name: "c", type: "channel" })),
+          ...v.axes.map((a) => ({ name: a.name, type: isTime(a) ? "time" : "space", unit: OME_UNIT[a.unit] ?? (a.unit || undefined) }))],
         datasets: v.levels.map((l, i) => ({ path: String(i), coordinateTransformations: [
-          { type: "scale", scale: l.voxel }, { type: "translation", translation: l.origin },
+          { type: "scale", scale: [...added.map(() => 1), ...l.voxel] }, { type: "translation", translation: [...added, ...l.origin] },
         ] })),
       }] } },
     };
@@ -215,13 +219,13 @@ export class Engine {
    * plane along z (a map client reads 2-D bands: with a third axis it would need the
    * group's consolidated metadata to know to select it). */
   private array(view: string, level: number, map = false) {
-    const v = this.infos[view], keep = map ? -2 : 0;
+    const v = this.infos[view], keep = map ? -2 : 0, added = map ? [] : v.added ?? [];  // channels: chunked whole
     return {
-      zarr_format: 3, node_type: "array", shape: v.levels[level].shape.slice(keep), data_type: v.out, fill_value: 0,
-      chunk_grid: { name: "regular", configuration: { chunk_shape: this.views[view].chunk.slice(keep) } },
+      zarr_format: 3, node_type: "array", shape: [...added, ...v.levels[level].shape.slice(keep)], data_type: v.out, fill_value: 0,
+      chunk_grid: { name: "regular", configuration: { chunk_shape: [...added, ...this.views[view].chunk.slice(keep)] } },
       chunk_key_encoding: { name: "default", configuration: { separator: "/" } },
       codecs: [{ name: "bytes", configuration: { endian: "little" } }],
-      dimension_names: v.axes.map((a) => a.name).slice(keep), attributes: {},
+      dimension_names: [...added.map(() => "c"), ...v.axes.map((a) => a.name).slice(keep)], attributes: {},
     };
   }
 
@@ -322,7 +326,7 @@ export class Engine {
     const map = rest[0] === "geo";
     if (map) {  // geo/<view>/zarr.json, geo/<view>/<level>/zarr.json, geo/<view>/<level>/<view>/...
       view = rest[1];
-      if (!this.infos[view]) return notFound;
+      if (!this.infos[view] || this.infos[view].added?.length) return notFound;  // a map reads one band
       if (rest.length === 3 && rest[2] === "zarr.json") {
         const g = this.geoGroup(view, this.proj[view.split("~")[0]] ?? "");
         return g ? asJson(g) : notFound;
@@ -341,8 +345,9 @@ export class Engine {
     const level = Number(rest[0]);
     if (!this.infos[view].levels[level]) return notFound;
     if (rest.length === 2 && rest[1] === "zarr.json") return asJson(this.array(view, level, map));
-    if (rest[1] !== "c" || rest.length !== 2 + this.infos[view].levels[level].shape.length) return notFound;
-    return this.chunk(view, level, rest.slice(2).map(Number));
+    const added = map ? 0 : this.infos[view].added?.length ?? 0, key = rest.slice(2).map(Number);
+    if (rest[1] !== "c" || key.length !== added + this.infos[view].levels[level].shape.length || key.slice(0, added).some((i) => i !== 0)) return notFound;
+    return this.chunk(view, level, key.slice(added));  // a channel axis is one chunk: the volume's index
   }
 
   private octrees = new Map<string, Promise<Octree>>();

@@ -124,8 +124,10 @@ chunkmirage serve 'synthetic://mandelbulb?shape=268435456,268435456,268435456&vo
 ## Data types
 
 Precomputed supports `uint8`, `uint16`, `uint32`, `uint64`, `float32` only; add a `cast` op
-for anything else. Precomputed volumes with `uint32`/`uint64` are typed `segmentation`,
-others `image`; override with `PrecomputedFrontend(volume_type=...)`.
+for anything else. Precomputed volumes are typed by what their values are (`ArrayInfo.kind`,
+which ops declare): labels and masks `segmentation`, images `image`; where nothing says,
+`uint32`/`uint64` are `segmentation` and others `image`. Override with
+`PrecomputedFrontend(volume_type=...)`.
 
 ## Sources
 
@@ -575,3 +577,22 @@ units, so beside a time axis in seconds a zoom of 1 is not one pixel per voxel:
 to one index each, `{"c": 1, "t": 0}` (`--select c=1,t=0`), so the ops see one channel of
 one time point as a `z, y, x` volume; only that channel is read. HDF5 uses `file.h5::/dataset` and needs
 the `hdf5` extra.
+
+### Your own schemes (sources from other packages)
+
+A package adds a URL scheme of its own the way it adds an op: an opener that takes the URL
+and returns a `MultiscaleSource` (a list of levels, each a `Source` with an `info` and a
+`read(box)`), listed under the `chunkmirage.sources` entry point with the scheme as its
+name. `open_source` and so `chunkmirage serve` then open `myscheme://...` like the built-in
+schemes, and pipelines, caching and every frontend work on it unchanged. An opener is passed
+`cache_bytes` (tensorstore's pool) and `cache` (the pipeline's chunk cache) if it takes
+them. `chunkmirage.sources.register_source(scheme, opener)` does the same in a running
+process, and `schemes()` lists what is known. The built-in schemes cannot be replaced.
+
+```toml
+[project.entry-points."chunkmirage.sources"]
+myscheme = "mypackage.sources:open_myscheme"
+```
+
+A source suits work that reads the data itself rather than a padded block: a model wrapper
+that opens its own input, a format with its own reader, data computed from coordinates.

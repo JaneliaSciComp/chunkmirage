@@ -23,6 +23,8 @@ class Op(BaseModel):
       expensive stages (inference) so cheap downstream tweaks (threshold) are free. A
       pipeline can override it per op: ``{"op": "gaussian", "sigma": 4, "cache": true}``.
     * ``output_dtype`` / ``output_info``: describe the result; default is unchanged.
+    * ``output_kind``: what the result's values are (``ArrayInfo.kind``): ``image``,
+      ``label`` or ``mask``; ``None`` (the default) if the op does not say.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -32,6 +34,7 @@ class Op(BaseModel):
     cache: ClassVar[bool] = False
     # packages its apply imports beyond numpy (the browser engine loads them up front)
     packages: ClassVar[tuple[str, ...]] = ()
+    output_kind: ClassVar[str | None] = None
     _cache: bool | None = PrivateAttr(None)  # this op's own setting, over the class's
 
     @property
@@ -47,10 +50,17 @@ class Op(BaseModel):
         return np.dtype(in_dtype)
 
     def output_info(self, info: ArrayInfo) -> ArrayInfo:
-        return info.with_(dtype=self.output_dtype(info.dtype))
+        return info.with_(dtype=self.output_dtype(info.dtype), kind=self.output_kind)
 
     def apply(self, block: np.ndarray) -> np.ndarray:  # pragma: no cover - abstract
         raise NotImplementedError
+
+    def input_voxel_size(self) -> tuple[float, ...] | None:
+        """The voxel size this op must read, along the data's last axes and in the source's
+        units: a model trained at one resolution. The pipeline then runs it on one level (the
+        source's at that size, else one resampled to it), caches what it makes, and makes the
+        coarser levels by downsampling that. ``None`` (the default): it runs on every level."""
+        return None
 
     def for_level(self, info: ArrayInfo) -> Op:
         """This op as it runs on a scale level described by ``info`` (the stage's output, on

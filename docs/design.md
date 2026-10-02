@@ -89,6 +89,12 @@ chunk shape, and every op spec up to that stage. Editing op *k* changes hashes f
 This is the same idea as tensorstore's `virtual_chunked` driver, kept in numpy so the ops
 stay trivially writable.
 
+Levels are computed independently, the same ops on each, except from an op that declares
+the voxel size it reads (a model trained at one resolution). That one runs on a single
+level and the coarser levels are downsampled from its cached output, rather than running
+it on data it was not trained for, or once per level. The browser engine keeps the simpler
+rule: every op on every level, on its level's grid.
+
 ### Viewer cache busting
 
 Viewers cache chunks by URL. The API hands out source URLs of the form

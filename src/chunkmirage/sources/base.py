@@ -152,3 +152,17 @@ class MultiscaleSource:
 
     def cache_key(self) -> str:
         return "|".join(lvl.cache_key() for lvl in self.levels)
+
+    def level_for(self, voxel_size: Sequence[float], rtol: float = 0.01) -> tuple[int, bool]:
+        """The level to read data at ``voxel_size`` from (its last axes, in the source's
+        units), and whether it is at that size: one that is (within ``rtol``), else the
+        coarsest finer on every axis (resampled down, never up), else level 0."""
+        want = np.asarray(voxel_size, dtype=float)
+        best = 0
+        for i, lvl in enumerate(self.levels):
+            v = np.asarray(lvl.info.voxel_size[-len(want) :], dtype=float)
+            if np.allclose(v, want, rtol=rtol, atol=0):
+                return i, True
+            if np.all(v <= want * (1 + rtol)):
+                best = i
+        return best, False

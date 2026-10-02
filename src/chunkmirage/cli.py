@@ -132,6 +132,12 @@ def serve(
         help="threads computing chunks (0 = 2 x CPU count, min 40). numpy/scipy/tensorstore "
         "release the GIL, so this is the effective parallelism",
     ),
+    token: str | None = typer.Option(
+        None,
+        envvar="CHUNKMIRAGE_TOKEN",
+        help="require this token for /api/* (Authorization: Bearer <token>, or ?token=); "
+        "datasets stay open, as viewers send no headers",
+    ),
     workers: int = typer.Option(
         1,
         help="uvicorn worker processes. Each has its own registry and cache, so live edits "
@@ -185,7 +191,7 @@ def serve(
     for n, s in srcs.items():
         typer.echo(f"source [{n}]: {s}")
     typer.echo(f"neuroglancer: {viewer_link(pipes, srcs, viewer)}")
-    typer.echo(f"control UI:   {base}/ui")
+    typer.echo(f"control UI:   {base}/ui{f'?token={token}' if token else ''}")
     typer.echo(f"control API:  {base}/api/datasets/{name}")
     if https and not (cert and key):
         typer.echo(
@@ -209,7 +215,7 @@ def serve(
 
     n_threads = threads or max(40, 2 * (os.cpu_count() or 4))
     typer.echo(f"threads:      {n_threads} for chunk computation")
-    application = create_app(registry, public_url=public_url, threads=n_threads)
+    application = create_app(registry, public_url=public_url, threads=n_threads, token=token)
     if server != "hypercorn" or workers > 1:
         import uvicorn
 

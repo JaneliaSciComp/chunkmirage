@@ -68,9 +68,11 @@ class PrecomputedFrontend(Frontend):
             raise ValueError(
                 f"precomputed supports {sorted(_SUPPORTED)}, got {info0.dtype.name}; add a 'cast' op"
             )
-        vt = self.volume_type or (
-            "segmentation" if info0.dtype.kind == "u" and info0.dtype.itemsize >= 4 else "image"
-        )
+        if info0.kind is not None:
+            auto = "segmentation" if info0.kind in ("label", "mask") else "image"
+        else:
+            auto = "segmentation" if info0.dtype.kind == "u" and info0.dtype.itemsize >= 4 else "image"
+        vt = self.volume_type or auto
         scales = []
         for lvl in range(pipeline.num_levels):
             info = pipeline.info(lvl)

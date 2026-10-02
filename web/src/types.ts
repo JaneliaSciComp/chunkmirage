@@ -77,7 +77,10 @@ export interface ViewLevel { shape: number[]; voxel: number[]; origin: number[] 
 /** A view's source as the reader opened it: three axes, and channels for a stack. */
 export interface SourceInfo { dtype: string; channels: number; axes: ViewAxis[]; levels: ViewLevel[]; geo?: { bbox: number[] } }
 /** A view as served: its source's axes and levels, and what its ops make of them. */
-export interface ViewInfo extends SourceInfo { halo: number[]; lead: number; out: string }
+/** A view as served: its source, and what its ops make of it (output dtype, the leading axes
+ * they consume and the halo they need; the leading axes they add, such as a gradient's
+ * components, served as OME channel axes). */
+export interface ViewInfo extends SourceInfo { halo: number[]; lead: number; out: string; added?: number[] }
 
 /** A mesh made from a view's voxels: a legacy fragment, part of the coarsest level's mask
  * (for the multi-resolution octree), or a multi-resolution node's fragment. */

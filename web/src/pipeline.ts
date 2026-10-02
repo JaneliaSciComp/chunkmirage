@@ -53,8 +53,14 @@ async function viewerState(card: PipelineCard) {
     let range = l.range;
     if (!range && l.percentiles && l.view) range = (await engine.sample(l.view, l.percentiles)) as [number, number];
     const glsl = l.shader ?? (range ? shader(l, range) : undefined);
+    // a view with a channel axis (its ops add one): the shader's channels, c^, then the
+    // view's axes in its own order (Neuroglancer maps them by position)
+    const own = l.view ? engine.sources[l.view] : first;
+    const channelled = l.channels
+      ? { url: source, transform: { outputDimensions: { "c^": [1, ""], ...Object.fromEntries(own.axes.map((a, i) => [a.name, dimension(a, own.levels[0].voxel[i])])) } } }
+      : source;
     return {
-      type: "image", name: l.name, source,
+      type: "image", name: l.name, source: channelled,
       ...(glsl ? { shader: glsl } : {}),
       ...(l.additive ? { blend: "additive" } : {}),
       ...(l.volume ? { volumeRendering: "on" } : {}),

@@ -3,6 +3,9 @@
 Run `chunkmirage ops` or `GET /api/ops` for the live list with JSON schemas. This page must
 list every registered op; `tests/test_docs.py` enforces it.
 
+Ops that make masks (`threshold`, `morphology`, `contacts`) and labels (`label`, `spots`)
+say so (`output_kind`), and viewers show what they make as segmentations.
+
 Every parameter carries a description (pydantic `Field(description=...)`) that the control
 page shows under the control and `GET /api/ops` returns in the JSON schema. Add one to any
 new op; `tests/test_docs.py` requires it.
@@ -24,6 +27,10 @@ new op; `tests/test_docs.py` requires it.
 |             | `gain`      | 4.0     | scales the difference into 0..255 (output uint8, 128 = zero) |
 | `diff`      | `axis`      | 0       | change along one axis: each voxel minus the one `lag` steps before it on `axis` (0: time in a `t, y, x` series); output float32; halo = `lag` on that axis only; the first `lag` steps compare against the first |
 |             | `lag`       | 1       | how many steps back to compare with |
+| `gradient`  | `axes`      | last three | rate of change along each axis listed (counted from the first: `[1, 2]` for latitude and longitude of a `time, lat, lon` series), per unit of the axes (the level's voxel size): central differences, one channel each on a new leading `c` axis; output float32; halo = 1 + `ceil(3 × sigma)` on those axes, and only the interior is returned (a valid convolution) |
+|             | `sigma`     | 0       | smoothing first, in voxels along those axes (a Gaussian derivative), so noise a voxel or two across does not point every voxel its own way; 0 = none |
+| `downsample`| `factor`    | 2, 2, 2 | voxels per output voxel along each of the last axes; the grid changes with it (voxels `factor` times bigger, the shape divided and rounded up, each voxel's position the centre of its block); how a pipeline makes the coarser levels of an op with an input voxel size |
+|             | `mode`      | auto    | `mean` of each block (integers rounded), `mode` (its most common value), or `auto`: mode for labels and masks, mean otherwise |
 | `morphology`| `operation` | open    | `open`, `close`, `erode`, `dilate` on a mask (input > 0); output uint8 |
 |             | `radius`    | 2       | spherical structuring element radius in voxels; halo = `2 × radius + 1` |
 | `label`     | `min_size`  | 0       | connected components of a mask, output uint32 segment ids; drop components smaller than this |

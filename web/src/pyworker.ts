@@ -61,11 +61,16 @@ def _info(shape, dtype, chunk, voxel, origin=None, unit=""):
 
 def plan(view, ops, shape, dtype, chunk, voxel, source=None):
     ops = [op_from_spec(s) for s in json.loads(ops)]
-    out, lead, halo = fused.plan(_info(list(shape), dtype, list(chunk), list(voxel)), ops)
+    info = _info(list(shape), dtype, list(chunk), list(voxel))
+    if any(op.input_voxel_size() is not None for op in ops) or any(abs(r - 1) > 1e-9 for r in fused.scale(info, ops)):
+        raise ValueError("this page runs ops on every level, each on its level's grid: one that reads at a "
+                         "voxel size of its own, or changes the grid (downsample), runs from Python")
+    out, lead, halo = fused.plan(info, ops)
     if source:
         describe(source)
     VIEWS[view] = (ops, dtype, list(chunk), source)
-    return json.dumps({"dtype": out.dtype.name, "lead": lead, "halo": list(halo), "ndim": out.ndim})
+    added = list(out.shape[: out.ndim - len(halo)])  # leading axes the ops add (a model's channels)
+    return json.dumps({"dtype": out.dtype.name, "lead": lead, "halo": list(halo), "ndim": out.ndim, "added": added})
 
 def _mesh(m, result, box, shape, dtype, chunk, voxel, origin, unit):
     """legacy: a fragment (Neuroglancer's encoding). octree: from the whole coarsest level,
@@ -122,12 +127,14 @@ def compute(view, level, data, read_shape, in_lo, in_hi, out_lo, out_hi, full_sh
     else:
         block = np.frombuffer(data.to_py(), dtype=np.dtype(dtype)).reshape(tuple(read_shape))
         block = fused.pad_edge(block, in_box, full)
-    out = fused.plan(_info(full, dtype, chunk, list(voxel)), ops)[0]  # the level's voxels: for_level
-    result = fused.run(ops, block, in_box, Box(tuple(out_lo), tuple(out_hi)), out)
+    out, _, halo = fused.plan(_info(full, dtype, chunk, list(voxel)), ops)  # the level's voxels: for_level
+    added = out.shape[: out.ndim - len(halo)]  # leading axes the ops add, whole in every chunk
+    out_box = Box((0,) * len(added) + tuple(out_lo), tuple(added) + tuple(out_hi))
+    result = fused.run(ops, block, in_box, out_box, out, halo)
     if mesh is not None:  # a mesh of these voxels, not a chunk
         return _mesh(json.loads(mesh), result, Box(tuple(out_lo), tuple(out_hi)), full[lead:], out.dtype.name, chunk, voxel, origin, unit)
     # a zarr chunk is always whole: one at the edge of the array is padded with the fill value
-    result = np.pad(result, [(0, c - n) for c, n in zip(chunk, result.shape)])
+    result = np.pad(result, [(0, 0)] * len(added) + [(0, c - n) for c, n in zip(chunk, result.shape[len(added):])])
     return np.ascontiguousarray(result).astype(result.dtype.newbyteorder("<"), copy=False).tobytes()
 `;
 
@@ -204,13 +211,16 @@ async function load(packages: string[] = []) {
   py.runPython(`import sys; sys.path.insert(0, "/chunkmirage")\n${GLUE}\n${STEPS}`);
 }
 
-/** Each view's output dtype, the leading axes its ops consume and the halo they need. */
+/** Each view's output dtype, the leading axes its ops consume and the halo they need, and
+ * the leading axes they add (channels). */
 async function plan(views: Extract<ToPyWorker, { type: "plan" }>["views"], packages?: string[]) {
   if (!py) await (loaded ??= load(packages));
-  const out: Record<string, { dtype: string; lead: number; halo: number[] }> = {};
+  const out: Record<string, { dtype: string; lead: number; halo: number[]; added: number[] }> = {};
   for (const [id, v] of Object.entries(views)) {
     const p = JSON.parse(py.globals.get("plan")(id, JSON.stringify(v.ops), v.shape, v.dtype, v.chunk, v.voxel, v.source));
-    if (p.ndim !== 3) throw new Error(`view ${id}: a viewer shows three-axis volumes; its ops leave ${p.ndim} axes`);
+    if (p.halo.length !== 3 || p.added.length > 1) {
+      throw new Error(`view ${id}: a viewer shows three-axis volumes, with one channel axis at most; its ops leave ${p.ndim} axes`);
+    }
     out[id] = p;
   }
   return out;
