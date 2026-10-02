@@ -113,12 +113,14 @@ const LAND = "if (isnan(v)) { emitRGB(vec3(0.18)); return; }";  // MUR has no va
 const CELSIUS = `#uicontrol invlerp temperature(range=[25, 32])
 void main() { float v = getDataValue(); ${LAND} emitRGB(colormapJet(clamp(temperature(), 0.0, 1.0))); }`;
 // a gradient's two channels, °C per degree northward and eastward: the direction warmer
-// water lies in as hue, how fast it warms as brightness
-const FRONTS = `#uicontrol float strength slider(min=1, max=100, default=20)
+// water lies in as hue, how fast it warms as brightness (squared: weak gradients, whose
+// direction is mostly noise, stay dark)
+const FRONTS = `#uicontrol float strength slider(min=1, max=100, default=12)
 void main() {
   float north = getDataValue(0), east = getDataValue(1);
   if (isnan(north) || isnan(east)) { emitRGB(vec3(0.18)); return; }
   float m = clamp(length(vec2(north, east)) / strength, 0.0, 1.0);
+  m *= m;
   float hue = atan(north, east) / 6.2832;
   emitRGB(m * (0.5 + 0.5 * cos(6.2832 * (hue + vec3(0.0, 0.33, 0.67)))));
 }`;
@@ -327,7 +329,9 @@ export const CARDS: DemoCard[] = [
     views: {
       sst: { source: MUR, chunk: [1, 256, 256], ops: [{ op: "scale", offset: -273.15 }] },
       // along latitude and longitude, not time: °C per degree (a kelvin is a degree Celsius)
-      fronts: { source: MUR, chunk: [1, 256, 256], ops: [{ op: "gradient", axes: [1, 2] }] },
+      // smoothed over a few km first (sigma, a Gaussian derivative): the analysis's 1 km
+      // speckle would otherwise shimmer as you zoom, every pixel pointing its own way
+      fronts: { source: MUR, chunk: [1, 256, 256], ops: [{ op: "gradient", axes: [1, 2], sigma: 3 }] },
     },
     layers: [
       { name: "temperature", view: "sst", type: "image", shader: COLD },
@@ -336,7 +340,7 @@ export const CARDS: DemoCard[] = [
     panels: [["temperature"], ["fronts"]],
     position: [5738, 12799, 11199], zoom: 2,  // 38° N, 68° W
     orientation: [1, 0, 0, 0],  // north up
-    command: `chunkmirage serve '${MUR}' --op '{"op": "gradient", "axes": [1, 2]}' --chunk 1,256,256 --python-viewer`,
+    command: `chunkmirage serve '${MUR}' --op '{"op": "gradient", "axes": [1, 2], "sigma": 3}' --chunk 1,256,256 --python-viewer`,
   },
   {
     kind: "python", id: "solar", image: "cards/solar.jpg",

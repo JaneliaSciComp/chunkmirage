@@ -333,10 +333,16 @@ export interface Gaussian {
  * (float32), per unit of the axes (a level's voxel size): central differences. It returns
  * only the interior it can compute, one voxel less on each side of those axes, as a valid
  * convolution (or a model) does. Where temperature changes fastest at sea, ocean fronts;
- * on terrain, the slope's components; in a volume, edges and their direction.
+ * on terrain, the slope's components; in a volume, edges and their direction. With
+ * ``sigma``, smoothed along the same axes first (a Gaussian derivative), so noise a voxel or
+ * two across does not point every voxel its own way.
  */
 export interface Gradient {
   op: "gradient";
+  /**
+   * Smoothing first, in voxels along the axes differentiated (0: none). The halo grows to 1 + ceil(3 × sigma).
+   */
+  sigma?: number;
   /**
    * The axes to differentiate along, counted from the first (1, 2: latitude and longitude of a time, lat, lon series); default the last three, or all if fewer.
    */

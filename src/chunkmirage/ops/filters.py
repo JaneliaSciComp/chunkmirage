@@ -114,9 +114,19 @@ class Gradient(Op):
     (float32), per unit of the axes (a level's voxel size): central differences. It returns
     only the interior it can compute, one voxel less on each side of those axes, as a valid
     convolution (or a model) does. Where temperature changes fastest at sea, ocean fronts;
-    on terrain, the slope's components; in a volume, edges and their direction."""
+    on terrain, the slope's components; in a volume, edges and their direction. With
+    ``sigma``, smoothed along the same axes first (a Gaussian derivative), so noise a voxel or
+    two across does not point every voxel its own way."""
 
     name = "gradient"
+    packages = ("scipy",)
+    sigma: float = Field(
+        0.0,
+        ge=0,
+        le=16,
+        description="Smoothing first, in voxels along the axes differentiated (0: none). The halo "
+        "grows to 1 + ceil(3 × sigma).",
+    )
     axes: list[int] | None = Field(
         None,
         description="The axes to differentiate along, counted from the first (1, 2: latitude and "
@@ -132,11 +142,11 @@ class Gradient(Op):
 
     @property
     def halo(self):  # type: ignore[override]
-        return 1
+        return 1 + math.ceil(3 * self.sigma)
 
     def halo_for(self, ndim: int) -> tuple[int, ...]:
         along = self._along(ndim)
-        return tuple(1 if a in along else 0 for a in range(ndim))
+        return tuple(self.halo if a in along else 0 for a in range(ndim))
 
     def output_info(self, info: ArrayInfo) -> ArrayInfo:
         n = len(self._along(info.ndim))
@@ -156,11 +166,16 @@ class Gradient(Op):
         b = block.astype(np.float32)
         along = self._along(b.ndim)
         voxel = self._voxel[-b.ndim:] if self._voxel else (1.0,) * b.ndim
-        inner = [slice(1, -1) if a in along else slice(None) for a in range(b.ndim)]
+        if self.sigma > 0:
+            from scipy.ndimage import gaussian_filter
+
+            b = gaussian_filter(b, [self.sigma if a in along else 0 for a in range(b.ndim)], truncate=3, mode="nearest")
+        h = self.halo
+        inner = [slice(h, -h) if a in along else slice(None) for a in range(b.ndim)]
         out = []
         for a in along:
             hi, lo = list(inner), list(inner)
-            hi[a], lo[a] = slice(2, None), slice(None, -2)
+            hi[a], lo[a] = slice(h + 1, b.shape[a] - h + 1), slice(h - 1, b.shape[a] - h - 1)
             out.append((b[tuple(hi)] - b[tuple(lo)]) / np.float32(2 * voxel[a]))
         return np.stack(out)
 

@@ -116,3 +116,14 @@ def test_the_browsers_way_computes_the_same_channels(zarr2_path):
         in_box = fused.input_box(src.info, out_box, lead, halo)
         block = fused.pad_edge(src.read(in_box.clip(src.info.shape)), in_box, src.info.shape)
         np.testing.assert_array_equal(fused.run(ops, block, in_box, out_box, out, halo), p.chunk(0, idx))
+
+
+def test_a_smoothed_gradient_is_the_gradient_of_the_blur_along_its_axes_only(zarr2_path, volume):
+    from scipy.ndimage import gaussian_filter
+
+    p = Pipeline(open_source(zarr2_path), [Gradient(axes=[1, 2], sigma=1.5)], chunk_shape=(16, 16, 32))
+    whole = p.read(0, Box((0, 0, 0, 0), p.info(0).shape))
+    smooth = gaussian_filter(volume.astype(np.float32), [0, 1.5, 1.5], truncate=3, mode="nearest")  # not along z
+    h = 1 + 5
+    inner = (slice(None), slice(h, -h), slice(h, -h))
+    np.testing.assert_allclose(whole[(slice(None), *inner)], central(smooth, (8, 8, 8), (1, 2))[(slice(None), slice(None), slice(h - 1, -h + 1), slice(h - 1, -h + 1))], rtol=1e-4, atol=1e-4)
