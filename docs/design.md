@@ -204,6 +204,9 @@ Three layers, from most to least structured:
 2. **Plugins**: subclass `Op`, declare `name`, `halo`, `cache`, register via the
    `chunkmirage.ops` entry point. cellmap-flow's models become one plugin package.
    Params are pydantic fields, so every op ships a JSON schema the UI/MCP can render.
+   Source schemes come through `chunkmirage.sources`, and endpoints of a plugin's own
+   through `chunkmirage.routes` ([API](reference/api.md#routes-of-your-own)); the app can
+   also be mounted inside another one.
 3. **Live control**: the REST API takes a `PipelineSpec` (source + list of op specs). An
    MCP server is a thin wrapper over it (tools: `list_ops`, `set_pipeline`,
    `neuroglancer_link`, `cache_stats`), so an LLM agent can drive the viewer. Arbitrary

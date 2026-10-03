@@ -44,3 +44,38 @@ no headers.
 Responses to `POST`, `PUT` and `GET /api/datasets/{name}` include `digest`, `source_dtype`,
 per-level `levels` (shape, chunks, dtype, voxel size, units, axes, and `kind`: `image`, `label`, `mask` or `null`), `ops_info` (per op: name, per-axis halo, docstring), and `sources`, a map
 from format to Neuroglancer source URL carrying the new digest.
+
+## Routes of your own
+
+A package can add endpoints next to these: a plugin's controls, say. Pass Starlette routes
+to `create_app(..., extra_routes=[...])`, or declare a `chunkmirage.routes` entry point
+naming a function that takes the app's `DatasetRegistry` and returns routes:
+
+```toml
+[project.entry-points."chunkmirage.routes"]
+myplugin = "myplugin.server:routes"
+```
+
+```python
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+
+def routes(registry):
+    async def names(request):
+        return JSONResponse(registry.names())
+    return [Route("/api/myplugin/names", names)]
+```
+
+Installed plugins' routes are added to every app, `chunkmirage serve`'s included
+(`create_app(..., route_plugins=False)` leaves them out). One that fails to load is skipped
+with a warning. They are matched after the built-in routes and before the datasets, so a
+route of your own wins over a dataset of the same name. Put them under `/api/` to have them
+guarded by the token too.
+
+## Mounted in another app
+
+The app works as a sub-app, `Mount("/prefix", create_app(...))` in your own Starlette or
+FastAPI app: every path above is then under `/prefix`, the token guards `/prefix/api/*`,
+links carry the prefix, and the control page calls the API relative to where it is served.
+A mounted app gets no lifespan events, so the threadpool is sized by the first chunk
+request instead (it is the host's pool too, and only ever made larger).

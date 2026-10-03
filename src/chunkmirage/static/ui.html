@@ -74,7 +74,7 @@ const api = (url, opts = {}) => fetch(url, TOKEN ? {...opts, headers: {...(opts.
 const status = m => { $('#status').textContent = m; };
 
 async function load() {
-  const [idx, ops] = await Promise.all([fetch('/').then(r=>r.json()), api('/api/ops').then(r=>r.json())]);
+  const [idx, ops] = await Promise.all([fetch('./').then(r=>r.json()), api('api/ops').then(r=>r.json())]);
   OPS = ops; DATASETS = idx.datasets; FORMATS = idx.formats;
   const fsel = $('#format');
   const first = !fsel.options.length;
@@ -179,7 +179,7 @@ async function push(name, rerender=false) {
   status(`updating ${name}…`);
   let body;
   try {
-    const r = await api(`/api/datasets/${encodeURIComponent(name)}`, {method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify(ds.spec)});
+    const r = await api(`api/datasets/${encodeURIComponent(name)}`, {method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify(ds.spec)});
     body = await r.json();
     if (!r.ok) { status(`error: ${body.error}`); return; }
   } finally {
@@ -206,7 +206,7 @@ async function viewerLink() {
   const k = viewerKind();
   if (k === 'python') return VIEWER_URL;          // state lives server-side; the URL never changes
   const fmt = $('#format').value;
-  const r = await api(`/api/neuroglancer?format=${fmt}&viewer=${encodeURIComponent(viewerBase())}`);
+  const r = await api(`api/neuroglancer?format=${fmt}&viewer=${encodeURIComponent(viewerBase())}`);
   return (await r.json()).url;
 }
 
@@ -255,7 +255,7 @@ $('#format').onchange = showEmbedded;
 $('#embed').onchange = showEmbedded;
 
 // Live refresh when anything (curl, Python, another tab) edits a pipeline.
-const es = new EventSource(TOKEN ? `/api/events?token=${encodeURIComponent(TOKEN)}` : '/api/events');
+const es = new EventSource(TOKEN ? `api/events?token=${encodeURIComponent(TOKEN)}` : 'api/events');
 es.addEventListener('change', async (ev) => {
   const data = JSON.parse(ev.data);
   if (Object.values(inflight).some(Boolean)) return;   // our own edit is in progress; push() handles it
