@@ -560,6 +560,17 @@ Sources are detected by content, not extension: `zarr.json` → zarr v3, `.zarra
 `multiscales[0].datasets` (OME-NGFF, COSEM N5), in that order; without that, `s0, s1, ...`
 are probed. N5 and precomputed data are transposed to C order `(z, y, x)` on read.
 
+Remote stores are read the way a public dataset most likely lets one in, with credentials
+only when a public read is refused. `s3://` is read anonymously first, then with AWS's
+default credentials (environment, `~/.aws`, instance metadata), since S3 refuses even a
+public read signed with a stale or foreign key. `gs://` is read with Google's default
+credentials (anonymously without any), then through the bucket's public
+`https://storage.googleapis.com` URL, for credentials that are there but broken. Which way
+worked is remembered per bucket. Metadata reads give up after about five seconds of
+retries rather than tensorstore's default of many minutes, so a mistyped host fails fast.
+A zarr v2 compressor with members tensorstore rejects, such as the `checksum` newer
+numcodecs writes for zstd, is read without them.
+
 Voxel size, translation, units and axes are read per level, first match wins:
 
 | Format      | Metadata, in order of precedence                                                   |

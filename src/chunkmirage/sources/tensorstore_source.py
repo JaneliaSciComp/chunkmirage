@@ -3,14 +3,23 @@
 tensorstore does all I/O in C++ threads (GIL released), supports async reads, and has its
 own byte-bounded ``cache_pool`` so the *raw* chunks of a remote source are cached without
 any extra work on our side.
+
+Remote stores are read the way a public dataset most likely lets in (``kvstore_specs``):
+``s3://`` anonymously first, then with AWS's default credentials; ``gs://`` with Google's
+default credentials (anonymous without any), then through the bucket's public https URL.
+Which way worked is remembered per bucket. Metadata reads give up after a few seconds.
 """
 
 from __future__ import annotations
 
+import functools
 import json
+import logging
+import os
 import re
 import threading
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 import numpy as np
 import tensorstore as ts
@@ -18,21 +27,127 @@ import tensorstore as ts
 from chunkmirage.core import ArrayInfo, Box, kind_for_dtype
 from chunkmirage.sources.base import MultiscaleSource, Source
 
+log = logging.getLogger("chunkmirage")
+T = TypeVar("T")
 
-def _open_kvstore(url_or_path: str) -> ts.KvStore:
-    """Open a kvstore rooted at a *directory*; tensorstore concatenates keys literally, so
-    the root must end in '/'."""
+#: How a metadata read retries a failing request: about 5 s in all. tensorstore's default,
+#: 32 retries of up to 32 s each, keeps a mistyped host's dataset opening for many minutes.
+METADATA_RETRIES = {"max_retries": 5, "initial_delay": "0.2s", "max_delay": "2s"}
+GCS_PUBLIC_URL = "https://storage.googleapis.com"
+
+
+def kvstore_specs(url_or_path: str) -> list[dict]:
+    """The tensorstore kvstore specs that read the directory ``url_or_path``, in the order to
+    try them. ``s3://``: anonymously, then with AWS's default credentials (S3 refuses even a
+    public read signed with a stale or foreign key). ``gs://``: Google's default credentials
+    (anonymous without any, tensorstore's rule), then the bucket's public https URL, for
+    credentials that are there but broken (``TENSORSTORE_GCS_HTTP_URL`` moves it). Anything
+    else: one way. Each path ends in '/': tensorstore concatenates keys literally."""
     root = url_or_path if url_or_path.endswith("/") else url_or_path + "/"
-    if re.match(r"^(s3|gs|http|https|file|memory)://", root):
-        return ts.KvStore.open(root).result()
-    return ts.KvStore.open({"driver": "file", "path": root}).result()
+    if not re.match(r"^(s3|gs|http|https|file|memory)://", root):
+        return [{"driver": "file", "path": root}]
+    spec = ts.KvStore.Spec(root).to_json()
+    if spec["driver"] == "s3":
+        return [{**spec, "aws_credentials": {"type": t}} for t in ("anonymous", "default")]
+    if spec["driver"] == "gcs":
+        public = (os.environ.get("TENSORSTORE_GCS_HTTP_URL") or GCS_PUBLIC_URL).rstrip("/")
+        path = f"/{spec['bucket']}/{spec.get('path', '')}"
+        return [spec, {"driver": "http", "base_url": public, "path": path}]
+    return [spec]
 
 
-def _read_json(kv: ts.KvStore, key: str) -> dict | None:
-    r = kv.read(key).result()
-    if r.state != "value":
+_admitted: dict[tuple[str, str], int] = {}  # (driver, bucket) -> the spec that was let in
+
+
+def _refused(error: Exception) -> bool:
+    return str(error).startswith(("PERMISSION_DENIED", "UNAUTHENTICATED"))
+
+
+def with_access(specs: list[dict], attempt: Callable[[dict], T]) -> T:
+    """``attempt(spec)`` with each of ``specs`` in turn, moving on only while access is
+    refused; the one let in is tried first next time, for its bucket. Any other error, and
+    the last refusal, is raised."""
+    if len(specs) == 1:
+        return attempt(specs[0])
+    key = (specs[0]["driver"], specs[0].get("bucket", ""))
+    first = _admitted.get(key, 0)
+    order = [first] + [i for i in range(len(specs)) if i != first]
+    for i in order[:-1]:
+        try:
+            result = attempt(specs[i])
+        except Exception as e:
+            if not _refused(e):
+                raise
+            log.info("%s refused a read (%s); trying the next way in", key, str(e).splitlines()[0][:200])
+            continue
+        _admitted[key] = i
+        return result
+    result = attempt(specs[order[-1]])
+    _admitted[key] = order[-1]
+    return result
+
+
+def metadata_spec(spec: dict) -> dict:
+    """``spec`` with its requests' retries capped (``METADATA_RETRIES``), for metadata reads."""
+    if spec["driver"] not in ("s3", "gcs", "http"):
+        return spec
+    return {**spec, "context": {f"{spec['driver']}_request_retries": METADATA_RETRIES}}
+
+
+@functools.lru_cache(maxsize=512)
+def _metadata_kvstore(spec_json: str) -> ts.KvStore:
+    return ts.KvStore.open(metadata_spec(json.loads(spec_json))).result()
+
+
+class Location:
+    """A directory (local, or an ``s3://``, ``gs://`` or ``http(s)://`` URL) and the ways to
+    read it (``kvstore_specs``): what ``_open_kvstore`` returns."""
+
+    def __init__(self, url_or_path: str):
+        self.specs = kvstore_specs(url_or_path)
+
+    def read(self, key: str) -> bytes | None:
+        """The file ``key`` in the directory, None if it is not there."""
+
+        def attempt(spec):
+            r = _metadata_kvstore(json.dumps(spec, sort_keys=True)).read(key).result()
+            return bytes(r.value) if r.state == "value" else None
+
+        return with_access(self.specs, attempt)
+
+
+def _open_kvstore(url_or_path: str) -> Location:
+    """The directory ``url_or_path``, to read metadata from."""
+    return Location(url_or_path)
+
+
+def _read_json(kv: Location, key: str) -> dict | None:
+    data = kv.read(key)
+    return None if data is None else json.loads(data.decode())
+
+
+# Compressor members tensorstore knows; it rejects any other (numcodecs >= 0.13 writes zstd's
+# "checksum", for one)
+_ZARR2_COMPRESSOR_FIELDS = {
+    "zstd": {"id", "level"},
+    "zlib": {"id", "level"},
+    "gzip": {"id", "level"},
+    "bz2": {"id", "level"},
+    "blosc": {"id", "cname", "clevel", "shuffle", "blocksize"},
+}
+
+
+def cleaned_zarray(meta: dict | None) -> dict | None:
+    """A zarr v2 ``.zarray`` without the compressor members tensorstore rejects, or None if
+    it has none of them."""
+    compressor = (meta or {}).get("compressor")
+    if not isinstance(compressor, dict):
         return None
-    return json.loads(bytes(r.value).decode())
+    allowed = _ZARR2_COMPRESSOR_FIELDS.get(compressor.get("id", ""))
+    if allowed is None or set(compressor) <= allowed:
+        return None
+    log.info("ignoring compressor members %s tensorstore does not know", sorted(set(compressor) - allowed))
+    return {**meta, "compressor": {k: v for k, v in compressor.items() if k in allowed}}
 
 
 def _detect_driver(kv: ts.KvStore) -> str | None:
@@ -98,12 +213,21 @@ def open_tensorstore(
     driver = driver or _detect_driver(kv)
     if driver is None or driver.endswith("-group"):
         raise ValueError(f"{path}: not an array (driver detected: {driver})")
-    spec: dict[str, Any] = {"driver": driver, "kvstore": kv.spec().to_json()}
+    extra: dict[str, Any] = {}
+    options: dict[str, Any] = {}
     if driver == "neuroglancer_precomputed" and scale_index is not None:
-        spec["scale_index"] = scale_index
+        extra["scale_index"] = scale_index
+    if driver == "zarr" and (cleaned := cleaned_zarray(_read_json(kv, ".zarray"))) is not None:
+        extra["metadata"] = cleaned
+        options = {"open": True, "assume_metadata": True}
     if context is None:
         context = ts.Context({"cache_pool": {"total_bytes_limit": int(cache_bytes)}})
-    return ts.open(spec, read=True, write=False, context=context).result()
+
+    def attempt(kvstore: dict) -> ts.TensorStore:
+        spec = {"driver": driver, "kvstore": kvstore, **extra}
+        return ts.open(spec, read=True, write=False, context=context, **options).result()
+
+    return with_access(kv.specs, attempt)
 
 
 # Per-level metadata is a dict with any of ``voxel_size``, ``units``, ``translation``, ``axes``
