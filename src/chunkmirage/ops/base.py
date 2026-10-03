@@ -28,6 +28,8 @@ class Op(BaseModel):
     * ``output_dtype`` / ``output_info``: describe the result; default is unchanged.
     * ``output_kind``: what the result's values are (``ArrayInfo.kind``): ``image``,
       ``label`` or ``mask``; ``None`` (the default) if the op does not say.
+    * ``cache_token()``: what the result depends on beyond the parameters (a file's
+      modification time, weights replaced in place); part of the op's identity.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -85,11 +87,21 @@ class Op(BaseModel):
             spec["cache"] = self._cache
         return spec
 
+    def cache_token(self) -> str | None:
+        """What this op's output depends on outside its parameters, as a string that changes
+        when that does: a weights file's modification time, a model version. ``None`` (the
+        default): nothing. It is part of ``digest``, so a pipeline built after it changes has
+        new stage keys and new links, and viewers refetch; ``DatasetRegistry.refresh``
+        rebuilds a served dataset to read it again."""
+        return None
+
     def digest(self) -> str:
         """Identity of what the op computes: whether it is cached does not change that."""
-        payload = json.dumps(
-            {"op": self.name, **self.model_dump(mode="json")}, sort_keys=True, default=str
-        ).encode()
+        identity = {"op": self.name, **self.model_dump(mode="json")}
+        token = self.cache_token()
+        if token is not None:
+            identity["@cache_token"] = str(token)
+        payload = json.dumps(identity, sort_keys=True, default=str).encode()
         return hashlib.sha1(payload).hexdigest()[:12]
 
 

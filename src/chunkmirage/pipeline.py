@@ -182,6 +182,7 @@ class Pipeline:
         self.ops: list[Op] = ops_from_specs(ops)
         self.cache = cache if cache is not None else LRUCache()
         self.spec = spec
+        self._options = {"chunk_shape": chunk_shape, "cache_source": cache_source}
         self.levels: list[ChunkedSource] = []
         pinned = next((i for i, op in enumerate(self.ops) if op.input_voxel_size() is not None), None)
         if pinned is None:
@@ -279,6 +280,11 @@ class Pipeline:
             cache_source=spec.cache_source,
             spec=spec,
         )
+
+    def rebuilt(self) -> Pipeline:
+        """This pipeline built again on the same source, cache and settings, with its ops'
+        ``cache_token`` read anew: stages whose external state changed get new keys."""
+        return type(self)(self.source, self.ops, cache=self.cache, spec=self.spec, **self._options)
 
     @property
     def num_levels(self) -> int:

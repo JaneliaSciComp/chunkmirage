@@ -96,7 +96,8 @@ Every cache entry is keyed by `(stage_hash, chunk_index)` where `stage_hash` fol
 * the source identity (path or URL) and scale level; for a `scene://` source, also the
   whole transformation chain, so an edited registration gets fresh keys,
 * the output chunk shape,
-* the spec of every op up to and including this stage.
+* the spec of every op up to and including this stage, with each op's `cache_token()` if
+  it has one (below).
 
 Consequences:
 
@@ -106,6 +107,29 @@ Consequences:
   off the same model output.
 * A pipeline's overall digest appears in served URLs (`/{name}/@{digest}/{format}`) so
   viewers, which cache by URL, refetch after an edit.
+
+### State outside the parameters
+
+An op's output can depend on more than its parameters: model weights replaced in place, a
+lookup file that is rewritten. Such an op returns a string from `cache_token()` that
+changes when that state does, such as the file's modification time or a version number:
+
+```python
+class Model(Op):
+    name = "model"
+    cache = True
+    weights: str
+
+    def cache_token(self):
+        return str(os.path.getmtime(self.weights))
+```
+
+The token is part of the op's identity, so it enters the stage hash and the digest in
+served URLs. A pipeline reads it when it is built, so a running server picks up a change
+when the dataset is rebuilt: `POST /api/datasets/{name}/refresh`, or
+`DatasetRegistry.refresh(name)` (every dataset without a name). Only datasets whose digest
+moved change: they get new keys, new links and a `change` event, and viewers refetch. The
+old entries are evicted as the cache fills. Ops without a token keep the digests they had.
 
 ## Why not cache every stage?
 

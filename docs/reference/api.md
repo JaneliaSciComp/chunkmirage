@@ -16,6 +16,7 @@ no headers.
 | `GET`    | `/api/datasets/{name}`                 | spec, digest, per-level shape/chunks/dtype/voxel size, source URLs |
 | `PUT`    | `/api/datasets/{name}`                 | replace the pipeline live; body is a `PipelineSpec`; returns new digest and URLs |
 | `DELETE` | `/api/datasets/{name}`                 | remove |
+| `POST`   | `/api/datasets/{name}/refresh`         | rebuild the pipeline so its ops' `cache_token` is read again (weights or files they depend on changed); `{"changed", "digest", "sources"}`, and a `change` event if the digest moved ([caching](../concepts/caching.md#state-outside-the-parameters)) |
 | `GET`    | `/api/datasets/{name}/neuroglancer`    | `?format=n5|zarr|zarr3|precomputed&viewer=...` → `{"source", "url"}` |
 | `GET`    | `/api/neuroglancer`                    | same query; one viewer state with a layer per dataset → `{"state", "url", "sources"}` |
 | `GET`    | `/api/events`                          | Server-Sent Events; `change` event on start and after every edit, with digests and source URLs |
