@@ -23,7 +23,9 @@ segment is one `ChunkedSource` stage whose `compute_chunk(index)`:
 1. computes the output chunk's box;
 2. pads it by the **sum of the segment's halos**;
 3. reads that padded box from the previous stage via `read_padded`, voxels beyond the volume
-   repeating the nearest one inside, so a filter or detector sees no step at its border;
+   repeating the nearest one inside, so a filter or detector sees no step at its border
+   (the spec's `"padding": "zero"` pads with zeros instead, as a model trained on
+   zero-padded blocks expects; the browser engine always repeats the edge);
 4. calls each op's `apply_at(block, box)` in turn on the whole padded block;
 5. crops the padding off and casts to the last op's declared output dtype.
 
@@ -43,6 +45,7 @@ schema for free (`GET /api/ops`).
 | `name`                 | identifier used in specs and the CLI (`--op name:key=val`)              |
 | `halo`                 | voxels of context needed on every side; int, per-axis tuple, or a property computed from parameters (e.g. `Gaussian` uses `ceil(sigma * truncate)`) |
 | `cache`                | whether this stage's output chunks are memoized; see [Caching](caching.md) |
+| `slots`                | at most this many `apply` calls of the op at once, across the process (one per GPU, say, or a memory-hungry step); waiting chunks are queued finest level first and dropped when no request wants them any more ([order of work](caching.md#order-of-work-and-requests-given-up-on)). The op runs as a stage of its own, so reading its input holds no slot. Default `None`: as many as the server computes at once |
 | `packages`             | packages `apply` imports beyond numpy, e.g. `("scipy",)`; the schema carries them (`x-packages`) so the browser engine loads them with Python, only for pages whose ops need them |
 | `output_dtype(dtype)`  | result dtype; default unchanged                                         |
 | `output_kind`          | what the result's values are, `image`, `label` (segment ids) or `mask` (inside or not), carried as the output's `ArrayInfo.kind`: viewers show labels and masks as segmentations. Default `None` (not said); `threshold`, `morphology` and `contacts` make masks, `label` and `spots` labels, `cast` keeps its input's |
@@ -101,9 +104,13 @@ resolution, so an op can say which it reads (`input_voxel_size`), and may write 
 (its `output_info` changes the voxel size, through `ArrayInfo.rescaled`). From the first
 such op in a pipeline:
 
-* it runs on one level: the source's at that voxel size (`MultiscaleSource.level_for`), or
-  if none is, the coarsest finer one resampled to it (linear, nearest for labels and masks;
-  the `scene://` resampler). The ops before it run there too;
+* it runs on one level: the source's at that voxel size (`MultiscaleSource.level_for`, to
+  within the spec's `level_rtol`, 1% by default), or if none is, the coarsest finer one
+  resampled to it (linear, nearest for labels and masks; the `scene://` resampler). With
+  the spec's `"input_level": "nearest"` it reads the nearest level as it is instead, a
+  cheap preview: the op then sees voxels of another size than it asked for, and the output
+  is on that level's grid. The ops before it run there too. `GET /api/datasets/{name}`
+  says what was read (`reads`: the level, its voxel size, and whether it was resampled);
 * its output is cached, whatever its `cache` flag says, since the coarser levels are made
   from it: each by `downsample` from the one above, by the source pyramid's own factors
   (mean for images, the most common value for labels and masks), cached too. So the op runs

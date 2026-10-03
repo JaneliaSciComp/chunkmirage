@@ -7,7 +7,7 @@ things: a way to change the pipeline, and a way to make the viewer refetch.
 
 | how                     | where                                         | notes |
 | ----------------------- | --------------------------------------------- | ----- |
-| control page            | `http://localhost:8000/ui`                    | sliders and fields generated from each op's JSON schema; add/remove ops; Neuroglancer embedded in the page or opened in a new tab |
+| control page            | `http://localhost:8000/ui`                    | sliders and fields generated from each op's JSON schema; add/remove ops; Neuroglancer embedded in the page or opened in a new tab. A page for developing and debugging pipelines, not a dashboard: applications build their own interfaces on the REST API |
 | REST                    | `PUT /api/datasets/{name}`                    | any language, `curl`, notebooks, agents |
 | Python                  | `registry.add(name, spec)` / `Viewer.set_ops` | in-process, e.g. from a notebook running the server in a thread |
 

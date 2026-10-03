@@ -121,6 +121,30 @@ class DatasetRegistry:
                 self._resolving.pop(name, None)
         return p
 
+    def refresh(self, name: str | None = None) -> list[str]:
+        """Rebuild dataset ``name`` (every one if None) so its ops' ``cache_token`` is read
+        again, after the state outside their parameters changed. Returns the names whose
+        digest changed: they get new links, and subscribers and ``/api/events`` hear of it."""
+        names = self.names() if name is None else [name]
+        changed = []
+        for n in names:
+            old = self.get(n)
+            if old is None:
+                if name is not None:
+                    raise KeyError(n)
+                continue
+            new = old.rebuilt()
+            if new.digest() == old.digest():
+                continue
+            with self._lock:
+                if self._pipelines.get(n) is not old:  # edited meanwhile: the edit stands
+                    continue
+                self._pipelines[n] = new
+                self.version += 1
+            self._notify(n, new)
+            changed.append(n)
+        return changed
+
     def remove(self, name: str) -> bool:
         with self._lock:
             removed = self._pipelines.pop(name, None) is not None
@@ -293,6 +317,7 @@ def create_app(
                 for op in p.ops
             ],
             "levels": _level_info(p),
+            "reads": p.input_read,
             "sources": links(request, name, p),
         }
 
@@ -376,6 +401,15 @@ def create_app(
             return JSONResponse({"error": "editing disabled"}, 403)
         ok = registry.remove(request.path_params["name"])
         return JSONResponse({"removed": ok}, 200 if ok else 404)
+
+    async def refresh_dataset(request: Request):
+        name = request.path_params["name"]
+        try:
+            changed = await run_in_threadpool(registry.refresh, name)
+        except KeyError:
+            return JSONResponse({"error": "not found"}, 404)
+        p = registry.get(name)
+        return JSONResponse({"changed": bool(changed), "digest": p.digest(), "sources": links(request, name, p)})
 
     async def neuroglancer_one(request: Request):
         name = request.path_params["name"]
@@ -502,6 +536,7 @@ def create_app(
         Route("/api/datasets/{name}", get_dataset, methods=["GET"]),
         Route("/api/datasets/{name}", put_dataset, methods=["PUT"]),
         Route("/api/datasets/{name}", delete_dataset, methods=["DELETE"]),
+        Route("/api/datasets/{name}/refresh", refresh_dataset, methods=["POST"]),
         Route("/api/datasets/{name}/neuroglancer", neuroglancer_one),
         Route("/api/neuroglancer", neuroglancer_all),
         Route("/api/events", events),

@@ -16,13 +16,14 @@ no headers.
 | `GET`    | `/api/datasets/{name}`                 | spec, digest, per-level shape/chunks/dtype/voxel size, source URLs |
 | `PUT`    | `/api/datasets/{name}`                 | replace the pipeline live; body is a `PipelineSpec`; returns new digest and URLs |
 | `DELETE` | `/api/datasets/{name}`                 | remove |
+| `POST`   | `/api/datasets/{name}/refresh`         | rebuild the pipeline so its ops' `cache_token` is read again (weights or files they depend on changed); `{"changed", "digest", "sources"}`, and a `change` event if the digest moved ([caching](../concepts/caching.md#state-outside-the-parameters)) |
 | `GET`    | `/api/datasets/{name}/neuroglancer`    | `?format=n5|zarr|zarr3|precomputed&viewer=...` → `{"source", "url"}` |
 | `GET`    | `/api/neuroglancer`                    | same query; one viewer state with a layer per dataset → `{"state", "url", "sources"}` |
 | `GET`    | `/api/events`                          | Server-Sent Events; `change` event on start and after every edit, with digests and source URLs |
 | `GET`    | `/ui`                                  | built-in control page; see [Interactivity](../concepts/interactivity.md) |
 | `GET`    | `/api/cache`                           | cache stats |
 | `DELETE` | `/api/cache`                           | clear cache |
-| `GET`    | `/api/queue`                           | work waiting and running: chunk requests (`requests`) and each queue of expensive work (`refined blocks`), per level, with what was dropped because its clients left ([caching](../concepts/caching.md#order-of-work-and-requests-given-up-on)) |
+| `GET`    | `/api/queue`                           | work waiting and running: chunk requests (`requests`) and each queue of expensive work (`refined blocks`, and `op <name>` for each op with `slots`), per level, with what was dropped because its clients left ([caching](../concepts/caching.md#order-of-work-and-requests-given-up-on)) |
 | `GET`    | `/{name}/{format}/{path}`              | the spoofed dataset; see [Formats](../concepts/formats.md) |
 | `GET`    | `/{name}/@{digest}/{format}/{path}`    | same, with a cache-busting token |
 
@@ -37,12 +38,16 @@ no headers.
   "voxel_size": [8, 8, 8],           // optional overrides of what the source reports
   "units": ["nm", "nm", "nm"],
   "axes": ["z", "y", "x"],
-  "translation": [0, 0, 0]
+  "translation": [0, 0, 0],
+  "kind": "image",                   // optional: image, label or mask, over what the source guesses
+  "padding": "edge",                 // what ops see past the volume's edge: edge (repeated) or zero
+  "input_level": "resample",         // an op at one voxel size no level has: resample a finer level, or read the nearest
+  "level_rtol": 0.01                 // how near a level's voxel size must be to count as the one asked for
 }
 ```
 
 Responses to `POST`, `PUT` and `GET /api/datasets/{name}` include `digest`, `source_dtype`,
-per-level `levels` (shape, chunks, dtype, voxel size, units, axes, and `kind`: `image`, `label`, `mask` or `null`), `ops_info` (per op: name, per-axis halo, docstring), and `sources`, a map
+per-level `levels` (shape, chunks, dtype, voxel size, units, axes, and `kind`: `image`, `label`, `mask` or `null`), `ops_info` (per op: name, per-axis halo, docstring), `reads` (for an op at one voxel size, what it reads: `level`, `voxel_size`, `resampled`; else `null`), and `sources`, a map
 from format to Neuroglancer source URL carrying the new digest.
 
 ## Datasets resolved by name

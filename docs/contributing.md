@@ -84,3 +84,38 @@ List it under `[project.entry-points."chunkmirage.sources"]` as `ramp = "mypacka
 (see [formats](concepts/formats.md#your-own-schemes-sources-from-other-packages)). Sources
 built into chunkmirage are listed in `chunkmirage.sources.registry` instead, and documented
 in `docs/concepts/formats.md`.
+
+## Plugin API and versioning
+
+Packages build on chunkmirage through its plugin API, which is stable:
+
+* **Ops.** `Op` and its contract: the class attributes `name`, `halo`, `cache`, `packages`,
+  `output_kind` and `slots`; the methods `apply`, `apply_at`, `output_dtype`,
+  `output_info`, `input_voxel_size`, `for_level` and `cache_token`; parameters as pydantic
+  fields. `register` and the `chunkmirage.ops` entry point.
+* **Sources.** `Source` (`info`, `read`, `read_padded`, `cache_key`), `ChunkedSource`,
+  `MultiscaleSource`, `ArrayInfo` and `Box`; an opener `opener(url, *, cache_bytes, cache)`
+  returning a `MultiscaleSource`, registered with `register_source` or the
+  `chunkmirage.sources` entry point; `open_source`.
+* **Serving.** `PipelineSpec`, `Pipeline`, `create_app` and its parameters,
+  `DatasetRegistry` (`add`, `get`, `resolve`, `refresh`, `remove`, `subscribe`) and its
+  resolver, the `chunkmirage.routes` entry point, the REST routes in the
+  [API reference](reference/api.md), the served URL layout, and the CLI's flags.
+
+Everything else may change in any release: names starting with `_`, modules not named
+above (`chunkmirage.fused`, the frontends' internals), log messages, the control page and
+the browser engine.
+
+Versions follow [semantic versioning](https://semver.org). Before 1.0, a minor release
+(0.x.0) may change the stable API, but only with a changelog entry under its own heading
+saying what to change in a plugin, and, where it can, after one minor release in which the
+old way still works and warns. A patch release (0.x.y) never breaks it. From 1.0, a change
+to the stable API waits for a major release.
+
+## Releasing
+
+1. Move the changelog's unreleased entries under the new version, and set that version in
+   `pyproject.toml` and `chunkmirage/__init__.py` (`tests/test_docs.py` checks the three
+   agree).
+2. Merge to `main` with CI green.
+3. Publish to PyPI only when the owners say so: `uv build && uv publish`.

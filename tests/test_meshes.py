@@ -52,7 +52,8 @@ def test_a_balls_surface_is_where_the_ball_is_and_closed(tmp_path):
     parts = [f for f in _fragments(p) if len(f[0])]
     assert len(parts) > 1  # the ball crosses fragments
     verts = np.concatenate([v for v, _ in parts])
-    centre = np.array([13.5, 12, 12]) * 2  # x, y, z in nm (2 nm voxels)
+    # x, y, z in nm (2 nm voxels); funlib's resolution puts voxel 0's corner at 0, its centre at 1 nm
+    centre = (np.array([13.5, 12, 12]) + 0.5) * 2
     radius = np.linalg.norm(verts - centre, axis=1)
     assert radius.mean() == pytest.approx(16, abs=1.0) and radius.max() < 18
     # seamless: every edge of the union is shared by two triangles, once vertices that
@@ -86,7 +87,7 @@ def test_terrain_has_the_elevation_as_height(tmp_path):
         fragment(MeshSpec(kind="terrain", exaggeration=2), p.read(0, box), box, info)
     )
     assert len(verts) == 12 * 16 and len(faces) == 2 * 11 * 15 - 2  # the NaN corner's cell
-    east = verts[:, 0] / 1e9 / 5  # x in pixels
+    east = verts[:, 0] / 1e9 / 5 - 0.5  # x in pixels (funlib's resolution: centres half a pixel in)
     np.testing.assert_allclose(verts[16:, 2] / 1e9, 2 * 0.5 * east[16:], atol=1e-3)
 
 

@@ -7,7 +7,7 @@ from collections.abc import Callable, Sequence
 import numpy as np
 
 from chunkmirage.cache import LRUCache
-from chunkmirage.core import ArrayInfo, Box
+from chunkmirage.core import KINDS, ArrayInfo, Box
 
 
 class Source(ABC):
@@ -39,6 +39,28 @@ class Source(ABC):
     def cache_key(self) -> str:
         """Stable identity used to build cache keys for downstream stages."""
         return f"{type(self).__name__}:{id(self)}"
+
+
+class KindSource(Source):
+    """``inner`` with its values said to be ``kind`` (``ArrayInfo.kind``), whatever it
+    guessed: a uint32 image, or labels stored as uint16."""
+
+    def __init__(self, inner: Source, kind: str | None):
+        if kind not in KINDS:
+            raise ValueError(f"kind must be one of {KINDS}, got {kind!r}")
+        self.inner = inner
+        self._info = inner.info.with_(kind=kind)
+        self._key = f"kind={kind}:{inner.cache_key()}"  # resampled and downsampled differently
+
+    @property
+    def info(self) -> ArrayInfo:
+        return self._info
+
+    def cache_key(self) -> str:
+        return self._key
+
+    def read(self, box: Box) -> np.ndarray:
+        return self.inner.read(box)
 
 
 class ChunkedSource(Source):
@@ -166,3 +188,13 @@ class MultiscaleSource:
             if np.all(v <= want * (1 + rtol)):
                 best = i
         return best, False
+
+    def nearest_level(self, voxel_size: Sequence[float]) -> int:
+        """The level whose voxel size (its last axes) is nearest ``voxel_size``, by ratio
+        (the sum over axes of the size's log ratio); the finer of two as near."""
+        want = np.log(np.asarray(voxel_size, dtype=float))
+        dist = [
+            float(np.abs(np.log(np.asarray(lvl.info.voxel_size[-len(want) :], dtype=float)) - want).sum())
+            for lvl in self.levels
+        ]
+        return min(range(len(dist)), key=lambda i: (round(dist[i], 9), i))

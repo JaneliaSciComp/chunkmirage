@@ -119,3 +119,28 @@ def test_sources_share_one_tensorstore_context(zarr2_path, monkeypatch):
     assert len(seen) >= 2 and all(c is seen[0] for c in seen)
     open_source(zarr2_path, cache_bytes=2 << 20)
     assert seen[-1] is not seen[0]  # another budget, another pool
+
+
+def test_zero_padding_pads_past_the_edge_with_zeros():
+    """A box filter at the volume's edge: with edge padding (the default) a constant volume
+    stays constant there; with zero padding the zeros past the edge pull it down."""
+    from chunkmirage.core import ArrayInfo
+    from chunkmirage.sources.base import MultiscaleSource, Source
+
+    class Constant(Source):
+        info = ArrayInfo((8, 8, 8), np.uint8, (8, 8, 8), (1.0,) * 3, ("",) * 3, ("z", "y", "x"))
+
+        def read(self, box):
+            return np.full(box.shape, 100, np.uint8)
+
+        def cache_key(self):
+            return "constant"
+
+    src = MultiscaleSource([Constant()])
+    ops = [{"op": "uniform", "size": 3}]
+    whole = Box((0, 0, 0), (8, 8, 8))
+    assert np.allclose(Pipeline(src, ops).read(0, whole), 100)
+    zero = Pipeline(src, ops, padding="zero")
+    out = zero.read(0, whole)
+    assert out[4, 4, 4] == 100 and out[0, 4, 4] < 100 and out[0, 0, 0] < out[0, 4, 4]
+    assert zero.digest() != Pipeline(src, ops).digest()

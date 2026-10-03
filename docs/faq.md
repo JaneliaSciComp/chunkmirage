@@ -110,9 +110,9 @@ tool stays thin and correct; Claude writes ops and drives it through the REST/MC
 
 * **Global ops** (connected components, watershed, meshes) need whole-volume context;
   per-chunk with a halo gives a preview whose labels disagree across chunk borders.
-* **Downsampled levels of derived data**: ops currently run independently per scale level.
-  Correct for thresholding, wrong for a model trained at one resolution. Fix planned.
 * **Latency**: a chunk must return in well under a second. Heavy inference on CPU will not.
   Halos multiply the work (a 32-voxel halo on a 64³ chunk computes ~3× the voxels).
 * **Nothing is saved** unless the disk cache lands. What you see is ephemeral.
-* **Single user**: per-process cache, no auth.
+* **One process**: the cache and the registry live in one process, so `--workers` suits
+  fixed pipelines only. `--token` guards the control API (`/api/*`), but the datasets
+  themselves are open to anyone who can reach the server, since viewers send no headers.

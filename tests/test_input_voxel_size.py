@@ -136,3 +136,44 @@ def test_only_a_stages_first_op_changes_the_grid():
     # a pipeline puts such an op at the start of a stage of its own
     p = Pipeline(open_source("synthetic://blobs?shape=16,16,16&chunk=8,8,8&levels=1"), [Scale(factor=2), Downsample()])
     assert p.info(0).shape == (8, 8, 8)
+
+
+class AtTen(Op):
+    """Reads 10 nm voxels, which no level of a 4, 8, 16 nm pyramid has."""
+
+    name = "_at_ten"
+
+    def input_voxel_size(self):
+        return (10.0, 10.0, 10.0)
+
+    def apply(self, block):
+        return block
+
+
+PYRAMID = "synthetic://blobs?shape=64,64,64&chunk=16,16,16&levels=3&voxel_size=4"
+
+
+def test_nearest_level_reads_a_level_as_it_is_and_says_which():
+    resampled = Pipeline(open_source(PYRAMID), [AtTen()])
+    assert resampled.info(0).voxel_size == (10.0, 10.0, 10.0)
+    assert resampled.input_read == {"op": "_at_ten", "index": 0, "wanted": [10.0] * 3, "level": 1,
+                                    "voxel_size": [10.0] * 3, "resampled": True}
+    nearest = Pipeline(open_source(PYRAMID), [AtTen()], input_level="nearest")
+    assert nearest.info(0).voxel_size == (8.0, 8.0, 8.0) and nearest.num_levels == 2
+    assert nearest.input_read["level"] == 1 and nearest.input_read["voxel_size"] == [8.0] * 3
+    assert nearest.input_read["resampled"] is False and nearest.digest() != resampled.digest()
+    spec = {"source": PYRAMID, "ops": [{"op": "threshold", "low": 1}]}
+    app = create_app({"d": Pipeline(open_source(PYRAMID), [AtTen()], input_level="nearest"), "plain": spec})
+    c = TestClient(app)
+    assert c.get("/api/datasets/d").json()["reads"]["voxel_size"] == [8.0] * 3
+    assert c.get("/api/datasets/plain").json()["reads"] is None
+
+
+def test_the_level_tolerance_is_the_pipelines_to_set():
+    class AtNearlyEight(AtTen):
+        def input_voxel_size(self):
+            return (8.5, 8.5, 8.5)
+
+    assert Pipeline(open_source(PYRAMID), [AtNearlyEight()]).input_read["resampled"] is True
+    loose = Pipeline(open_source(PYRAMID), [AtNearlyEight()], level_rtol=0.1)
+    assert loose.input_read["resampled"] is False and loose.info(0).voxel_size == (8.0, 8.0, 8.0)

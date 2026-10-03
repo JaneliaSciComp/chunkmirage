@@ -3,36 +3,151 @@
 tensorstore does all I/O in C++ threads (GIL released), supports async reads, and has its
 own byte-bounded ``cache_pool`` so the *raw* chunks of a remote source are cached without
 any extra work on our side.
+
+Remote stores are read the way a public dataset most likely lets in (``kvstore_specs``):
+``s3://`` anonymously first, then with AWS's default credentials; ``gs://`` with Google's
+default credentials (anonymous without any), then through the bucket's public https URL.
+Which way worked is remembered per bucket. Metadata reads give up after a few seconds.
 """
 
 from __future__ import annotations
 
+import functools
 import json
+import logging
+import os
 import re
 import threading
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 import numpy as np
 import tensorstore as ts
 
-from chunkmirage.core import ArrayInfo, Box
+from chunkmirage.core import ArrayInfo, Box, kind_for_dtype
 from chunkmirage.sources.base import MultiscaleSource, Source
 
+log = logging.getLogger("chunkmirage")
+T = TypeVar("T")
 
-def _open_kvstore(url_or_path: str) -> ts.KvStore:
-    """Open a kvstore rooted at a *directory*; tensorstore concatenates keys literally, so
-    the root must end in '/'."""
+#: How a metadata read retries a failing request: about 5 s in all. tensorstore's default,
+#: 32 retries of up to 32 s each, keeps a mistyped host's dataset opening for many minutes.
+METADATA_RETRIES = {"max_retries": 5, "initial_delay": "0.2s", "max_delay": "2s"}
+GCS_PUBLIC_URL = "https://storage.googleapis.com"
+
+
+def kvstore_specs(url_or_path: str) -> list[dict]:
+    """The tensorstore kvstore specs that read the directory ``url_or_path``, in the order to
+    try them. ``s3://``: anonymously, then with AWS's default credentials (S3 refuses even a
+    public read signed with a stale or foreign key). ``gs://``: Google's default credentials
+    (anonymous without any, tensorstore's rule), then the bucket's public https URL, for
+    credentials that are there but broken (``TENSORSTORE_GCS_HTTP_URL`` moves it). Anything
+    else: one way. Each path ends in '/': tensorstore concatenates keys literally."""
     root = url_or_path if url_or_path.endswith("/") else url_or_path + "/"
-    if re.match(r"^(s3|gs|http|https|file|memory)://", root):
-        return ts.KvStore.open(root).result()
-    return ts.KvStore.open({"driver": "file", "path": root}).result()
+    if not re.match(r"^(s3|gs|http|https|file|memory)://", root):
+        return [{"driver": "file", "path": root}]
+    spec = ts.KvStore.Spec(root).to_json()
+    if spec["driver"] == "s3":
+        return [{**spec, "aws_credentials": {"type": t}} for t in ("anonymous", "default")]
+    if spec["driver"] == "gcs":
+        public = (os.environ.get("TENSORSTORE_GCS_HTTP_URL") or GCS_PUBLIC_URL).rstrip("/")
+        path = f"/{spec['bucket']}/{spec.get('path', '')}"
+        return [spec, {"driver": "http", "base_url": public, "path": path}]
+    return [spec]
 
 
-def _read_json(kv: ts.KvStore, key: str) -> dict | None:
-    r = kv.read(key).result()
-    if r.state != "value":
+_admitted: dict[tuple[str, str], int] = {}  # (driver, bucket) -> the spec that was let in
+
+
+def _refused(error: Exception) -> bool:
+    return str(error).startswith(("PERMISSION_DENIED", "UNAUTHENTICATED"))
+
+
+def with_access(specs: list[dict], attempt: Callable[[dict], T]) -> T:
+    """``attempt(spec)`` with each of ``specs`` in turn, moving on only while access is
+    refused; the one let in is tried first next time, for its bucket. Any other error, and
+    the last refusal, is raised."""
+    if len(specs) == 1:
+        return attempt(specs[0])
+    key = (specs[0]["driver"], specs[0].get("bucket", ""))
+    first = _admitted.get(key, 0)
+    order = [first] + [i for i in range(len(specs)) if i != first]
+    for i in order[:-1]:
+        try:
+            result = attempt(specs[i])
+        except Exception as e:
+            if not _refused(e):
+                raise
+            log.info("%s refused a read (%s); trying the next way in", key, str(e).splitlines()[0][:200])
+            continue
+        _admitted[key] = i
+        return result
+    result = attempt(specs[order[-1]])
+    _admitted[key] = order[-1]
+    return result
+
+
+def metadata_spec(spec: dict) -> dict:
+    """``spec`` with its requests' retries capped (``METADATA_RETRIES``), for metadata reads."""
+    if spec["driver"] not in ("s3", "gcs", "http"):
+        return spec
+    return {**spec, "context": {f"{spec['driver']}_request_retries": METADATA_RETRIES}}
+
+
+@functools.lru_cache(maxsize=512)
+def _metadata_kvstore(spec_json: str) -> ts.KvStore:
+    return ts.KvStore.open(metadata_spec(json.loads(spec_json))).result()
+
+
+class Location:
+    """A directory (local, or an ``s3://``, ``gs://`` or ``http(s)://`` URL) and the ways to
+    read it (``kvstore_specs``): what ``_open_kvstore`` returns."""
+
+    def __init__(self, url_or_path: str):
+        self.specs = kvstore_specs(url_or_path)
+
+    def read(self, key: str) -> bytes | None:
+        """The file ``key`` in the directory, None if it is not there."""
+
+        def attempt(spec):
+            r = _metadata_kvstore(json.dumps(spec, sort_keys=True)).read(key).result()
+            return bytes(r.value) if r.state == "value" else None
+
+        return with_access(self.specs, attempt)
+
+
+def _open_kvstore(url_or_path: str) -> Location:
+    """The directory ``url_or_path``, to read metadata from."""
+    return Location(url_or_path)
+
+
+def _read_json(kv: Location, key: str) -> dict | None:
+    data = kv.read(key)
+    return None if data is None else json.loads(data.decode())
+
+
+# Compressor members tensorstore knows; it rejects any other (numcodecs >= 0.13 writes zstd's
+# "checksum", for one)
+_ZARR2_COMPRESSOR_FIELDS = {
+    "zstd": {"id", "level"},
+    "zlib": {"id", "level"},
+    "gzip": {"id", "level"},
+    "bz2": {"id", "level"},
+    "blosc": {"id", "cname", "clevel", "shuffle", "blocksize"},
+}
+
+
+def cleaned_zarray(meta: dict | None) -> dict | None:
+    """A zarr v2 ``.zarray`` without the compressor members tensorstore rejects, or None if
+    it has none of them."""
+    compressor = (meta or {}).get("compressor")
+    if not isinstance(compressor, dict):
         return None
-    return json.loads(bytes(r.value).decode())
+    allowed = _ZARR2_COMPRESSOR_FIELDS.get(compressor.get("id", ""))
+    if allowed is None or set(compressor) <= allowed:
+        return None
+    log.info("ignoring compressor members %s tensorstore does not know", sorted(set(compressor) - allowed))
+    return {**meta, "compressor": {k: v for k, v in compressor.items() if k in allowed}}
 
 
 def _detect_driver(kv: ts.KvStore) -> str | None:
@@ -98,16 +213,42 @@ def open_tensorstore(
     driver = driver or _detect_driver(kv)
     if driver is None or driver.endswith("-group"):
         raise ValueError(f"{path}: not an array (driver detected: {driver})")
-    spec: dict[str, Any] = {"driver": driver, "kvstore": kv.spec().to_json()}
+    extra: dict[str, Any] = {}
+    options: dict[str, Any] = {}
     if driver == "neuroglancer_precomputed" and scale_index is not None:
-        spec["scale_index"] = scale_index
+        extra["scale_index"] = scale_index
+    if driver == "zarr" and (cleaned := cleaned_zarray(_read_json(kv, ".zarray"))) is not None:
+        extra["metadata"] = cleaned
+        options = {"open": True, "assume_metadata": True}
     if context is None:
         context = ts.Context({"cache_pool": {"total_bytes_limit": int(cache_bytes)}})
-    return ts.open(spec, read=True, write=False, context=context).result()
+
+    def attempt(kvstore: dict) -> ts.TensorStore:
+        spec = {"driver": driver, "kvstore": kvstore, **extra}
+        return ts.open(spec, read=True, write=False, context=context, **options).result()
+
+    return with_access(kv.specs, attempt)
 
 
 # Per-level metadata is a dict with any of ``voxel_size``, ``units``, ``translation``, ``axes``
 # (C order, length ndim); missing keys fall back to defaults in ``from_path``.
+#
+# ``translation`` is where voxel 0's centre is, as in OME-Zarr (and as Neuroglancer reads
+# OME-Zarr: it moves each voxel back by half to its corner). Conventions that give voxel 0's
+# corner are moved by half a voxel on reading: precomputed's ``voxel_offset`` and funlib's
+# ``offset`` (a region's start), as Neuroglancer and funlib place them.
+
+
+def corner_to_centre(corner, voxel_size, axes=None) -> tuple[float, ...]:
+    """Voxel 0's centre from its corner, both C order and one entry per axis: half a voxel on
+    along the spatial axes (those named z, y or x, else the last three), not along channels
+    or time."""
+    n = len(corner)
+    spatial = {a for a in range(n) if (axes[a] in ("z", "y", "x") if axes else a >= n - 3)}
+    return tuple(
+        float(c) + (float(v) / 2 if a in spatial else 0.0)
+        for a, (c, v) in enumerate(zip(corner, voxel_size))
+    )
 
 
 def _per_axis(vals, ndim: int, fill, reverse: bool = False) -> tuple | None:
@@ -160,7 +301,12 @@ def _n5_scale_metadata(attrs: dict, ndim: int, group_attrs: dict, name: str) -> 
     """Voxel size / units / translation / axes for an N5 level, in priority order:
     the level's ``transform``; the parent group's ``multiscales[].datasets[].transform``
     matched by path; ``pixelResolution``/``resolution`` (level, else group) times the
-    level's ``downsamplingFactors``, plus ``offset``. Plain N5 lists are x-first."""
+    level's ``downsamplingFactors``, plus ``offset``. Plain N5 lists are x-first.
+
+    funlib's ``resolution``/``offset`` give voxel 0's corner (``offset``, 0 if absent).
+    ``pixelResolution`` without an offset is BigDataViewer's convention, voxel centres on
+    whole multiples of the full-resolution size: a level downsampled by ``f`` has its
+    first centre ``(f - 1) / 2`` full-resolution voxels on."""
     if isinstance(attrs.get("transform"), dict):
         return _transform_metadata(attrs["transform"], ndim)
     ds = _find_dataset(group_attrs, name)
@@ -175,14 +321,26 @@ def _n5_scale_metadata(attrs: dict, ndim: int, group_attrs: dict, name: str) -> 
     elif isinstance(base.get("resolution"), list):
         res = base["resolution"]
     meta: dict = {}
+    offset = attrs.get("offset")
+    offset = offset if isinstance(offset, list) else None
+    factors = attrs.get("downsamplingFactors")
+    level_res = None
     if isinstance(res, list):
-        factors = attrs.get("downsamplingFactors")
         if isinstance(factors, list) and len(factors) == len(res):
-            res = [float(r) * float(f) for r, f in zip(res, factors)]
-        meta["voxel_size"] = _floats(_per_axis(res, ndim, 1.0, reverse=True))
+            level_res = [float(r) * float(f) for r, f in zip(res, factors)]
+        else:
+            factors, level_res = None, [float(r) for r in res]
+        meta["voxel_size"] = _floats(_per_axis(level_res, ndim, 1.0, reverse=True))
     meta["units"] = _per_axis(units, ndim, "", reverse=True)
-    meta["translation"] = _floats(_per_axis(attrs.get("offset"), ndim, 0.0, reverse=True))
     meta["axes"] = _per_axis(attrs.get("axes") or group_attrs.get("axes"), ndim, None, True)
+    if offset is not None or "resolution" in base:  # funlib: the corner of voxel 0
+        corner = _floats(_per_axis(offset or [], ndim, 0.0, reverse=True))
+        if corner is not None:
+            sizes = meta.get("voxel_size") or (1.0,) * ndim
+            meta["translation"] = corner_to_centre(corner, sizes, meta["axes"])
+    elif factors is not None:  # BigDataViewer's levels: centred on their blocks
+        centre = [(float(f) - 1) / 2 * float(r) for r, f in zip(res, factors)]
+        meta["translation"] = _floats(_per_axis(centre, ndim, 0.0, reverse=True))
     return {k: v for k, v in meta.items() if v is not None}
 
 
@@ -244,18 +402,25 @@ def _ome_scale_metadata(group_attrs: dict, name: str, ndim: int) -> dict | None:
 
 def _zarr_array_metadata(attrs: dict, ndim: int) -> dict:
     """Legacy per-array attributes (C order): funlib-style ``resolution``/``voxel_size``,
-    ``offset``, ``units``, ``axis_names``, or a COSEM-style ``transform``."""
+    ``offset``, ``units``, ``axis_names``, or a COSEM-style ``transform``. funlib's
+    ``offset`` is voxel 0's corner (0 if absent while a resolution is given)."""
     if isinstance(attrs.get("transform"), dict):
         return _transform_metadata(attrs["transform"], ndim)
     res = attrs.get("voxel_size", attrs.get("resolution"))
     units = attrs.get("units")
     if isinstance(units, str) and isinstance(res, list):
         units = [units] * len(res)
+    voxel_size = _floats(_per_axis(res, ndim, 1.0))
+    axes = _per_axis(attrs.get("axis_names"), ndim, None)
+    translation = None
+    if isinstance(attrs.get("offset"), list) or voxel_size is not None:
+        corner = _per_axis(attrs.get("offset"), ndim, 0.0) or (0.0,) * ndim
+        translation = corner_to_centre(corner, voxel_size or (1.0,) * ndim, axes)
     meta = {
-        "voxel_size": _floats(_per_axis(res, ndim, 1.0)),
-        "translation": _floats(_per_axis(attrs.get("offset"), ndim, 0.0)),
+        "voxel_size": voxel_size,
+        "translation": translation,
         "units": _per_axis(units, ndim, ""),
-        "axes": _per_axis(attrs.get("axis_names"), ndim, None),
+        "axes": axes,
     }
     return {k: v for k, v in meta.items() if v is not None}
 
@@ -317,13 +482,14 @@ def _cf_decoding(attrs: dict, store: ts.TensorStore) -> tuple[float, float, floa
 
 
 def _precomputed_scale_metadata(info: dict, scale_index: int | None, ndim: int) -> dict:
-    """``resolution`` (nm) and ``voxel_offset`` (voxels) of one scale, x-first -> C order."""
+    """``resolution`` (nm) and ``voxel_offset`` (voxels) of one scale, x-first -> C order.
+    ``voxel_offset`` is the first voxel's corner, in voxels, as Neuroglancer places it."""
     try:
         sc = info["scales"][scale_index or 0]
         res = [float(v) for v in sc["resolution"]]
     except (KeyError, IndexError, TypeError):
         return {}
-    off = [float(o) * r for o, r in zip(sc.get("voxel_offset", [0] * len(res)), res)]
+    off = [(float(o) + 0.5) * r for o, r in zip(sc.get("voxel_offset", [0] * len(res)), res)]
     lead = ndim - len(res)  # the trailing channel axis is leading once transposed
     return {
         "voxel_size": (1.0,) * lead + tuple(res[::-1]),
@@ -431,14 +597,16 @@ class TensorStoreSource(Source):
         def pick(override, key, default):
             return tuple(override) if override is not None else meta.get(key, default)
 
+        dtype = np.dtype(np.float32) if decode else store.dtype.numpy_dtype
         info = ArrayInfo(
             shape=shape,
-            dtype=np.dtype(np.float32) if decode else store.dtype.numpy_dtype,
+            dtype=dtype,
             chunk_shape=chunk_shape,
             voxel_size=pick(voxel_size, "voxel_size", (1.0,) * ndim),
             units=pick(units, "units", ("",) * ndim),
             axes=pick(axes, "axes", ArrayInfo.default_axes(ndim)),
             translation=pick(translation, "translation", (0.0,) * ndim),
+            kind=None if decode else kind_for_dtype(dtype),  # override: open_source(kind=)
         )
         return cls(store, info, key=f"ts:{path}", decode=decode)
 

@@ -19,11 +19,19 @@ describe shipped features as future work.
     ([formats](concepts/formats.md#your-own-schemes-sources-from-other-packages)), `kind`
     on `ArrayInfo` (`output_kind`), ops at one resolution with the pyramid downsampled from
     them ([pipelines](concepts/pipelines.md#ops-at-one-resolution)), and a token on `/api/*`
-    ([API](reference/api.md)). What is left is the consumer's own port: its ops as `Op`
-    subclasses, its scripts that read the data themselves as a source scheme, its launcher
-    starting `chunkmirage serve`.
-2. **Materialize-on-browse with a disk cache.** Back the cache with a real zarr on local or
-   shared storage so it persists, is shared across workers, and doubles as a partially
+    ([API](reference/api.md)). So have the hooks an application needs to build on
+    chunkmirage as an ordinary dependency: datasets built from their name on first request
+    ([resolvers](reference/api.md#datasets-resolved-by-name)), routes of its own and the app
+    mounted inside another ([API](reference/api.md#routes-of-your-own)), `serve --ready-file`
+    for launchers ([CLI](reference/cli.md)), ops whose output depends on state outside their
+    parameters ([`cache_token`](concepts/caching.md#state-outside-the-parameters)), a limit
+    on how many calls of an op run at once (`slots`, [pipelines](concepts/pipelines.md#ops)),
+    reading the nearest level as it is (`input_level`), zero padding, labels told apart from
+    images by dtype, and remote stores read anonymously first. What is left is the
+    consumer's own port: its ops as `Op` subclasses, its scripts that read the data
+    themselves as a source scheme, its launcher starting `chunkmirage serve`.
+2. **Materialize-on-browse with a disk cache.** Opt-in, off by default. Back the cache with
+   a real zarr on local or shared storage so it persists, is shared across workers, and doubles as a partially
    computed output. Add a background filler that expands outward from requested chunks: the
    viewer becomes the job scheduler. (Ordering the work by what clients ask for, and
    dropping what they stop waiting for, has shipped; see
@@ -33,7 +41,8 @@ describe shipped features as future work.
    served pipeline and running downstream analysis with no intermediate written.
 4. **DAG pipelines, multi-source ops.** Named stages with fan-out (one model, many
    post-processors) and a `Combine` op taking another pipeline as input. Unlocks masking,
-   model-vs-model disagreement views, registration overlays. (The two-input case has
+   the difference of any two sources (two models' outputs, two conditions), registration
+   overlays. (The two-input case has
    shipped in its simplest form: `stack://` serves images on one grid as channels and an
    op such as `contacts` consumes them; see
    [formats](concepts/formats.md#stack-sources-several-images-as-one-arrays-channels).)
@@ -93,6 +102,12 @@ describe shipped features as future work.
       (wgpu-py), as one implementation of the solver for both, is still to be measured
       against PyTorch.
 
+10. **Domain ops and sources as plugin packages.** A proposal, not a decision: the geo
+    and microscopy demos' ops and sources move to `chunkmirage-geo` and
+    `chunkmirage-microscopy`, registered through the entry points any plugin uses, so the
+    core stays general and the plugin API is exercised by real use
+    ([design](design.md#what-stays-in-the-core-a-proposal)).
+
 ## Untapped potential
 
 * **Every zarr reader is a client.** dask, xarray, tensorstore, napari, Fiji and
@@ -101,7 +116,10 @@ describe shipped features as future work.
 * **Derived datasets as specs.** A pipeline spec is a few hundred bytes; publishing a
   derived view of a public dataset costs no storage, and stateless chunks could run
   serverless.
-* **Active learning loop.** Serve model uncertainty as a layer, take annotations back from
-  Neuroglancer, fine-tune, invalidate the inference stage.
+* **Invalidation when outside state changes.** An op's `cache_token` and a dataset refresh
+  give a stage new keys when the files or weights it depends on change, and viewers refetch
+  ([caching](concepts/caching.md#state-outside-the-parameters)). Loops built on it, such as
+  annotating, fine-tuning and serving the new model, belong to the applications that use
+  chunkmirage (cellmap-flow's, for models), not to chunkmirage.
 * **Claude in the loop.** With Neuroglancer's screenshot endpoint plus the REST API, an
   agent can render, look, adjust and repeat.
