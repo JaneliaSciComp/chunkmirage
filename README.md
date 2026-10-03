@@ -2,6 +2,14 @@
 
 **Spoof chunked array formats over HTTP with on-the-fly processing.**
 
+chunkmirage serves *virtual* datasets that look, to any HTTP-capable viewer or library
+(Neuroglancer, BigDataViewer/Fiji, vizarr, napari, webKnossos, zarr-python, dask,
+tensorstore, ...), like ordinary Zarr v2, Zarr v3, N5 or Neuroglancer precomputed volumes.
+Nothing exists on disk. Each chunk is computed when it is requested: read from a real
+source (zarr, N5, precomputed, HDF5, GeoTIFF; local, S3, GCS or HTTP) or generated, pushed
+through a pipeline of ops, encoded in the format the client asked for, and cached per
+stage, so changing a parameter downstream never recomputes what comes before it.
+
 **▶ [Try the demos in your browser](https://yuriyzubov.github.io/chunkmirage/browser/)**,
 nothing to install. Every chunk on screen is computed in the page by chunkmirage's own
 Python, from public data, as the viewer asks for it.
@@ -19,13 +27,7 @@ mRNA spots and nuclei tracked through a colony. Each shows the `chunkmirage serv
 that serves the same from Python. The [demos page](docs/demos.md) lists them all, with the
 Python examples.
 
-chunkmirage serves *virtual* datasets that look, to any HTTP-capable viewer or library
-(Neuroglancer, BigDataViewer/Fiji, vizarr, napari, webKnossos, zarr-python, dask,
-tensorstore, ...), like ordinary Zarr v2, Zarr v3, N5 or Neuroglancer precomputed volumes.
-Nothing exists on disk. Each chunk is computed when it is requested: read from a real
-source (zarr, N5, precomputed, HDF5, GeoTIFF; local, S3, GCS or HTTP) or generated, pushed
-through a pipeline of ops, encoded in the format the client asked for, and cached per
-stage, so changing a parameter downstream never recomputes what comes before it.
+## How it works
 
 ```
 viewer  --HTTP-->  chunkmirage  --tensorstore/h5py-->  real data (zarr/n5/precomputed/hdf5, file/s3/gcs/http)
