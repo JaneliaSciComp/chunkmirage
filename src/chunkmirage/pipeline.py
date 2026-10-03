@@ -196,13 +196,51 @@ def _changes_grid(a: ArrayInfo, b: ArrayInfo) -> bool:
                for v, w in zip(a.voxel_size[-k:], b.voxel_size[-k:]))
 
 
+class BlockMeanSource(Source):
+    """``inner`` on voxels ``factor`` times bigger along its last axes, each the mean of the
+    block it covers (rounded back to an integer dtype), as a stored pyramid level is made.
+    The array's last block along an axis repeats its edge (``downsample``)."""
+
+    def __init__(self, inner: Source, factor: Sequence[int]):
+        self.inner, self.factor = inner, [int(f) for f in factor]
+        k = len(self.factor)
+        info = inner.info
+        self._info = info.rescaled([v * f for v, f in zip(info.voxel_size[-k:], self.factor)])
+        self._down = Downsample(factor=self.factor)  # its mode is the mean
+        self._key = f"blockmean:{tuple(self.factor)}:{inner.cache_key()}"
+
+    @property
+    def info(self) -> ArrayInfo:
+        return self._info
+
+    def cache_key(self) -> str:
+        return self._key
+
+    def read(self, box: Box) -> np.ndarray:
+        k, lead = len(self.factor), box.ndim - len(self.factor)
+        stop = self.inner.info.shape[-k:]
+        start = box.start[:lead] + tuple(a * f for a, f in zip(box.start[lead:], self.factor))
+        end = box.stop[:lead] + tuple(min(b * f, n) for b, f, n in zip(box.stop[lead:], self.factor, stop))
+        return self._down.apply(self.inner.read(Box(start, end)))
+
+
 def _resampled(src: Source, voxel_size: Sequence[float]) -> Source:
     """``src`` on voxels of ``voxel_size`` along its last axes, over the same extent (voxel
-    centres as ``ArrayInfo.rescaled`` puts them): linear, or nearest for labels and masks."""
+    centres as ``ArrayInfo.rescaled`` puts them). Along axes it shrinks by a whole factor of
+    2 or more, each voxel is the mean of the block it covers (sampling only the middle of a
+    block of 3 or 4 aliases); the rest linearly; labels and masks by nearest voxel."""
     from chunkmirage.sources.scene import SceneLevelSource
     from chunkmirage.transforms import Affine
 
     info, m = src.info, len(voxel_size)
+    labels = info.kind in ("label", "mask")
+    ratio = [float(w) / float(v) for v, w in zip(info.voxel_size[-m:], voxel_size)]
+    whole = [round(r) if r >= 2 - 1e-6 and abs(r - round(r)) < 1e-6 else 1 for r in ratio]
+    if not labels and any(f > 1 for f in whole):
+        src = BlockMeanSource(src, whole)
+        if all(f > 1 or abs(r - 1) < 1e-9 for f, r in zip(whole, ratio)):
+            return src
+        info = src.info
     out = info.rescaled(voxel_size)
     step = [w / v for v, w in zip(info.voxel_size[-m:], out.voxel_size[-m:])]
     shift = [(t_out - t) / v for t, t_out, v in zip(info.translation[-m:], out.translation[-m:], info.voxel_size[-m:])]

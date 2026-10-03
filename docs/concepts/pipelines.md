@@ -110,7 +110,10 @@ such op in a pipeline:
 
 * it runs on one level: the source's at that voxel size (`MultiscaleSource.level_for`, to
   within the spec's `level_rtol`, 1% by default), or if none is, the coarsest finer one
-  resampled to it (linear, nearest for labels and masks; the `scene://` resampler). With
+  resampled to it: along an axis it shrinks by a whole factor of 2 or more, each voxel is
+  the mean of the block it covers (rounded back to an integer dtype, as a stored pyramid
+  level is); along the others, linearly (the `scene://` resampler); labels and masks by
+  nearest voxel. With
   the spec's `"input_level": "nearest"` it reads the nearest level as it is instead, a
   cheap preview: the op then sees voxels of another size than it asked for, and the output
   is on that level's grid. The ops before it run there too. `GET /api/datasets/{name}`
