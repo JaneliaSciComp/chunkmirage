@@ -116,3 +116,21 @@ def test_a_cancelled_claim_stops_work_before_it_starts():
 def test_the_queues_are_reported():
     body = TestClient(create_app({})).get("/api/queue").json()
     assert {"computing", "waiting on queued work", "slots"} <= set(body["requests"])
+
+
+def test_a_request_keeps_its_place_however_long_its_input_takes_to_read():
+    """Two requests for one level: the first arrives first but its input reads slowly, so its
+    job reaches the queue second. With the one slot busy meanwhile, it still runs first: its
+    place in line is when its request arrived, not when its job was queued."""
+    queue = demand.Queue(slots=1)
+    release = _blocked(queue)
+    early, late = demand.Claim(), demand.Claim()  # the requests, in the order they arrived
+    order = []
+    late_thread = _ask(queue, "late", 0, order, late)  # its input was quick to read
+    time.sleep(0.1)
+    early_thread = _ask(queue, "early", 0, order, early)  # its slow read done only now
+    time.sleep(0.1)
+    release.set()
+    for t in (late_thread, early_thread):
+        t.join(5)
+    assert order == ["early", "late"]

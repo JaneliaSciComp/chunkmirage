@@ -5,7 +5,10 @@ A request holds a :class:`Claim` on the work it needs (the server sets one per c
 as :data:`current_claim`, and cancels it when the client disconnects). Expensive work goes
 through a :class:`Queue`: a few jobs run at once; among those waiting, the finest level goes
 first (a client asking for one place at two levels, as a viewer does to show a coarse
-placeholder while the fine chunk computes, wants the finer), then the first asked for. A waiting job whose every claim is
+placeholder while the fine chunk computes, wants the finer), then the one whose request
+arrived first: a request takes its place in line when it arrives (its claim's ``seq``),
+not when its job reaches the queue, so jobs whose inputs took different times to read
+still run in the order clients asked for them. A waiting job whose every claim is
 cancelled is dropped without running, and whoever waits on it gets :class:`Cancelled`; one
 already running finishes, and its result is kept. Work asked for outside a request (from
 Python, with no claim) is never dropped. The server bounds how many requests compute at once
@@ -30,10 +33,16 @@ class Cancelled(Exception):
     """No request wants this work any more."""
 
 
+#: one sequence for requests' arrivals and for work asked for with no request, so they compare
+_arrivals = itertools.count()
+
+
 class Claim:
-    """A request's hold on the work it needs, cancelled when its client stops waiting."""
+    """A request's hold on the work it needs, cancelled when its client stops waiting.
+    ``seq`` is its place in line, taken when the request arrives."""
 
     def __init__(self):
+        self.seq = next(_arrivals)
         self.cancelled = False
         self._hooks: list[Callable[[], None]] = []
         self._lock = threading.Lock()
@@ -131,13 +140,19 @@ def _waiting():
 class _Job:
     def __init__(self, level: int):
         self.level = level
-        self.seq = 0  # when it was first asked for
+        self.seq = float("inf")  # when it was first asked for without a claim
         self.claims: set[Claim] = set()
         self.kept = False  # asked for without a claim: never dropped
         self.state = "new"  # new, waiting, running, done, dropped
         self.result: Any = None
         self.error: BaseException | None = None
         self.done = threading.Event()
+
+
+def _arrival(job: _Job) -> float:
+    """The earliest place in line among the requests still waiting on ``job`` (and work
+    asked for with no request)."""
+    return min([c.seq for c in job.claims] + [job.seq])
 
 
 class Queue:
@@ -148,7 +163,6 @@ class Queue:
         self._cond = threading.Condition()
         self._jobs: dict[Any, _Job] = {}
         self._running = 0
-        self._seq = itertools.count()
         self.dropped = 0
         self.done_per_level: Counter[int] = Counter()
         self.seconds = 0.0
@@ -163,9 +177,9 @@ class Queue:
             owner = job is None
             if owner:
                 job = self._jobs[key] = _Job(level)
-                job.seq = next(self._seq)
             if claim is None:
                 job.kept = True
+                job.seq = min(job.seq, next(_arrivals))
             else:
                 job.claims.add(claim)
         if claim is not None:
@@ -216,7 +230,7 @@ class Queue:
             waiting = [j for j in self._jobs.values() if j.state == "waiting"]
             if not waiting:
                 break
-            best = min(waiting, key=lambda j: (j.level, j.seq))  # finest, then first asked
+            best = min(waiting, key=lambda j: (j.level, _arrival(j)))  # finest, then first in line
             best.state = "running"
             self._running += 1
         self._cond.notify_all()

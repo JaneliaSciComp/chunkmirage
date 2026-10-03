@@ -15,8 +15,8 @@ The first release.
 - A per-stage chunk cache keyed by the pipeline's hash, and cache-busting digests in links.
 - Live edits through the REST API, Server-Sent Events, a control page and a
   python-neuroglancer viewer that follows them.
-- Work bounded, shared between requests and ordered finest level first; work no client
-  waits for any more is dropped.
+- Work bounded, shared between requests and ordered finest level first, then by when
+  each request arrived; work no client waits for any more is dropped.
 - `--token` for the control API, `--https` with a self-signed certificate.
 - zarr v2 and v3 chunks compressed with blosc (zstd, byte shuffle) by default, 10 to 30
   times quicker to encode than gzip; `--compressor` chooses another. `--cache-gb` takes effect (an empty cache
