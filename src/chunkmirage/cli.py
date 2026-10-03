@@ -28,6 +28,16 @@ def _parse_op(text: str) -> dict:
     return spec
 
 
+def load_object(ref: str):
+    """The object ``module:attribute`` names (``--resolver``)."""
+    import importlib
+
+    module, _, attr = ref.partition(":")
+    if not module or not attr:
+        raise typer.BadParameter(f"{ref!r}: expected module:function")
+    return getattr(importlib.import_module(module), attr)
+
+
 def write_ready_file(path: str, info: dict) -> None:
     """Announce a started server: ``info`` as JSON in ``path``, written whole (a reader never
     sees half of it), or as one line on stdout for ``-``."""
@@ -173,6 +183,11 @@ def serve(
         help="threads computing chunks (0 = 2 x CPU count, min 40). numpy/scipy/tensorstore "
         "release the GIL, so this is the effective parallelism",
     ),
+    resolver: str | None = typer.Option(
+        None,
+        help="module:function building the pipeline (a PipelineSpec, dict or Pipeline) for a "
+        "dataset name nobody registered, or None; called on the first request for it",
+    ),
     token: str | None = typer.Option(
         None,
         envvar="CHUNKMIRAGE_TOKEN",
@@ -218,6 +233,8 @@ def serve(
         select=select,
         mesh=mesh,
     )
+    if resolver:
+        registry.resolver = load_object(resolver)
     # Bound before any address is printed or announced, so nothing can take the port meanwhile
     sock = bind_socket(host, port)
     bound = sock.getsockname()[1]

@@ -54,6 +54,8 @@ from chunkmirage.pipeline import Pipeline, PipelineSpec
 log = logging.getLogger("chunkmirage")
 
 ChangeCallback = Callable[[str, "Pipeline | None"], None]
+#: Builds the pipeline for a dataset name nobody registered, or returns None if it has none
+Resolver = Callable[[str], "Pipeline | PipelineSpec | dict | None"]
 
 
 class DatasetRegistry:
@@ -61,13 +63,24 @@ class DatasetRegistry:
 
     ``version`` increments on every add/remove; ``subscribe`` registers a callback invoked
     (outside the lock, in the editing thread) with ``(name, pipeline_or_None)``.
+
+    ``resolver``, if given, is asked for a name requested but not registered (``resolve``):
+    what it returns is built and registered under that name, once however many requests
+    ask at the same time, and served from then on like any other dataset.
     """
 
-    def __init__(self, cache: LRUCache | None = None, source_cache_bytes: int = 0):
+    def __init__(
+        self,
+        cache: LRUCache | None = None,
+        source_cache_bytes: int = 0,
+        resolver: Resolver | None = None,
+    ):
         self.cache = cache or LRUCache()
         self.source_cache_bytes = source_cache_bytes
+        self.resolver = resolver
         self._pipelines: dict[str, Pipeline] = {}
         self._lock = threading.RLock()
+        self._resolving: dict[str, threading.Lock] = {}
         self._callbacks: list[ChangeCallback] = []
         self.version = 0
         #: URL of an attached python-neuroglancer viewer, if any (set by chunkmirage.viewer.Viewer)
@@ -87,6 +100,26 @@ class DatasetRegistry:
     def get(self, name: str) -> Pipeline | None:
         with self._lock:
             return self._pipelines.get(name)
+
+    def resolve(self, name: str) -> Pipeline | None:
+        """The pipeline named ``name``: the registered one, else the one the resolver builds
+        for it (then registered), else None. Exceptions from the resolver propagate."""
+        p = self.get(name)
+        if p is not None or self.resolver is None:
+            return p
+        with self._lock:
+            lock = self._resolving.setdefault(name, threading.Lock())
+        try:
+            with lock:  # one build per name; later callers find it registered
+                p = self.get(name)
+                if p is None:
+                    found = self.resolver(name)
+                    if found is not None:
+                        p = self.add(name, found)
+        finally:
+            with self._lock:
+                self._resolving.pop(name, None)
+        return p
 
     def remove(self, name: str) -> bool:
         with self._lock:
@@ -197,6 +230,7 @@ def create_app(
     token: str | None = None,
     extra_routes: Sequence[BaseRoute] = (),
     route_plugins: bool = True,
+    resolver: Resolver | None = None,
 ) -> Starlette:
     """The ASGI app serving ``datasets`` (a mapping of names to pipelines or specs, or a
     :class:`DatasetRegistry`) through every frontend, with the control API.
@@ -209,6 +243,8 @@ def create_app(
     * ``extra_routes``: Starlette routes of your own, matched after the built-in ones and
       before the datasets (``/{name}/...``); under ``/api/`` they share the token.
     * ``route_plugins``: also add the routes of installed ``chunkmirage.routes`` plugins.
+    * ``resolver``: builds datasets requested by a name nobody registered
+      (``DatasetRegistry.resolve``); the registry's own if not given.
 
     It can be mounted in another Starlette app (``Mount("/prefix", app)``): paths, the token
     and links are then relative to the prefix.
@@ -226,6 +262,8 @@ def create_app(
         registry = DatasetRegistry(cache)
         for name, p in (datasets or {}).items():
             registry.add(name, p)
+    if resolver is not None:
+        registry.resolver = resolver
     fronts: dict[str, Frontend] = (
         dict(frontends) if frontends else {n: get_frontend(n) for n in FRONTENDS}
     )
@@ -257,6 +295,20 @@ def create_app(
             "levels": _level_info(p),
             "sources": links(request, name, p),
         }
+
+    async def lookup(name: str) -> Pipeline | Response | None:
+        """The dataset ``name``, resolved if need be; a response saying why it could not be."""
+        p = registry.get(name)
+        if p is not None or registry.resolver is None:
+            return p
+        try:
+            return await run_in_threadpool(registry.resolve, name)
+        except ValueError as e:
+            log.warning("could not resolve dataset %r: %s", name, e)
+            return JSONResponse({"error": f"{name}: {e}"}, 400)
+        except Exception as e:  # noqa: BLE001
+            log.exception("resolving dataset %r failed", name)
+            return JSONResponse({"error": f"{name}: {e}"}, 500)
 
     def combined_state(request: Request, fmt: str, viewer: str) -> dict:
         pipes = dict(registry.items())
@@ -301,7 +353,9 @@ def create_app(
 
     async def get_dataset(request: Request):
         name = request.path_params["name"]
-        p = registry.get(name)
+        p = await lookup(name)
+        if isinstance(p, Response):
+            return p
         if p is None:
             return JSONResponse({"error": "not found"}, 404)
         return JSONResponse(dataset_summary(request, name, p))
@@ -325,7 +379,9 @@ def create_app(
 
     async def neuroglancer_one(request: Request):
         name = request.path_params["name"]
-        p = registry.get(name)
+        p = await lookup(name)
+        if isinstance(p, Response):
+            return p
         if p is None:
             return JSONResponse({"error": "not found"}, 404)
         fmt = request.query_params.get("format", "zarr3")
@@ -367,8 +423,10 @@ def create_app(
         name = request.path_params["name"]
         fmt = request.path_params["format"]
         rest = request.path_params.get("path", "")
-        p = registry.get(name)
         fe = fronts.get(fmt)
+        p = await lookup(name) if fe is not None else None
+        if isinstance(p, Response):
+            return p
         if p is None or fe is None:
             return Response("not found", 404)
         set_compute_threads(slots.n)  # here, not at startup: a mounted app gets no lifespan
@@ -561,5 +619,6 @@ __all__: list[Any] = [
     "event_stream",
     "event_payload",
     "plugin_routes",
+    "Resolver",
     "set_compute_threads",
 ]

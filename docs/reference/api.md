@@ -45,6 +45,32 @@ Responses to `POST`, `PUT` and `GET /api/datasets/{name}` include `digest`, `sou
 per-level `levels` (shape, chunks, dtype, voxel size, units, axes, and `kind`: `image`, `label`, `mask` or `null`), `ops_info` (per op: name, per-axis halo, docstring), and `sources`, a map
 from format to Neuroglancer source URL carrying the new digest.
 
+## Datasets resolved by name
+
+A dataset can also exist before anyone registers it. Give the registry a resolver, a
+function from a name to a `PipelineSpec` (or a dict of one, or a `Pipeline`), or `None` for
+a name it does not know: `DatasetRegistry(resolver=...)`, `create_app(..., resolver=...)`,
+or `chunkmirage serve ... --resolver module:function`. The first request for an
+unregistered name, whether a viewer's chunk or metadata or `GET /api/datasets/{name}`, asks
+the resolver. What it returns is built, registered under that name (so `/api/events` reports
+it), and served from then on like any other dataset. Concurrent requests for a new name
+build it once. A resolver raising `ValueError` answers 400 with its message, anything else
+500.
+
+This makes links that carry their pipeline in the name, decoded by the resolver, work on a
+fresh server with no setup step:
+
+```python
+def resolve(name):
+    if not name.startswith("thr-"):
+        return None
+    return {"source": "s3://bucket/em.zarr", "ops": [{"op": "threshold", "low": int(name[4:])}]}
+```
+
+The token does not guard dataset paths (viewers send no headers), so a resolver is reachable
+by anyone who can reach the server. Build only what you would serve to them, and nothing
+that names an arbitrary file or URL from the request.
+
 ## Routes of your own
 
 A package can add endpoints next to these: a plugin's controls, say. Pass Starlette routes
