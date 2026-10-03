@@ -48,3 +48,15 @@ def test_roadmap_does_not_claim_shipped_features_are_future():
     shipped = ["zarr3 frontend", "threshold op", "rest api for live edits"]
     for item in shipped:
         assert not re.search(rf"^\d+\.\s+\*\*.*{re.escape(item)}", text, re.M), f"{item} is shipped"
+
+
+def test_the_version_is_the_same_everywhere():
+    import tomllib
+
+    import chunkmirage
+
+    root = DOCS.parent
+    version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
+    assert chunkmirage.__version__ == version
+    first = re.search(r"^## (\S+)", (root / "CHANGELOG.md").read_text(), re.M).group(1)
+    assert first == version, f"CHANGELOG.md's latest entry is {first}, the package {version}"
