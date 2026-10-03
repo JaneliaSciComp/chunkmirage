@@ -566,7 +566,7 @@ Voxel size, translation, units and axes are read per level, first match wins:
 |-------------|------------------------------------------------------------------------------------|
 | zarr v2/v3  | parent OME-NGFF `multiscales` entry whose `path` is this array, composed with the multiscale-level `coordinateTransformations` if present (0.4/0.5; in 0.6 those lead to other coordinate systems and are applied only through a [`scene://`](#scene-sources-ome-zarr-06-transformations) source, and axes come from the intrinsic coordinate system); else, for an array xarray wrote (geo, climate and solar data), its dimension names (`_ARRAY_DIMENSIONS`, or zarr v3 `dimension_names`) as the axes and the 1-D coordinate array named after each dimension as its spacing and origin, where evenly spaced and increasing (`days since …` and other CF time units become seconds, degrees unitless); else the array's own `resolution`/`voxel_size`, `offset`, `units`, `axis_names` (funlib) or `transform` (COSEM), C order |
 | N5          | the array's `transform` (COSEM, C order); the parent's `multiscales[].datasets[].transform` for this path; `pixelResolution`/`resolution` (array, else group) × `downsamplingFactors`, plus `offset`, x-first |
-| precomputed | `resolution` (nm) and `voxel_offset` × `resolution` as the translation             |
+| precomputed | `resolution` (nm) and `voxel_offset` (the first voxel's corner, in voxels)         |
 | HDF5        | `resolution`/`voxel_size` and `offset` attributes, C order                         |
 
 A zarr array with CF packing attributes (`scale_factor`, `add_offset`) is read as float32
@@ -583,7 +583,17 @@ Neuroglancer would read OME axes as metres). Neuroglancer counts zoom
 units, so beside a time axis in seconds a zoom of 1 is not one pixel per voxel:
 `chunkmirage.neuroglancer.cross_section_scale(dims, axis, voxels_per_pixel)` converts.
 
-`offset`/`translate` are in world units. Anything in the spec (`voxel_size`, `units`,
+`offset`/`translate` are in world units. A translation is where voxel 0's centre is, as in
+OME-Zarr, COSEM's `transform` and CF coordinates. Formats that give voxel 0's corner are
+moved half a voxel along their spatial axes on reading: precomputed's `voxel_offset`, and
+funlib's `offset` (0 when only a `resolution` is given), which is how Neuroglancer and
+funlib place them. N5 levels with `pixelResolution` and `downsamplingFactors` and no
+offset follow BigDataViewer: a downsampled voxel's centre is the centre of the block it
+covers. Served as precomputed, `voxel_offset` is the translation less half a voxel,
+rounded to whole voxels, so a precomputed source served again keeps its offset. Served as
+OME-Zarr, the translation is written as is, and Neuroglancer moves it back half a voxel to
+the corner. So a volume shows in the same place whichever format serves it, except that
+precomputed cannot hold half-voxel offsets. Anything in the spec (`voxel_size`, `units`,
 `axes`, `translation`) overrides what was read. The spec's `select` pins non-spatial axes
 to one index each, `{"c": 1, "t": 0}` (`--select c=1,t=0`), so the ops see one channel of
 one time point as a `z, y, x` volume; only that channel is read. HDF5 uses `file.h5::/dataset` and needs

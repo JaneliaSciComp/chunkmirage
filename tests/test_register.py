@@ -93,9 +93,10 @@ def _zarr(path, data, axes="zyx"):
     ).result()
     arr.write(data).result()
     n = len(axes) - 3
+    # funlib's offset is voxel 0's corner: half a voxel before its centre, at 0 as FIXED's is
     (path / ".zattrs").write_text(
         f'{{"axis_names": {list(axes)}, "resolution": {[1] * n + [64] * 3},'
-        f' "units": {[""] * n + ["nm"] * 3}}}'.replace("'", '"')
+        f' "offset": {[0] * n + [-32] * 3}, "units": {[""] * n + ["nm"] * 3}}}'.replace("'", '"')
     )
     return str(path)
 

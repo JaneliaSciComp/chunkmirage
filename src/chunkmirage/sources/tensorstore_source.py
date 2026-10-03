@@ -108,6 +108,23 @@ def open_tensorstore(
 
 # Per-level metadata is a dict with any of ``voxel_size``, ``units``, ``translation``, ``axes``
 # (C order, length ndim); missing keys fall back to defaults in ``from_path``.
+#
+# ``translation`` is where voxel 0's centre is, as in OME-Zarr (and as Neuroglancer reads
+# OME-Zarr: it moves each voxel back by half to its corner). Conventions that give voxel 0's
+# corner are moved by half a voxel on reading: precomputed's ``voxel_offset`` and funlib's
+# ``offset`` (a region's start), as Neuroglancer and funlib place them.
+
+
+def corner_to_centre(corner, voxel_size, axes=None) -> tuple[float, ...]:
+    """Voxel 0's centre from its corner, both C order and one entry per axis: half a voxel on
+    along the spatial axes (those named z, y or x, else the last three), not along channels
+    or time."""
+    n = len(corner)
+    spatial = {a for a in range(n) if (axes[a] in ("z", "y", "x") if axes else a >= n - 3)}
+    return tuple(
+        float(c) + (float(v) / 2 if a in spatial else 0.0)
+        for a, (c, v) in enumerate(zip(corner, voxel_size))
+    )
 
 
 def _per_axis(vals, ndim: int, fill, reverse: bool = False) -> tuple | None:
@@ -160,7 +177,12 @@ def _n5_scale_metadata(attrs: dict, ndim: int, group_attrs: dict, name: str) -> 
     """Voxel size / units / translation / axes for an N5 level, in priority order:
     the level's ``transform``; the parent group's ``multiscales[].datasets[].transform``
     matched by path; ``pixelResolution``/``resolution`` (level, else group) times the
-    level's ``downsamplingFactors``, plus ``offset``. Plain N5 lists are x-first."""
+    level's ``downsamplingFactors``, plus ``offset``. Plain N5 lists are x-first.
+
+    funlib's ``resolution``/``offset`` give voxel 0's corner (``offset``, 0 if absent).
+    ``pixelResolution`` without an offset is BigDataViewer's convention, voxel centres on
+    whole multiples of the full-resolution size: a level downsampled by ``f`` has its
+    first centre ``(f - 1) / 2`` full-resolution voxels on."""
     if isinstance(attrs.get("transform"), dict):
         return _transform_metadata(attrs["transform"], ndim)
     ds = _find_dataset(group_attrs, name)
@@ -175,14 +197,26 @@ def _n5_scale_metadata(attrs: dict, ndim: int, group_attrs: dict, name: str) -> 
     elif isinstance(base.get("resolution"), list):
         res = base["resolution"]
     meta: dict = {}
+    offset = attrs.get("offset")
+    offset = offset if isinstance(offset, list) else None
+    factors = attrs.get("downsamplingFactors")
+    level_res = None
     if isinstance(res, list):
-        factors = attrs.get("downsamplingFactors")
         if isinstance(factors, list) and len(factors) == len(res):
-            res = [float(r) * float(f) for r, f in zip(res, factors)]
-        meta["voxel_size"] = _floats(_per_axis(res, ndim, 1.0, reverse=True))
+            level_res = [float(r) * float(f) for r, f in zip(res, factors)]
+        else:
+            factors, level_res = None, [float(r) for r in res]
+        meta["voxel_size"] = _floats(_per_axis(level_res, ndim, 1.0, reverse=True))
     meta["units"] = _per_axis(units, ndim, "", reverse=True)
-    meta["translation"] = _floats(_per_axis(attrs.get("offset"), ndim, 0.0, reverse=True))
     meta["axes"] = _per_axis(attrs.get("axes") or group_attrs.get("axes"), ndim, None, True)
+    if offset is not None or "resolution" in base:  # funlib: the corner of voxel 0
+        corner = _floats(_per_axis(offset or [], ndim, 0.0, reverse=True))
+        if corner is not None:
+            sizes = meta.get("voxel_size") or (1.0,) * ndim
+            meta["translation"] = corner_to_centre(corner, sizes, meta["axes"])
+    elif factors is not None:  # BigDataViewer's levels: centred on their blocks
+        centre = [(float(f) - 1) / 2 * float(r) for r, f in zip(res, factors)]
+        meta["translation"] = _floats(_per_axis(centre, ndim, 0.0, reverse=True))
     return {k: v for k, v in meta.items() if v is not None}
 
 
@@ -244,18 +278,25 @@ def _ome_scale_metadata(group_attrs: dict, name: str, ndim: int) -> dict | None:
 
 def _zarr_array_metadata(attrs: dict, ndim: int) -> dict:
     """Legacy per-array attributes (C order): funlib-style ``resolution``/``voxel_size``,
-    ``offset``, ``units``, ``axis_names``, or a COSEM-style ``transform``."""
+    ``offset``, ``units``, ``axis_names``, or a COSEM-style ``transform``. funlib's
+    ``offset`` is voxel 0's corner (0 if absent while a resolution is given)."""
     if isinstance(attrs.get("transform"), dict):
         return _transform_metadata(attrs["transform"], ndim)
     res = attrs.get("voxel_size", attrs.get("resolution"))
     units = attrs.get("units")
     if isinstance(units, str) and isinstance(res, list):
         units = [units] * len(res)
+    voxel_size = _floats(_per_axis(res, ndim, 1.0))
+    axes = _per_axis(attrs.get("axis_names"), ndim, None)
+    translation = None
+    if isinstance(attrs.get("offset"), list) or voxel_size is not None:
+        corner = _per_axis(attrs.get("offset"), ndim, 0.0) or (0.0,) * ndim
+        translation = corner_to_centre(corner, voxel_size or (1.0,) * ndim, axes)
     meta = {
-        "voxel_size": _floats(_per_axis(res, ndim, 1.0)),
-        "translation": _floats(_per_axis(attrs.get("offset"), ndim, 0.0)),
+        "voxel_size": voxel_size,
+        "translation": translation,
         "units": _per_axis(units, ndim, ""),
-        "axes": _per_axis(attrs.get("axis_names"), ndim, None),
+        "axes": axes,
     }
     return {k: v for k, v in meta.items() if v is not None}
 
@@ -317,13 +358,14 @@ def _cf_decoding(attrs: dict, store: ts.TensorStore) -> tuple[float, float, floa
 
 
 def _precomputed_scale_metadata(info: dict, scale_index: int | None, ndim: int) -> dict:
-    """``resolution`` (nm) and ``voxel_offset`` (voxels) of one scale, x-first -> C order."""
+    """``resolution`` (nm) and ``voxel_offset`` (voxels) of one scale, x-first -> C order.
+    ``voxel_offset`` is the first voxel's corner, in voxels, as Neuroglancer places it."""
     try:
         sc = info["scales"][scale_index or 0]
         res = [float(v) for v in sc["resolution"]]
     except (KeyError, IndexError, TypeError):
         return {}
-    off = [float(o) * r for o, r in zip(sc.get("voxel_offset", [0] * len(res)), res)]
+    off = [(float(o) + 0.5) * r for o, r in zip(sc.get("voxel_offset", [0] * len(res)), res)]
     lead = ndim - len(res)  # the trailing channel axis is leading once transposed
     return {
         "voxel_size": (1.0,) * lead + tuple(res[::-1]),

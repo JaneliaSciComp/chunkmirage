@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import tensorstore as ts
 
-from chunkmirage import open_source
+from chunkmirage import Pipeline, open_source
 from chunkmirage.core import Box
 from chunkmirage.sources.tensorstore_source import TensorStoreSource
 
@@ -75,7 +75,7 @@ def test_n5_is_transposed_to_c_order_with_resolution_and_offset(tmp_path):
     assert info.shape == DATA.shape
     assert info.chunk_shape == (8, 8, 8)
     assert info.voxel_size == (4.0, 5.0, 6.0)
-    assert info.translation == (40.0, 50.0, 60.0)
+    assert info.translation == (42.0, 52.5, 63.0)  # funlib's offset is voxel 0's corner
     np.testing.assert_array_equal(s.read(Box((1, 2, 3), (6, 17, 29))), DATA[1:6, 2:17, 3:29])
 
 
@@ -108,6 +108,8 @@ def test_n5_group_metadata_and_downsampling_factors(tmp_path):
     _n5(root / "s1", {"downsamplingFactors": [2, 2, 1]})
     ms = open_source(str(root))
     assert [lvl.info.voxel_size for lvl in ms] == [(8.0, 4.0, 4.0), (8.0, 8.0, 8.0)]
+    # BigDataViewer's levels: a downsampled voxel's centre is that of the block it covers
+    assert [lvl.info.translation for lvl in ms] == [(0.0, 0.0, 0.0), (0.0, 2.0, 2.0)]
 
 
 def test_n5_group_multiscales_transform_matched_by_path(tmp_path):
@@ -186,7 +188,7 @@ def test_zarr_legacy_array_attrs(tmp_path):
     )
     info = TensorStoreSource.from_path(str(tmp_path / "legacy.zarr" / "raw")).info
     assert info.voxel_size == (8.0, 4.0, 4.0)
-    assert info.translation == (80.0, 40.0, 40.0)
+    assert info.translation == (84.0, 42.0, 42.0)  # funlib's offset is voxel 0's corner
 
 
 def test_zarr3_ome_group(tmp_path):
@@ -225,8 +227,19 @@ def test_precomputed_voxel_offset_becomes_translation(tmp_path):
     s = open_source(str(tmp_path / "vol"))[0]
     assert s.info.shape == (2, *DATA.shape)
     assert s.info.voxel_size == (1.0, 6.0, 5.0, 4.0)
-    assert s.info.translation == (0.0, 6.0, 10.0, 12.0)
+    # voxel_offset is the first voxel's corner, as Neuroglancer places it; translation its centre
+    assert s.info.translation == (0.0, 9.0, 12.5, 14.0)
     np.testing.assert_array_equal(s.read(Box((1, 0, 0, 0), (2, 10, 20, 30)))[0], 255 - DATA)
+    # served again, the voxels stay where they were: the same voxel_offset as precomputed,
+    # and as OME-Zarr the centre (Neuroglancer moves it back half a voxel to the corner)
+    from chunkmirage.frontends import get_frontend
+
+    p = Pipeline(open_source(str(tmp_path / "vol")), [])
+    info = json.loads(get_frontend("precomputed").resolve(p, "info").body)
+    assert info["scales"][0]["voxel_offset"] == [3, 2, 1]
+    zattrs = json.loads(get_frontend("zarr").resolve(p, ".zattrs").body)
+    cts = zattrs["multiscales"][0]["datasets"][0]["coordinateTransformations"]
+    assert cts[1] == {"type": "translation", "translation": [0.0, 9.0, 12.5, 14.0]}
 
 
 def test_hdf5_resolution_and_offset(tmp_path):
@@ -237,7 +250,7 @@ def test_hdf5_resolution_and_offset(tmp_path):
         d.attrs["offset"] = [80, 40, 40]
     info = open_source(f"{tmp_path / 'v.h5'}::/raw")[0].info
     assert info.voxel_size == (8.0, 4.0, 4.0)
-    assert info.translation == (80.0, 40.0, 40.0)
+    assert info.translation == (84.0, 42.0, 42.0)  # funlib's offset is voxel 0's corner
 
 
 def _xarray_array(path, arr, dims, attrs=None, fill=None, chunks=None):

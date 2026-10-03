@@ -6,6 +6,7 @@ the server applies HTTP ``Content-Encoding: gzip`` when the client accepts it.
 
 from __future__ import annotations
 
+import math
 import re
 
 import numpy as np
@@ -79,8 +80,10 @@ class PrecomputedFrontend(Frontend):
             # precomputed resolutions are always nanometres
             res = [info.voxel_size[a] * _UNIT_TO_M.get(info.units[a], 1e-9) * 1e9 for a in sp]
             res = res[::-1]
+            # voxel_offset is the first voxel's corner, in whole voxels: translation (its
+            # centre) less half a voxel, to the nearest (an OME-style 0 rounds to 0)
             off = [
-                int(round(info.translation[a] / info.voxel_size[a])) if info.voxel_size[a] else 0
+                math.floor(info.translation[a] / info.voxel_size[a] + 1e-6) if info.voxel_size[a] else 0
                 for a in sp
             ][::-1]
             scales.append(
