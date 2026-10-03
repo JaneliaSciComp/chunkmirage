@@ -66,6 +66,10 @@ output differs from its input:
   components of `gradient`) returns them first; the halo pads only the axes every op keeps,
   and the stage's chunks span the new axes whole (one chunk along `c`). Ops after it in the
   pipeline see the channels as the block's first axis.
+* **Channels selected or combined.** A channel axis (named `c`, `channel` or `channels`),
+  and any axis before it, is always read whole and never padded, so an op may change its
+  length: pick channel 1 of 2, turn affinities into labels, flows into masks. Only the
+  axes after the last channel axis are chunked and padded by the halo.
 
 Ops are discovered through the `chunkmirage.ops` entry point, so plugins ship as ordinary
 packages. A plugin that fails to import is skipped with a warning naming it and the error,
