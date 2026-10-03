@@ -8,6 +8,8 @@
 ::: chunkmirage.schema.spec_schema
 ::: chunkmirage.sources.registry.open_source
 ::: chunkmirage.server.create_app
+::: chunkmirage.serving.serve
+::: chunkmirage.serving.Server
 ::: chunkmirage.server.DatasetRegistry
 
 ## Ops

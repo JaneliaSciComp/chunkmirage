@@ -23,6 +23,8 @@ The first release.
 - Datasets resolved by name on first request (`resolver`), routes from other packages
   (`extra_routes`, the `chunkmirage.routes` entry point), and the app mounted under a prefix
   in another app.
+- `chunkmirage.serve` and `Server`: an app served from Python on a port bound first, with a
+  callback once it accepts connections, in a background thread or this one.
 
 ### Sources
 
@@ -51,6 +53,9 @@ The first release.
   `DatasetRegistry.refresh` to read it again.
 - `slots` to bound how many calls of an op run at once.
 - Zero padding past the volume's edge (`padding`).
+- Channel axes read whole, so an op may change their length: select or combine channels.
+- A level shrunk by a whole factor for an op at one voxel size is the mean of each block,
+  not linear samples.
 
 ### Browser engine
 

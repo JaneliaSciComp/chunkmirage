@@ -295,8 +295,10 @@ def _run(application, sock, host: str, port: int, ssl: dict, *, server: str, wor
             sock.close()
             uvicorn.run(application, host=host, port=port, workers=workers, log_level="info", **ssl)
             return
-        config = uvicorn.Config(application, host=host, port=port, log_level="info", **ssl)
-        uvicorn.Server(config).run(sockets=[sock])
+        from chunkmirage.serving import Server
+
+        tls = (ssl["ssl_certfile"], ssl["ssl_keyfile"]) if ssl else None
+        Server(application, sock, ssl=tls).run()  # the public helper, in this thread
         return
     import asyncio
 

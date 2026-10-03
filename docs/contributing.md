@@ -97,7 +97,8 @@ Packages build on chunkmirage through its plugin API, which is stable:
   `MultiscaleSource`, `ArrayInfo` and `Box`; an opener `opener(url, *, cache_bytes, cache)`
   returning a `MultiscaleSource`, registered with `register_source` or the
   `chunkmirage.sources` entry point; `open_source`.
-* **Serving.** `PipelineSpec`, `Pipeline`, `create_app` and its parameters,
+* **Serving.** `PipelineSpec`, `Pipeline`, `create_app` and its parameters, `serve` and
+  `Server`,
   `DatasetRegistry` (`add`, `get`, `resolve`, `refresh`, `remove`, `subscribe`) and its
   resolver, the `chunkmirage.routes` entry point, the REST routes in the
   [API reference](reference/api.md), the served URL layout, and the CLI's flags.
