@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Sequence
 from importlib.metadata import entry_points
 from typing import Any, ClassVar
@@ -10,6 +11,8 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from chunkmirage.core import ArrayInfo
+
+log = logging.getLogger("chunkmirage")
 
 
 class Op(BaseModel):
@@ -112,7 +115,7 @@ def _load_entrypoints() -> None:
             if isinstance(cls, type) and issubclass(cls, Op):
                 _REGISTRY.setdefault(cls.name or ep.name, cls)
         except Exception:  # noqa: BLE001 - a broken plugin must not take the server down
-            continue
+            log.warning("op plugin %r (%s) failed to load; skipped", ep.name, ep.value, exc_info=True)
 
 
 def get_op(name: str) -> type[Op]:

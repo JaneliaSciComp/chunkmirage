@@ -14,6 +14,9 @@ URL layout (all CORS-open; with a token, ``/api/*`` needs it)::
     /{name}/{format}/{path}             the spoofed dataset
     /{name}/@{digest}/{format}/{path}   same, with a cache-busting token in the path
 
+Other packages add routes of their own (``extra_routes``, the ``chunkmirage.routes`` entry
+point). Every path is relative to where the app is mounted, so it works as a sub-app too.
+
 Chunk computation runs in the default threadpool; numpy, numcodecs and tensorstore all
 release the GIL for the heavy parts, so a single process serves many chunks concurrently.
 """
@@ -21,7 +24,6 @@ release the GIL for the heavy parts, so a single process serves many chunks conc
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import gzip
 import hmac
 import json
@@ -29,7 +31,8 @@ import logging
 import re
 import threading
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from importlib.metadata import entry_points
 from importlib.resources import files
 from typing import Any
 
@@ -39,7 +42,7 @@ from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
-from starlette.routing import Route
+from starlette.routing import BaseRoute, Route
 
 from chunkmirage import demand
 from chunkmirage.cache import LRUCache
@@ -51,6 +54,8 @@ from chunkmirage.pipeline import Pipeline, PipelineSpec
 log = logging.getLogger("chunkmirage")
 
 ChangeCallback = Callable[[str, "Pipeline | None"], None]
+#: Builds the pipeline for a dataset name nobody registered, or returns None if it has none
+Resolver = Callable[[str], "Pipeline | PipelineSpec | dict | None"]
 
 
 class DatasetRegistry:
@@ -58,13 +63,24 @@ class DatasetRegistry:
 
     ``version`` increments on every add/remove; ``subscribe`` registers a callback invoked
     (outside the lock, in the editing thread) with ``(name, pipeline_or_None)``.
+
+    ``resolver``, if given, is asked for a name requested but not registered (``resolve``):
+    what it returns is built and registered under that name, once however many requests
+    ask at the same time, and served from then on like any other dataset.
     """
 
-    def __init__(self, cache: LRUCache | None = None, source_cache_bytes: int = 0):
+    def __init__(
+        self,
+        cache: LRUCache | None = None,
+        source_cache_bytes: int = 0,
+        resolver: Resolver | None = None,
+    ):
         self.cache = cache or LRUCache()
         self.source_cache_bytes = source_cache_bytes
+        self.resolver = resolver
         self._pipelines: dict[str, Pipeline] = {}
         self._lock = threading.RLock()
+        self._resolving: dict[str, threading.Lock] = {}
         self._callbacks: list[ChangeCallback] = []
         self.version = 0
         #: URL of an attached python-neuroglancer viewer, if any (set by chunkmirage.viewer.Viewer)
@@ -84,6 +100,26 @@ class DatasetRegistry:
     def get(self, name: str) -> Pipeline | None:
         with self._lock:
             return self._pipelines.get(name)
+
+    def resolve(self, name: str) -> Pipeline | None:
+        """The pipeline named ``name``: the registered one, else the one the resolver builds
+        for it (then registered), else None. Exceptions from the resolver propagate."""
+        p = self.get(name)
+        if p is not None or self.resolver is None:
+            return p
+        with self._lock:
+            lock = self._resolving.setdefault(name, threading.Lock())
+        try:
+            with lock:  # one build per name; later callers find it registered
+                p = self.get(name)
+                if p is None:
+                    found = self.resolver(name)
+                    if found is not None:
+                        p = self.add(name, found)
+        finally:
+            with self._lock:
+                self._resolving.pop(name, None)
+        return p
 
     def remove(self, name: str) -> bool:
         with self._lock:
@@ -124,10 +160,21 @@ class DatasetRegistry:
                 log.exception("registry subscriber failed")
 
 
+def _route_path(scope) -> str:
+    """The request's path relative to where the app is mounted: ``scope["path"]`` holds the
+    whole path and ``root_path`` the mount's prefix (and a proxy's)."""
+    path, root = scope["path"], scope.get("root_path", "")
+    if root and path.startswith(root) and path[len(root) : len(root) + 1] in ("", "/"):
+        return path[len(root) :] or "/"
+    return path
+
+
 def _public_url(request: Request, override: str | None) -> str:
     if override:
         return override.rstrip("/")
-    return str(request.base_url).rstrip("/")
+    # ``root_path`` carries a Mount's prefix; ``request.base_url`` leaves it out by design
+    url = request.url
+    return f"{url.scheme}://{url.netloc}{request.scope.get('root_path', '')}".rstrip("/")
 
 
 def _level_info(p: Pipeline) -> list[dict]:
@@ -147,12 +194,29 @@ def _level_info(p: Pipeline) -> list[dict]:
 
 def set_compute_threads(n: int) -> None:
     """Size the threadpool that computes chunks (default 40). numpy/scipy/tensorstore release
-    the GIL, so this is the server's parallelism for chunk work; pure-Python ops serialise."""
+    the GIL, so this is the server's parallelism for chunk work; pure-Python ops serialise.
+    Call it from the event loop that serves: the pool belongs to it (an app mounted in
+    another shares the host's pool)."""
     import anyio
 
     # ``n`` compute at once (demand.Slots); threads of requests waiting on queued work (their
     # slot given up meanwhile) or for a slot must not run the pool out
-    anyio.to_thread.current_default_thread_limiter().total_tokens = int(n) + 1024
+    limiter = anyio.to_thread.current_default_thread_limiter()
+    if limiter.total_tokens < int(n) + 1024:
+        limiter.total_tokens = int(n) + 1024
+
+
+def plugin_routes(registry: DatasetRegistry) -> list[BaseRoute]:
+    """Routes from the ``chunkmirage.routes`` entry point: each names a function taking the
+    app's registry and returning Starlette routes. A plugin that fails to load is skipped,
+    with a warning."""
+    routes: list[BaseRoute] = []
+    for ep in entry_points(group="chunkmirage.routes"):
+        try:
+            routes.extend(ep.load()(registry))
+        except Exception:  # noqa: BLE001 - a broken plugin must not take the server down
+            log.warning("route plugin %r failed to load; skipped", ep.name, exc_info=True)
+    return routes
 
 
 def create_app(
@@ -164,7 +228,27 @@ def create_app(
     allow_edit: bool = True,
     threads: int | None = None,
     token: str | None = None,
+    extra_routes: Sequence[BaseRoute] = (),
+    route_plugins: bool = True,
+    resolver: Resolver | None = None,
 ) -> Starlette:
+    """The ASGI app serving ``datasets`` (a mapping of names to pipelines or specs, or a
+    :class:`DatasetRegistry`) through every frontend, with the control API.
+
+    * ``public_url``: base of the links the app hands out (default: the request's own, with
+      the prefix the app is mounted under).
+    * ``allow_edit``: whether ``/api/datasets`` may create, replace and remove datasets.
+    * ``threads``: chunk requests computing at once (default 40).
+    * ``token``: required on ``/api/*`` (header or ``?token=``); the datasets stay open.
+    * ``extra_routes``: Starlette routes of your own, matched after the built-in ones and
+      before the datasets (``/{name}/...``); under ``/api/`` they share the token.
+    * ``route_plugins``: also add the routes of installed ``chunkmirage.routes`` plugins.
+    * ``resolver``: builds datasets requested by a name nobody registered
+      (``DatasetRegistry.resolve``); the registry's own if not given.
+
+    It can be mounted in another Starlette app (``Mount("/prefix", app)``): paths, the token
+    and links are then relative to the prefix.
+    """
     # chunk requests computing at once (the rest wait their turn, or give theirs up while they
     # wait on queued work)
     slots = demand.Slots(int(threads) if threads else 40)
@@ -178,6 +262,8 @@ def create_app(
         registry = DatasetRegistry(cache)
         for name, p in (datasets or {}).items():
             registry.add(name, p)
+    if resolver is not None:
+        registry.resolver = resolver
     fronts: dict[str, Frontend] = (
         dict(frontends) if frontends else {n: get_frontend(n) for n in FRONTENDS}
     )
@@ -209,6 +295,20 @@ def create_app(
             "levels": _level_info(p),
             "sources": links(request, name, p),
         }
+
+    async def lookup(name: str) -> Pipeline | Response | None:
+        """The dataset ``name``, resolved if need be; a response saying why it could not be."""
+        p = registry.get(name)
+        if p is not None or registry.resolver is None:
+            return p
+        try:
+            return await run_in_threadpool(registry.resolve, name)
+        except ValueError as e:
+            log.warning("could not resolve dataset %r: %s", name, e)
+            return JSONResponse({"error": f"{name}: {e}"}, 400)
+        except Exception as e:  # noqa: BLE001
+            log.exception("resolving dataset %r failed", name)
+            return JSONResponse({"error": f"{name}: {e}"}, 500)
 
     def combined_state(request: Request, fmt: str, viewer: str) -> dict:
         pipes = dict(registry.items())
@@ -253,7 +353,9 @@ def create_app(
 
     async def get_dataset(request: Request):
         name = request.path_params["name"]
-        p = registry.get(name)
+        p = await lookup(name)
+        if isinstance(p, Response):
+            return p
         if p is None:
             return JSONResponse({"error": "not found"}, 404)
         return JSONResponse(dataset_summary(request, name, p))
@@ -277,7 +379,9 @@ def create_app(
 
     async def neuroglancer_one(request: Request):
         name = request.path_params["name"]
-        p = registry.get(name)
+        p = await lookup(name)
+        if isinstance(p, Response):
+            return p
         if p is None:
             return JSONResponse({"error": "not found"}, 404)
         fmt = request.query_params.get("format", "zarr3")
@@ -319,10 +423,13 @@ def create_app(
         name = request.path_params["name"]
         fmt = request.path_params["format"]
         rest = request.path_params.get("path", "")
-        p = registry.get(name)
         fe = fronts.get(fmt)
+        p = await lookup(name) if fe is not None else None
+        if isinstance(p, Response):
+            return p
         if p is None or fe is None:
             return Response("not found", 404)
+        set_compute_threads(slots.n)  # here, not at startup: a mounted app gets no lifespan
         # A group or level asked for as a directory (a trailing /) or as a page (HTML first in
         # Accept, as browsers and Java's HTTP client send) gets a listing: that is how Fiji's
         # N5 viewer finds the levels. Metadata clients (Neuroglancer, tensorstore, zarr-python)
@@ -401,6 +508,8 @@ def create_app(
         Route("/api/cache", cache_stats, methods=["GET"]),
         Route("/api/cache", cache_clear, methods=["DELETE"]),
         Route("/api/queue", queue_stats, methods=["GET"]),
+        *extra_routes,
+        *(plugin_routes(registry) if route_plugins else ()),
         Route("/{name}/@{digest}/{format}", serve),
         Route("/{name}/@{digest}/{format}/{path:path}", serve),
         Route("/{name}/{format}", serve),
@@ -421,12 +530,7 @@ def create_app(
     if token:  # inside CORS, so a browser's preflight is answered without one
         middleware.append(Middleware(_TokenGuard, token=token))
 
-    @contextlib.asynccontextmanager
-    async def lifespan(_app):
-        set_compute_threads(threads or 40)
-        yield
-
-    app = Starlette(routes=routes, middleware=middleware, lifespan=lifespan)
+    app = Starlette(routes=routes, middleware=middleware)
     app.state.registry = registry
     app.state.frontends = fronts
     return app
@@ -487,7 +591,7 @@ class _TokenGuard:
         self.app, self.token = app, token.encode()
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and scope["path"].startswith("/api/"):
+        if scope["type"] == "http" and _route_path(scope).startswith("/api/"):
             request = Request(scope)
             given = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
             given = given or request.query_params.get("token", "")
@@ -509,4 +613,12 @@ def _compute_and_encode(p: Pipeline, fe: Frontend, req: ChunkRequest) -> bytes:
     return fe.compute(p, req)
 
 
-__all__: list[Any] = ["DatasetRegistry", "create_app", "event_stream", "event_payload"]
+__all__: list[Any] = [
+    "DatasetRegistry",
+    "create_app",
+    "event_stream",
+    "event_payload",
+    "plugin_routes",
+    "Resolver",
+    "set_compute_threads",
+]

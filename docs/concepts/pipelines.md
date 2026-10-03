@@ -65,7 +65,8 @@ output differs from its input:
   pipeline see the channels as the block's first axis.
 
 Ops are discovered through the `chunkmirage.ops` entry point, so plugins ship as ordinary
-packages. See [Contributing](../contributing.md#adding-an-op) for a template and the
+packages. A plugin that fails to import is skipped with a warning naming it and the error,
+and the other ops still load. See [Contributing](../contributing.md#adding-an-op) for a template and the
 [ops reference](../reference/ops.md) for what is built in.
 
 ## Chaining and branching

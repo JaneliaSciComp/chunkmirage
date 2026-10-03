@@ -44,3 +44,64 @@ no headers.
 Responses to `POST`, `PUT` and `GET /api/datasets/{name}` include `digest`, `source_dtype`,
 per-level `levels` (shape, chunks, dtype, voxel size, units, axes, and `kind`: `image`, `label`, `mask` or `null`), `ops_info` (per op: name, per-axis halo, docstring), and `sources`, a map
 from format to Neuroglancer source URL carrying the new digest.
+
+## Datasets resolved by name
+
+A dataset can also exist before anyone registers it. Give the registry a resolver, a
+function from a name to a `PipelineSpec` (or a dict of one, or a `Pipeline`), or `None` for
+a name it does not know: `DatasetRegistry(resolver=...)`, `create_app(..., resolver=...)`,
+or `chunkmirage serve ... --resolver module:function`. The first request for an
+unregistered name, whether a viewer's chunk or metadata or `GET /api/datasets/{name}`, asks
+the resolver. What it returns is built, registered under that name (so `/api/events` reports
+it), and served from then on like any other dataset. Concurrent requests for a new name
+build it once. A resolver raising `ValueError` answers 400 with its message, anything else
+500.
+
+This makes links that carry their pipeline in the name, decoded by the resolver, work on a
+fresh server with no setup step:
+
+```python
+def resolve(name):
+    if not name.startswith("thr-"):
+        return None
+    return {"source": "s3://bucket/em.zarr", "ops": [{"op": "threshold", "low": int(name[4:])}]}
+```
+
+The token does not guard dataset paths (viewers send no headers), so a resolver is reachable
+by anyone who can reach the server. Build only what you would serve to them, and nothing
+that names an arbitrary file or URL from the request.
+
+## Routes of your own
+
+A package can add endpoints next to these: a plugin's controls, say. Pass Starlette routes
+to `create_app(..., extra_routes=[...])`, or declare a `chunkmirage.routes` entry point
+naming a function that takes the app's `DatasetRegistry` and returns routes:
+
+```toml
+[project.entry-points."chunkmirage.routes"]
+myplugin = "myplugin.server:routes"
+```
+
+```python
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+
+def routes(registry):
+    async def names(request):
+        return JSONResponse(registry.names())
+    return [Route("/api/myplugin/names", names)]
+```
+
+Installed plugins' routes are added to every app, `chunkmirage serve`'s included
+(`create_app(..., route_plugins=False)` leaves them out). One that fails to load is skipped
+with a warning. They are matched after the built-in routes and before the datasets, so a
+route of your own wins over a dataset of the same name. Put them under `/api/` to have them
+guarded by the token too.
+
+## Mounted in another app
+
+The app works as a sub-app, `Mount("/prefix", create_app(...))` in your own Starlette or
+FastAPI app: every path above is then under `/prefix`, the token guards `/prefix/api/*`,
+links carry the prefix, and the control page calls the API relative to where it is served.
+A mounted app gets no lifespan events, so the threadpool is sized by the first chunk
+request instead (it is the host's pool too, and only ever made larger).
