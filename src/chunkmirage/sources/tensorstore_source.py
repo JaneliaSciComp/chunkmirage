@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 import tensorstore as ts
 
-from chunkmirage.core import ArrayInfo, Box
+from chunkmirage.core import ArrayInfo, Box, kind_for_dtype
 from chunkmirage.sources.base import MultiscaleSource, Source
 
 
@@ -431,14 +431,16 @@ class TensorStoreSource(Source):
         def pick(override, key, default):
             return tuple(override) if override is not None else meta.get(key, default)
 
+        dtype = np.dtype(np.float32) if decode else store.dtype.numpy_dtype
         info = ArrayInfo(
             shape=shape,
-            dtype=np.dtype(np.float32) if decode else store.dtype.numpy_dtype,
+            dtype=dtype,
             chunk_shape=chunk_shape,
             voxel_size=pick(voxel_size, "voxel_size", (1.0,) * ndim),
             units=pick(units, "units", ("",) * ndim),
             axes=pick(axes, "axes", ArrayInfo.default_axes(ndim)),
             translation=pick(translation, "translation", (0.0,) * ndim),
+            kind=None if decode else kind_for_dtype(dtype),  # override: open_source(kind=)
         )
         return cls(store, info, key=f"ts:{path}", decode=decode)
 

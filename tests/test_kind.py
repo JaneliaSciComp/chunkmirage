@@ -65,3 +65,51 @@ def test_the_viewer_and_precomputed_follow_the_kind():
     assert client.get("/raw/precomputed/info").json()["type"] == "image"
     assert client.get("/ids/precomputed/info").json()["type"] == "segmentation"
     assert client.get("/api/datasets/mask").json()["levels"][0]["kind"] == "mask"
+
+
+def _zarr(path, data):
+    import tensorstore as ts
+
+    spec = {"driver": "zarr", "kvstore": {"driver": "file", "path": str(path)}}
+    meta = {"shape": list(data.shape), "chunks": [8] * data.ndim, "dtype": data.dtype.str}
+    ts.open({**spec, "metadata": meta}, create=True).result().write(data).result()
+    return str(path)
+
+
+def test_stored_wide_integers_are_labels_and_resampled_as_such(tmp_path):
+    """A uint32 volume read from storage is labels unless told otherwise: an op at another
+    voxel size reads it resampled by nearest voxel, so no ids are invented between two."""
+    import numpy as np
+
+    from chunkmirage.ops.base import Op
+
+    ids = np.zeros((16, 16, 16), np.uint32)
+    ids[:, :, 5:] = 1000
+    ids[:, :, 11:] = 2000
+    labels = _zarr(tmp_path / "labels.zarr", ids)
+    image = _zarr(tmp_path / "image.zarr", ids.astype(np.uint8))
+    assert open_source(labels)[0].info.kind == "label"
+    assert open_source(image)[0].info.kind is None
+    told = open_source(labels, kind="image")
+    assert told[0].info.kind == "image" and told[0].cache_key() != open_source(labels)[0].cache_key()
+
+    class AtCoarser(Op):
+        name = "test_at_coarser"
+
+        def input_voxel_size(self):
+            return (1.5, 1.5, 1.5)
+
+        def apply(self, block):
+            return block
+
+    out = Pipeline(open_source(labels), [AtCoarser()]).levels[0]
+    values = set(np.unique(out.read(_whole(out))))
+    assert values <= {0, 1000, 2000}
+    blurred = Pipeline(open_source(labels, kind="image"), [AtCoarser()]).levels[0]
+    assert not set(np.unique(blurred.read(_whole(blurred)))) <= {0, 1000, 2000}
+
+
+def _whole(src):
+    from chunkmirage.core import Box
+
+    return Box((0,) * src.info.ndim, src.info.shape)

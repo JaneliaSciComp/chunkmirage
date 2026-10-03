@@ -38,7 +38,8 @@ no headers.
   "voxel_size": [8, 8, 8],           // optional overrides of what the source reports
   "units": ["nm", "nm", "nm"],
   "axes": ["z", "y", "x"],
-  "translation": [0, 0, 0]
+  "translation": [0, 0, 0],
+  "kind": "image"                    // optional: image, label or mask, over what the source guesses
 }
 ```
 

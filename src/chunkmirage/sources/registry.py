@@ -6,7 +6,7 @@ from collections.abc import Callable
 from importlib.metadata import entry_points
 
 from chunkmirage.cache import LRUCache
-from chunkmirage.sources.base import MultiscaleSource
+from chunkmirage.sources.base import KindSource, MultiscaleSource
 from chunkmirage.sources.tensorstore_source import open_multiscale_tensorstore
 
 Opener = Callable[..., MultiscaleSource]
@@ -71,7 +71,12 @@ def _call(opener: Opener, path: str, **kw) -> MultiscaleSource:
 
 
 def open_source(
-    path: str, *, cache_bytes: int = 0, cache: LRUCache | None = None, **kw
+    path: str,
+    *,
+    cache_bytes: int = 0,
+    cache: LRUCache | None = None,
+    kind: str | None = None,
+    **kw,
 ) -> MultiscaleSource:
     """Open any supported dataset as a ``MultiscaleSource``.
 
@@ -94,8 +99,19 @@ def open_source(
 
     ``cache_bytes`` is tensorstore's pool of decoded source chunks; ``cache`` is the chunk
     cache that computed sources keep their expensive intermediates in (``register://``'s
-    refined blocks), normally the pipeline's.
+    refined blocks), normally the pipeline's. ``kind`` says what the values are (``image``,
+    ``label``, ``mask``) over what the source guessed: stored arrays guess from their dtype
+    (``core.kind_for_dtype``), so a uint32 image needs ``kind="image"``.
     """
+    source = _open(path, cache_bytes=cache_bytes, cache=cache, **kw)
+    if kind is not None and kind != source.levels[0].info.kind:
+        source = MultiscaleSource(
+            [KindSource(lvl, kind) for lvl in source.levels], name=source.name, shader=source.shader
+        )
+    return source
+
+
+def _open(path: str, *, cache_bytes: int, cache: LRUCache | None, **kw) -> MultiscaleSource:
     scheme, sep, _ = path.partition("://")
     if sep and (opener := _opener(scheme)) is not None:
         return _call(opener, path, cache_bytes=cache_bytes, cache=cache)

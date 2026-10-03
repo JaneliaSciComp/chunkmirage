@@ -54,6 +54,10 @@ export interface PipelineSpec {
    * What the dataset's mesh frontend meshes (default: a surface at 128)
    */
   mesh?: MeshSpec | null;
+  /**
+   * What the source's values are, over what it guesses: stored arrays take integers of 32 bits or more for labels (resampled by nearest voxel, downsampled by their most common value) and booleans for masks; 'image' for a uint32 image
+   */
+  kind?: ("image" | "label" | "mask") | null;
 }
 /**
  * What a dataset's ``mesh`` frontend meshes.

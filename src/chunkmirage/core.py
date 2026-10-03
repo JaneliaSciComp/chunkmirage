@@ -72,6 +72,19 @@ class Box:
 KINDS = (None, "image", "label", "mask")
 
 
+def kind_for_dtype(dtype) -> str | None:
+    """What values of ``dtype`` most likely are when nothing says (a stored array): ``mask``
+    for booleans, ``label`` for integers of 32 bits or more (segment ids; intensities are
+    rarely stored that wide), else unknown. Labels and masks are resampled by nearest voxel
+    and downsampled by their most common value, never averaged."""
+    dtype = np.dtype(dtype)
+    if dtype == np.bool_:
+        return "mask"
+    if dtype.kind in "iu" and dtype.itemsize >= 4:
+        return "label"
+    return None
+
+
 @dataclass(frozen=True)
 class ArrayInfo:
     """Static description of one scale level of a chunked array (C-order axes). ``kind`` is

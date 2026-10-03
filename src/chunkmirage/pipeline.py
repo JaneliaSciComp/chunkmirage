@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -43,6 +43,12 @@ class PipelineSpec(BaseModel):
     )
     mesh: MeshSpec | None = Field(
         None, description="What the dataset's mesh frontend meshes (default: a surface at 128)"
+    )
+    kind: Literal["image", "label", "mask"] | None = Field(
+        None,
+        description="What the source's values are, over what it guesses: stored arrays take "
+        "integers of 32 bits or more for labels (resampled by nearest voxel, downsampled by "
+        "their most common value) and booleans for masks; 'image' for a uint32 image",
     )
 
 
@@ -289,6 +295,7 @@ class Pipeline:
             units=spec.units,
             axes=spec.axes,
             translation=spec.translation,
+            kind=spec.kind,
         )
         if spec.select:
             src = select_axes(src, spec.select)

@@ -132,6 +132,13 @@ which ops declare): labels and masks `segmentation`, images `image`; where nothi
 `uint32`/`uint64` are `segmentation` and others `image`. Override with
 `PrecomputedFrontend(volume_type=...)`.
 
+Stored arrays (zarr, N5, precomputed, HDF5) say nothing of what their values are, so their
+kind is guessed from the dtype: integers of 32 bits or more are labels, booleans masks, the
+rest unknown. Labels and masks are resampled by nearest voxel and downsampled by their most
+common value, never averaged, so no ids are invented between two segments. A spec's `kind`
+(`open_source(..., kind=...)` in Python) overrides the guess: `"kind": "image"` for a uint32
+image, `"label"` for ids stored as uint16.
+
 ## Sources
 
 ### Synthetic (procedural) sources

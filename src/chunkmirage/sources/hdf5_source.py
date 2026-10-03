@@ -6,7 +6,7 @@ import threading
 
 import numpy as np
 
-from chunkmirage.core import ArrayInfo, Box
+from chunkmirage.core import ArrayInfo, Box, kind_for_dtype
 from chunkmirage.sources.base import MultiscaleSource, Source
 
 
@@ -40,6 +40,7 @@ class HDF5Source(Source):
             units=tuple(units) if units else ("nm",) * ndim,
             axes=tuple(axes) if axes else ArrayInfo.default_axes(ndim),
             translation=tuple(float(v) for v in offset) if offset is not None else None,
+            kind=kind_for_dtype(self._d.dtype),
         )
         self._key = f"h5:{filename}::{dataset}"
 
