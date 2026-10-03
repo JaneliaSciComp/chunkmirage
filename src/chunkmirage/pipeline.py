@@ -50,6 +50,12 @@ class PipelineSpec(BaseModel):
         "integers of 32 bits or more for labels (resampled by nearest voxel, downsampled by "
         "their most common value) and booleans for masks; 'image' for a uint32 image",
     )
+    padding: Literal["edge", "zero"] = Field(
+        "edge",
+        description="What ops with a halo see past the volume's edge: 'edge' repeats the "
+        "outermost voxels (no step at the border), 'zero' pads with zeros (as a model "
+        "trained on zero-padded blocks expects)",
+    )
 
 
 class SelectSource(Source):
@@ -124,7 +130,12 @@ def _queue_for(ops: Sequence[Op]) -> demand.Queue | None:
 
 
 def _fused_stage(
-    prev: Source, ops: Sequence[Op], cache: LRUCache | None, key: str, level: int = 0
+    prev: Source,
+    ops: Sequence[Op],
+    cache: LRUCache | None,
+    key: str,
+    level: int = 0,
+    padding: str = "edge",
 ) -> ChunkedSource:
     """One pipeline stage running ``ops`` back to back on a block padded by their total halo.
 
@@ -153,7 +164,8 @@ def _fused_stage(
     def compute(idx: tuple[int, ...]) -> np.ndarray:
         out_box = info.chunk_box(idx)
         in_box = fused.input_box(prev_info, out_box, lead, total_halo, scale)
-        block = prev.read_padded(in_box, edge=True)  # no step at the volume border
+        # past the volume's edge: its outermost voxels repeated (no step there), or zeros
+        block = prev.read_padded(in_box, edge=padding == "edge")
         run = lambda: fused.run(ops, block, in_box, out_box, info, total_halo, scale)  # noqa: E731
         return run() if queue is None else queue.run((key, idx), level, run)
 
@@ -201,28 +213,32 @@ class Pipeline:
         chunk_shape: Sequence[int] | None = None,
         cache_source: bool = True,
         spec: PipelineSpec | None = None,
+        padding: str = "edge",
     ):
+        if padding not in ("edge", "zero"):
+            raise ValueError(f"padding must be 'edge' or 'zero', got {padding!r}")
         self.source = source
         self.ops: list[Op] = ops_from_specs(ops)
         self.cache = cache if cache is not None else LRUCache()
         self.spec = spec
-        self._options = {"chunk_shape": chunk_shape, "cache_source": cache_source}
+        self.padding = padding
+        self._options = {"chunk_shape": chunk_shape, "cache_source": cache_source, "padding": padding}
         self.levels: list[ChunkedSource] = []
         pinned = next((i for i, op in enumerate(self.ops) if op.input_voxel_size() is not None), None)
         if pinned is None:
             for lvl_i, raw in enumerate(source.levels):
                 stage, h = self._raw(raw, lvl_i, chunk_shape, cache_source)
-                self.levels.append(self._chain(stage, self.ops, h, lvl_i)[0])
+                self.levels.append(self._chain(stage, self.ops, self._padded(h), lvl_i)[0])
             return
         pre, op, post = self.ops[:pinned], self.ops[pinned], self.ops[pinned + 1 :]
         want = tuple(float(v) for v in op.input_voxel_size())
         at, exact = source.level_for(want)
         raw = source.levels[at] if exact else _resampled(source.levels[at], want)
         stage, h = self._raw(raw, at, chunk_shape, cache_source)
-        stage, h = self._chain(stage, pre, h, 0)
+        stage, h = self._chain(stage, pre, self._padded(h), 0)
         h = _digest(h, op.digest())
         # cached whatever the op says: every coarser level is made from it
-        finer: Source = _fused_stage(stage, [op], self.cache, f"{op.name}:{h}", 0)
+        finer: Source = _fused_stage(stage, [op], self.cache, f"{op.name}:{h}", 0, self.padding)
         self.levels.append(self._chain(finer, post, h, 0)[0])
         for k in range(at + 1, len(source.levels)):
             a, b = (source.levels[i].info.voxel_size[-len(want) :] for i in (k - 1, k))
@@ -231,8 +247,13 @@ class Pipeline:
                 break
             down = Downsample(factor=factor)
             h = _digest(h, down.digest())
-            finer = _fused_stage(finer, [down], self.cache, f"downsample:{h}", len(self.levels))
+            finer = _fused_stage(finer, [down], self.cache, f"downsample:{h}", len(self.levels), self.padding)
             self.levels.append(self._chain(finer, post, h, len(self.levels))[0])
+
+    def _padded(self, h: str) -> str:
+        """Stage hashes after the source: zero padding changes what ops make at the edges
+        (edge padding, the default, leaves the hashes as they always were)."""
+        return h if self.padding == "edge" else _digest(h, f"padding={self.padding}")
 
     def _raw(self, raw: Source, lvl_i: int, chunk_shape, cache_source: bool) -> tuple[Source, str]:
         """Stage 0: a source level, re-chunked to the pipeline's chunks and (optionally) cached."""
@@ -272,7 +293,7 @@ class Pipeline:
             for op in seg:
                 h = _digest(h, op.digest())
             cache = self.cache if seg[-1].cached else None
-            stage = _fused_stage(stage, seg, cache, f"{seg[-1].name}:{h}", level)
+            stage = _fused_stage(stage, seg, cache, f"{seg[-1].name}:{h}", level, self.padding)
         return stage, h
 
     @classmethod
@@ -306,6 +327,7 @@ class Pipeline:
             chunk_shape=spec.chunk_shape,
             cache_source=spec.cache_source,
             spec=spec,
+            padding=spec.padding,
         )
 
     def rebuilt(self) -> Pipeline:

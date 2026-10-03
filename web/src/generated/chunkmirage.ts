@@ -58,6 +58,10 @@ export interface PipelineSpec {
    * What the source's values are, over what it guesses: stored arrays take integers of 32 bits or more for labels (resampled by nearest voxel, downsampled by their most common value) and booleans for masks; 'image' for a uint32 image
    */
   kind?: ("image" | "label" | "mask") | null;
+  /**
+   * What ops with a halo see past the volume's edge: 'edge' repeats the outermost voxels (no step at the border), 'zero' pads with zeros (as a model trained on zero-padded blocks expects)
+   */
+  padding?: "edge" | "zero";
 }
 /**
  * What a dataset's ``mesh`` frontend meshes.

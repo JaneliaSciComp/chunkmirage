@@ -39,7 +39,8 @@ no headers.
   "units": ["nm", "nm", "nm"],
   "axes": ["z", "y", "x"],
   "translation": [0, 0, 0],
-  "kind": "image"                    // optional: image, label or mask, over what the source guesses
+  "kind": "image",                   // optional: image, label or mask, over what the source guesses
+  "padding": "edge"                  // what ops see past the volume's edge: edge (repeated) or zero
 }
 ```
 

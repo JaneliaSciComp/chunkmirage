@@ -23,7 +23,9 @@ segment is one `ChunkedSource` stage whose `compute_chunk(index)`:
 1. computes the output chunk's box;
 2. pads it by the **sum of the segment's halos**;
 3. reads that padded box from the previous stage via `read_padded`, voxels beyond the volume
-   repeating the nearest one inside, so a filter or detector sees no step at its border;
+   repeating the nearest one inside, so a filter or detector sees no step at its border
+   (the spec's `"padding": "zero"` pads with zeros instead, as a model trained on
+   zero-padded blocks expects; the browser engine always repeats the edge);
 4. calls each op's `apply_at(block, box)` in turn on the whole padded block;
 5. crops the padding off and casts to the last op's declared output dtype.
 
