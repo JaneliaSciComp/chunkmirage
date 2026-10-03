@@ -67,3 +67,29 @@ def test_serve_announces_its_address_once_it_accepts_connections(tmp_path):
         proc.send_signal(signal.SIGINT)
         proc.wait(timeout=30)
     assert not ready.exists()
+
+
+def test_the_cache_size_given_is_the_one_used():
+    """An empty cache is falsy (it has a length): the registry kept replacing it with the
+    default 2 GiB one, so --cache-gb did nothing and 0 did not turn caching off."""
+    from chunkmirage.cache import LRUCache
+    from chunkmirage.server import DatasetRegistry
+
+    small = LRUCache(1024)
+    assert DatasetRegistry(small).cache is small
+    reg = build_registry("synthetic://blobs?shape=16,16,16&chunk=8,8,8&levels=1", "d", [], None, raw=False, cache_gb=0)
+    assert reg.cache.max_bytes == 0
+    reg.get("d").chunk(0, (0, 0, 0))
+    assert len(reg.cache) == 0  # nothing kept
+
+
+def test_the_zarr_compressor_is_chosen_on_the_command_line():
+    import json
+
+    from chunkmirage.cli import frontends_for
+
+    reg = build_registry("synthetic://blobs?shape=16,16,16&chunk=8,8,8&levels=1", "d", [], None, raw=False)
+    fronts = frontends_for("blosc")
+    zarray = json.loads(fronts["zarr"].resolve(reg.get("d"), "s0/.zarray").body)
+    assert zarray["compressor"]["id"] == "blosc" and fronts["n5"].compressor.kind == "gzip"
+    assert "blosc" in json.dumps(json.loads(fronts["zarr3"].resolve(reg.get("d"), "s0/zarr.json").body))
