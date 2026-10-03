@@ -43,6 +43,7 @@ schema for free (`GET /api/ops`).
 | `name`                 | identifier used in specs and the CLI (`--op name:key=val`)              |
 | `halo`                 | voxels of context needed on every side; int, per-axis tuple, or a property computed from parameters (e.g. `Gaussian` uses `ceil(sigma * truncate)`) |
 | `cache`                | whether this stage's output chunks are memoized; see [Caching](caching.md) |
+| `slots`                | at most this many `apply` calls of the op at once, across the process (one per GPU, say, or a memory-hungry step); waiting chunks are queued finest level first and dropped when no request wants them any more ([order of work](caching.md#order-of-work-and-requests-given-up-on)). The op runs as a stage of its own, so reading its input holds no slot. Default `None`: as many as the server computes at once |
 | `packages`             | packages `apply` imports beyond numpy, e.g. `("scipy",)`; the schema carries them (`x-packages`) so the browser engine loads them with Python, only for pages whose ops need them |
 | `output_dtype(dtype)`  | result dtype; default unchanged                                         |
 | `output_kind`          | what the result's values are, `image`, `label` (segment ids) or `mask` (inside or not), carried as the output's `ArrayInfo.kind`: viewers show labels and masks as segmentations. Default `None` (not said); `threshold`, `morphology` and `contacts` make masks, `label` and `spots` labels, `cast` keeps its input's |

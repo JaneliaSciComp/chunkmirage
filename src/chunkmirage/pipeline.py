@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 from pydantic import BaseModel, Field
 
-from chunkmirage import fused
+from chunkmirage import demand, fused
 from chunkmirage.cache import LRUCache
 from chunkmirage.core import ArrayInfo, Box
 from chunkmirage.meshes import MeshSpec
@@ -106,7 +106,20 @@ def select_axes(source: MultiscaleSource, select: dict[str, int]) -> MultiscaleS
     return MultiscaleSource(levels, name=source.name)
 
 
-def _fused_stage(prev: Source, ops: Sequence[Op], cache: LRUCache | None, key: str) -> ChunkedSource:
+def _queue_for(ops: Sequence[Op]) -> demand.Queue | None:
+    """The queue an op with ``slots`` runs through (one per op name, process-wide, so every
+    pipeline using it shares its slots), or None."""
+    op = next((op for op in ops if op.slots), None)
+    if op is None:
+        return None
+    queue = demand.queues.setdefault(f"op {op.name}", demand.Queue(slots=int(op.slots)))
+    queue.slots = int(op.slots)
+    return queue
+
+
+def _fused_stage(
+    prev: Source, ops: Sequence[Op], cache: LRUCache | None, key: str, level: int = 0
+) -> ChunkedSource:
     """One pipeline stage running ``ops`` back to back on a block padded by their total halo.
 
     Fusing consecutive uncached ops keeps the read footprint small: one output chunk reads
@@ -127,11 +140,16 @@ def _fused_stage(prev: Source, ops: Sequence[Op], cache: LRUCache | None, key: s
     info = info.with_(chunk_shape=info.shape[: info.ndim - kept] + prev_info.chunk_shape[-kept:])
     fused.input_box(prev_info, info.chunk_box((0,) * info.ndim), lead, total_halo, scale)  # whole voxels, or why not
 
+    # An op with slots runs through its queue: read first, so a slot is only held computing,
+    # and in the order the queue keeps (finest level first; dropped if no request waits)
+    queue = _queue_for(ops)
+
     def compute(idx: tuple[int, ...]) -> np.ndarray:
         out_box = info.chunk_box(idx)
         in_box = fused.input_box(prev_info, out_box, lead, total_halo, scale)
         block = prev.read_padded(in_box, edge=True)  # no step at the volume border
-        return fused.run(ops, block, in_box, out_box, info, total_halo, scale)
+        run = lambda: fused.run(ops, block, in_box, out_box, info, total_halo, scale)  # noqa: E731
+        return run() if queue is None else queue.run((key, idx), level, run)
 
     return ChunkedSource(info, compute, cache, key)
 
@@ -188,18 +206,18 @@ class Pipeline:
         if pinned is None:
             for lvl_i, raw in enumerate(source.levels):
                 stage, h = self._raw(raw, lvl_i, chunk_shape, cache_source)
-                self.levels.append(self._chain(stage, self.ops, h)[0])
+                self.levels.append(self._chain(stage, self.ops, h, lvl_i)[0])
             return
         pre, op, post = self.ops[:pinned], self.ops[pinned], self.ops[pinned + 1 :]
         want = tuple(float(v) for v in op.input_voxel_size())
         at, exact = source.level_for(want)
         raw = source.levels[at] if exact else _resampled(source.levels[at], want)
         stage, h = self._raw(raw, at, chunk_shape, cache_source)
-        stage, h = self._chain(stage, pre, h)
+        stage, h = self._chain(stage, pre, h, 0)
         h = _digest(h, op.digest())
         # cached whatever the op says: every coarser level is made from it
-        finer: Source = _fused_stage(stage, [op], self.cache, f"{op.name}:{h}")
-        self.levels.append(self._chain(finer, post, h)[0])
+        finer: Source = _fused_stage(stage, [op], self.cache, f"{op.name}:{h}", 0)
+        self.levels.append(self._chain(finer, post, h, 0)[0])
         for k in range(at + 1, len(source.levels)):
             a, b = (source.levels[i].info.voxel_size[-len(want) :] for i in (k - 1, k))
             factor = [max(1, round(float(y) / float(x))) for x, y in zip(a, b)]
@@ -207,8 +225,8 @@ class Pipeline:
                 break
             down = Downsample(factor=factor)
             h = _digest(h, down.digest())
-            finer = _fused_stage(finer, [down], self.cache, f"downsample:{h}")
-            self.levels.append(self._chain(finer, post, h)[0])
+            finer = _fused_stage(finer, [down], self.cache, f"downsample:{h}", len(self.levels))
+            self.levels.append(self._chain(finer, post, h, len(self.levels))[0])
 
     def _raw(self, raw: Source, lvl_i: int, chunk_shape, cache_source: bool) -> tuple[Source, str]:
         """Stage 0: a source level, re-chunked to the pipeline's chunks and (optionally) cached."""
@@ -224,21 +242,22 @@ class Pipeline:
         )
         return stage, h
 
-    def _chain(self, stage: Source, ops: Sequence[Op], h: str) -> tuple[Source, str]:
-        """``ops`` after ``stage``, in segments: one ends at an op with cache=True (its output
-        is memoized) or at the end, and an op that changes the grid starts one. Each segment
-        is one fused stage."""
+    def _chain(self, stage: Source, ops: Sequence[Op], h: str, level: int) -> tuple[Source, str]:
+        """``ops`` after ``stage`` on output level ``level``, in segments: one ends at an op
+        with cache=True (its output is memoized) or at the end, and an op that changes the
+        grid starts one. An op with slots is a segment of its own, so only it holds a slot.
+        Each segment is one fused stage."""
         segments: list[list[Op]] = []
         current: list[Op] = []
         info = stage.info
         for op in ops:
             nxt = op.output_info(info)
-            if current and _changes_grid(info, nxt):
+            if current and (_changes_grid(info, nxt) or op.slots):
                 segments.append(current)
                 current = []
             current.append(op)
             info = nxt
-            if op.cached:
+            if op.cached or op.slots:
                 segments.append(current)
                 current = []
         if current:
@@ -246,7 +265,8 @@ class Pipeline:
         for seg in segments:
             for op in seg:
                 h = _digest(h, op.digest())
-            stage = _fused_stage(stage, seg, self.cache if seg[-1].cached else None, f"{seg[-1].name}:{h}")
+            cache = self.cache if seg[-1].cached else None
+            stage = _fused_stage(stage, seg, cache, f"{seg[-1].name}:{h}", level)
         return stage, h
 
     @classmethod

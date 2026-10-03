@@ -30,6 +30,8 @@ class Op(BaseModel):
       ``label`` or ``mask``; ``None`` (the default) if the op does not say.
     * ``cache_token()``: what the result depends on beyond the parameters (a file's
       modification time, weights replaced in place); part of the op's identity.
+    * ``slots``: at most this many ``apply`` calls of this op at once, process-wide (a GPU,
+      a memory-hungry step), queued finest level first; ``None`` (the default): no limit.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -40,6 +42,7 @@ class Op(BaseModel):
     # packages its apply imports beyond numpy (the browser engine loads them up front)
     packages: ClassVar[tuple[str, ...]] = ()
     output_kind: ClassVar[str | None] = None
+    slots: ClassVar[int | None] = None
     _cache: bool | None = PrivateAttr(None)  # this op's own setting, over the class's
 
     @property
@@ -144,6 +147,7 @@ def list_ops() -> dict[str, dict]:
         name: {
             "halo": "dynamic" if isinstance(cls.halo, property) else cls.halo,
             "cache": cls.cache,
+            "slots": cls.slots,
             "doc": (cls.__doc__ or "").strip(),
             "schema": cls.model_json_schema(),
         }

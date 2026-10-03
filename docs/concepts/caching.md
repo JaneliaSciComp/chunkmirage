@@ -165,8 +165,9 @@ default) held by one that scrolled out of view, so the claim earns its keep on e
 chunks; Fiji, napari, webKnossos, dask and tensorstore never abort, they simply stop
 asking, and for them the bound, the shared computation above and the cache are what keep
 the server responsive. Expensive work inside a request goes through a queue of its own
-with a few slots (three for `register://`'s refined blocks, whose fits share the GPU): a
-job is shared by every request that needs it, dropped unrun once none of them waits any
+with a few slots (three for `register://`'s refined blocks, whose fits share the GPU; an
+op's `slots` for an op that declares them, a model on a GPU say, in a queue named `op
+<name>`): a job is shared by every request that needs it, dropped unrun once none of them waits any
 more, and kept if it had started. Among waiting jobs the finest level goes first, then the
 first asked for. A request waiting on
 queued work gives its compute slot up meanwhile, so requests that need nothing expensive
