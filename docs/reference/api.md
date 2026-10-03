@@ -40,12 +40,14 @@ no headers.
   "axes": ["z", "y", "x"],
   "translation": [0, 0, 0],
   "kind": "image",                   // optional: image, label or mask, over what the source guesses
-  "padding": "edge"                  // what ops see past the volume's edge: edge (repeated) or zero
+  "padding": "edge",                 // what ops see past the volume's edge: edge (repeated) or zero
+  "input_level": "resample",         // an op at one voxel size no level has: resample a finer level, or read the nearest
+  "level_rtol": 0.01                 // how near a level's voxel size must be to count as the one asked for
 }
 ```
 
 Responses to `POST`, `PUT` and `GET /api/datasets/{name}` include `digest`, `source_dtype`,
-per-level `levels` (shape, chunks, dtype, voxel size, units, axes, and `kind`: `image`, `label`, `mask` or `null`), `ops_info` (per op: name, per-axis halo, docstring), and `sources`, a map
+per-level `levels` (shape, chunks, dtype, voxel size, units, axes, and `kind`: `image`, `label`, `mask` or `null`), `ops_info` (per op: name, per-axis halo, docstring), `reads` (for an op at one voxel size, what it reads: `level`, `voxel_size`, `resampled`; else `null`), and `sources`, a map
 from format to Neuroglancer source URL carrying the new digest.
 
 ## Datasets resolved by name

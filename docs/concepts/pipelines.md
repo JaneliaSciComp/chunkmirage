@@ -104,9 +104,13 @@ resolution, so an op can say which it reads (`input_voxel_size`), and may write 
 (its `output_info` changes the voxel size, through `ArrayInfo.rescaled`). From the first
 such op in a pipeline:
 
-* it runs on one level: the source's at that voxel size (`MultiscaleSource.level_for`), or
-  if none is, the coarsest finer one resampled to it (linear, nearest for labels and masks;
-  the `scene://` resampler). The ops before it run there too;
+* it runs on one level: the source's at that voxel size (`MultiscaleSource.level_for`, to
+  within the spec's `level_rtol`, 1% by default), or if none is, the coarsest finer one
+  resampled to it (linear, nearest for labels and masks; the `scene://` resampler). With
+  the spec's `"input_level": "nearest"` it reads the nearest level as it is instead, a
+  cheap preview: the op then sees voxels of another size than it asked for, and the output
+  is on that level's grid. The ops before it run there too. `GET /api/datasets/{name}`
+  says what was read (`reads`: the level, its voxel size, and whether it was resampled);
 * its output is cached, whatever its `cache` flag says, since the coarser levels are made
   from it: each by `downsample` from the one above, by the source pyramid's own factors
   (mean for images, the most common value for labels and masks), cached too. So the op runs

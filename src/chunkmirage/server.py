@@ -317,6 +317,7 @@ def create_app(
                 for op in p.ops
             ],
             "levels": _level_info(p),
+            "reads": p.input_read,
             "sources": links(request, name, p),
         }
 

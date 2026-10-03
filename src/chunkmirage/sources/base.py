@@ -188,3 +188,13 @@ class MultiscaleSource:
             if np.all(v <= want * (1 + rtol)):
                 best = i
         return best, False
+
+    def nearest_level(self, voxel_size: Sequence[float]) -> int:
+        """The level whose voxel size (its last axes) is nearest ``voxel_size``, by ratio
+        (the sum over axes of the size's log ratio); the finer of two as near."""
+        want = np.log(np.asarray(voxel_size, dtype=float))
+        dist = [
+            float(np.abs(np.log(np.asarray(lvl.info.voxel_size[-len(want) :], dtype=float)) - want).sum())
+            for lvl in self.levels
+        ]
+        return min(range(len(dist)), key=lambda i: (round(dist[i], 9), i))

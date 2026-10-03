@@ -59,6 +59,14 @@ export interface PipelineSpec {
    */
   kind?: ("image" | "label" | "mask") | null;
   /**
+   * For an op that reads one voxel size (a model trained at one resolution) when no level has it: 'resample' reads a finer level resampled to it; 'nearest' reads the nearest level as it is, cheaper, the output then on that level's voxels (the API reports what was read)
+   */
+  input_level?: "resample" | "nearest";
+  /**
+   * How far, relatively, a level's voxel size may be from the one an op asks for and still be read as it is
+   */
+  level_rtol?: number;
+  /**
    * What ops with a halo see past the volume's edge: 'edge' repeats the outermost voxels (no step at the border), 'zero' pads with zeros (as a model trained on zero-padded blocks expects)
    */
   padding?: "edge" | "zero";

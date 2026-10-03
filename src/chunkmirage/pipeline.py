@@ -50,6 +50,20 @@ class PipelineSpec(BaseModel):
         "integers of 32 bits or more for labels (resampled by nearest voxel, downsampled by "
         "their most common value) and booleans for masks; 'image' for a uint32 image",
     )
+    input_level: Literal["resample", "nearest"] = Field(
+        "resample",
+        description="For an op that reads one voxel size (a model trained at one "
+        "resolution) when no level has it: 'resample' reads a finer level resampled to "
+        "it; 'nearest' reads the nearest level as it is, cheaper, the output then on that "
+        "level's voxels (the API reports what was read)",
+    )
+    level_rtol: float = Field(
+        0.01,
+        gt=0,
+        lt=1,
+        description="How far, relatively, a level's voxel size may be from the one an op "
+        "asks for and still be read as it is",
+    )
     padding: Literal["edge", "zero"] = Field(
         "edge",
         description="What ops with a halo see past the volume's edge: 'edge' repeats the "
@@ -214,16 +228,29 @@ class Pipeline:
         cache_source: bool = True,
         spec: PipelineSpec | None = None,
         padding: str = "edge",
+        input_level: str = "resample",
+        level_rtol: float = 0.01,
     ):
         if padding not in ("edge", "zero"):
             raise ValueError(f"padding must be 'edge' or 'zero', got {padding!r}")
+        if input_level not in ("resample", "nearest"):
+            raise ValueError(f"input_level must be 'resample' or 'nearest', got {input_level!r}")
         self.source = source
         self.ops: list[Op] = ops_from_specs(ops)
         self.cache = cache if cache is not None else LRUCache()
         self.spec = spec
         self.padding = padding
-        self._options = {"chunk_shape": chunk_shape, "cache_source": cache_source, "padding": padding}
+        self._options = {
+            "chunk_shape": chunk_shape,
+            "cache_source": cache_source,
+            "padding": padding,
+            "input_level": input_level,
+            "level_rtol": level_rtol,
+        }
         self.levels: list[ChunkedSource] = []
+        #: what the op with an input voxel size reads: {op, index, wanted, level, voxel_size,
+        #: resampled}; None if no op has one
+        self.input_read: dict | None = None
         pinned = next((i for i, op in enumerate(self.ops) if op.input_voxel_size() is not None), None)
         if pinned is None:
             for lvl_i, raw in enumerate(source.levels):
@@ -232,8 +259,18 @@ class Pipeline:
             return
         pre, op, post = self.ops[:pinned], self.ops[pinned], self.ops[pinned + 1 :]
         want = tuple(float(v) for v in op.input_voxel_size())
-        at, exact = source.level_for(want)
+        at, exact = source.level_for(want, rtol=level_rtol)
+        if not exact and input_level == "nearest":
+            at, exact = source.nearest_level(want), True
         raw = source.levels[at] if exact else _resampled(source.levels[at], want)
+        self.input_read = {
+            "op": op.name,
+            "index": pinned,
+            "wanted": list(want),
+            "level": at,
+            "voxel_size": [float(v) for v in raw.info.voxel_size[-len(want) :]],
+            "resampled": not exact,
+        }
         stage, h = self._raw(raw, at, chunk_shape, cache_source)
         stage, h = self._chain(stage, pre, self._padded(h), 0)
         h = _digest(h, op.digest())
@@ -328,6 +365,8 @@ class Pipeline:
             cache_source=spec.cache_source,
             spec=spec,
             padding=spec.padding,
+            input_level=spec.input_level,
+            level_rtol=spec.level_rtol,
         )
 
     def rebuilt(self) -> Pipeline:
