@@ -28,7 +28,7 @@ precomputed; local, `s3://`, `gs://`, `http(s)://`), `file.h5::/dataset`, or a c
 | `--cert` / `--key`    | auto-generated                            | use your own certificate and key with `--https` |
 | `--public-url`        | `http(s)://<lan-ip>:PORT`                 | address clients use in every printed link and layer URL; defaults to this machine's network address when binding `0.0.0.0`, `localhost` when binding `127.0.0.1`; set explicitly behind a tunnel or proxy |
 | `--cache-gb`          | `2.0`                                     | in-process chunk cache; `0` caches nothing |
-| `--compressor`        | `gzip`                                    | how zarr v2 and v3 chunks are compressed: `gzip`, `zstd`, `blosc` (zstd with byte shuffle, quicker to encode float data) or `none`. In Python: `create_app(..., frontends=cli.frontends_for("blosc"))`, or the frontends' own `compressor` |
+| `--compressor`        | `blosc`                                   | how zarr v2 and v3 chunks are compressed: `blosc` (zstd with byte shuffle), `zstd`, `gzip` or `none`. blosc encodes a 16 MB float32 chunk in 30 ms where gzip takes 900 ms; use `gzip` for a client without blosc (Fiji and BigDataViewer read zarr through n5-zarr, which needs the native Blosc library; their N5 frontend stays gzip). In Python: `create_app(..., frontends=cli.frontends_for("gzip"))`, or the frontends' own `compressor` |
 | `--source-cache-gb`   | `0.5`                                     | tensorstore's cache of decoded source chunks, one pool shared by every source the server reads |
 | `--viewer`            | `https://neuroglancer-demo.appspot.com`   | viewer for the printed link |
 | `--format`            | `zarr3`                                   | format used in the printed link |

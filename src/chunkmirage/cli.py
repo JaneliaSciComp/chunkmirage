@@ -181,9 +181,10 @@ def serve(
     ),
     cache_gb: float = typer.Option(2.0, help="in-process chunk cache size (0: no cache)"),
     compressor: str = typer.Option(
-        "gzip",
-        help="how zarr v2 and v3 chunks are compressed: gzip, zstd, blosc (zstd with byte "
-        "shuffle, quicker on float data) or none",
+        "blosc",
+        help="how zarr v2 and v3 chunks are compressed: blosc (zstd with byte shuffle, the "
+        "quickest), zstd, gzip (for clients without blosc, such as Fiji without its native "
+        "library) or none",
     ),
     source_cache_gb: float = typer.Option(
         0.5, help="tensorstore's cache of decoded source chunks, shared by every source"

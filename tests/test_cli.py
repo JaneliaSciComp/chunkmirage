@@ -89,7 +89,7 @@ def test_the_zarr_compressor_is_chosen_on_the_command_line():
     from chunkmirage.cli import frontends_for
 
     reg = build_registry("synthetic://blobs?shape=16,16,16&chunk=8,8,8&levels=1", "d", [], None, raw=False)
-    fronts = frontends_for("blosc")
+    fronts = frontends_for("gzip")
     zarray = json.loads(fronts["zarr"].resolve(reg.get("d"), "s0/.zarray").body)
-    assert zarray["compressor"]["id"] == "blosc" and fronts["n5"].compressor.kind == "gzip"
-    assert "blosc" in json.dumps(json.loads(fronts["zarr3"].resolve(reg.get("d"), "s0/zarr.json").body))
+    assert zarray["compressor"]["id"] == "gzip" and fronts["n5"].compressor.kind == "gzip"
+    assert "gzip" in json.dumps(json.loads(fronts["zarr3"].resolve(reg.get("d"), "s0/zarr.json").body))

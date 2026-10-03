@@ -36,7 +36,7 @@ class Zarr3Frontend(Frontend):
     root_keys = ("zarr.json",)
     level_keys = ("zarr.json",)
 
-    def __init__(self, compressor: str = "gzip", level: int | None = None):
+    def __init__(self, compressor: str = "blosc", level: int | None = None):
         self.compressor = Compressor(compressor, level)
 
     def resolve(self, pipeline: Pipeline, path: str):

@@ -21,7 +21,7 @@ class Zarr2Frontend(Frontend):
     root_keys = (".zgroup", ".zattrs", ".zmetadata")
     level_keys = (".zarray", ".zattrs")
 
-    def __init__(self, compressor: str = "gzip", level: int | None = None, separator: str = "/"):
+    def __init__(self, compressor: str = "blosc", level: int | None = None, separator: str = "/"):
         self.compressor = Compressor(compressor, level)
         self.separator = separator
 
