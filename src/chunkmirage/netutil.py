@@ -37,6 +37,31 @@ def free_port(host: str = "127.0.0.1", start: int = 8000, *, avoid=(), tries: in
     raise OSError(f"no free port in {start}..{start + tries - 1} on {host}")
 
 
+def bind_socket(
+    host: str, port: int | None = None, *, start: int = 8000, tries: int = 100
+) -> socket.socket:
+    """A listening TCP socket on ``host``: on ``port`` (0: one the system picks), or without
+    one on the first free port from ``start`` up. A server handed it can announce its
+    address at once, since no other process can take the port in between (``free_port``
+    only checks one). Connections that arrive before the server runs wait in the backlog."""
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    candidates = [port] if port is not None else range(start, start + tries)
+    for p in candidates:
+        s = socket.socket(family, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # as servers do
+        try:
+            s.bind((host, p))
+        except OSError:
+            s.close()
+            if port is not None:
+                raise
+            continue
+        s.listen(2048)
+        s.set_inheritable(True)
+        return s
+    raise OSError(f"no free port in {start}..{start + tries - 1} on {host}")
+
+
 def public_host_for(bind_host: str) -> str:
     """Host other machines should use to reach a server bound to ``bind_host``."""
     if bind_host in ("0.0.0.0", "::", ""):

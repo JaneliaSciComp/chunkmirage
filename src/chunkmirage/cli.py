@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 
 import typer
 
@@ -24,6 +26,38 @@ def _parse_op(text: str) -> dict:
         except json.JSONDecodeError:
             spec[k] = v
     return spec
+
+
+def write_ready_file(path: str, info: dict) -> None:
+    """Announce a started server: ``info`` as JSON in ``path``, written whole (a reader never
+    sees half of it), or as one line on stdout for ``-``."""
+    text = json.dumps(info)
+    if path == "-":
+        print(text, flush=True)
+        return
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w") as f:
+        f.write(text + "\n")
+    os.replace(tmp, path)
+
+
+def on_startup(app, callback):
+    """``app`` calling ``callback()`` once its startup has completed (ASGI lifespan), under
+    any ASGI server. The server's socket is already listening by then (``bind_socket``), so
+    a client told the address at that moment is served."""
+
+    async def wrapped(scope, receive, send):
+        if scope["type"] != "lifespan":
+            return await app(scope, receive, send)
+
+        async def send_and_announce(message):
+            await send(message)
+            if message["type"] == "lifespan.startup.complete":
+                callback()
+
+        return await app(scope, receive, send_and_announce)
+
+    return wrapped
 
 
 def build_registry(
@@ -102,7 +136,14 @@ def serve(
     ),
     host: str = typer.Option("0.0.0.0"),
     port: int | None = typer.Option(
-        None, help="port to serve on (default: 8000, or the first free one above it)"
+        None,
+        help="port to serve on (default: 8000, or the first free one above it; 0: any free one)",
+    ),
+    ready_file: str | None = typer.Option(
+        None,
+        "--ready-file",
+        help="once the server accepts connections, write JSON with its url, port, pid and "
+        "dataset sources to this file ('-': one line on stdout); removed when it exits",
     ),
     https: bool = typer.Option(
         False,
@@ -162,7 +203,7 @@ def serve(
     viewer_port: int = typer.Option(0, help="port for --python-viewer (default: random free port)"),
 ):
     """Serve SOURCE through a pipeline of ops as n5 / zarr / zarr3 / precomputed."""
-    from chunkmirage.netutil import free_port, public_host_for, serving_address
+    from chunkmirage.netutil import bind_socket, public_host_for, serving_address
     from chunkmirage.neuroglancer import source_url, viewer_link
     from chunkmirage.server import create_app
 
@@ -177,10 +218,12 @@ def serve(
         select=select,
         mesh=mesh,
     )
-    if port is None:
-        port = free_port(host, 8000)
-        if port != 8000:
-            typer.echo(f"port:         {port} (8000 is in use)")
+    # Bound before any address is printed or announced, so nothing can take the port meanwhile
+    sock = bind_socket(host, port)
+    bound = sock.getsockname()[1]
+    if port is None and bound != 8000:
+        typer.echo(f"port:         {bound} (8000 is in use)")
+    port = bound
     public_host = public_host_for(host)
     address, ssl = serving_address(host, port, https=https, cert=cert, key=key)
     base = (public_url or address).rstrip("/")
@@ -190,7 +233,8 @@ def serve(
     srcs = {n: source_url(base, n, format, scheme, p.digest()) for n, p in pipes.items()}
     for n, s in srcs.items():
         typer.echo(f"source [{n}]: {s}")
-    typer.echo(f"neuroglancer: {viewer_link(pipes, srcs, viewer)}")
+    link = viewer_link(pipes, srcs, viewer)
+    typer.echo(f"neuroglancer: {link}")
     typer.echo(f"control UI:   {base}/ui{f'?token={token}' if token else ''}")
     typer.echo(f"control API:  {base}/api/datasets/{name}")
     if https and not (cert and key):
@@ -211,22 +255,31 @@ def serve(
             public_host=public_host,
         )
         typer.echo(f"python viewer: {v.url}   (layers follow live edits; camera preserved)")
-    import os
-
     n_threads = threads or max(40, 2 * (os.cpu_count() or 4))
     typer.echo(f"threads:      {n_threads} for chunk computation")
     application = create_app(registry, public_url=public_url, threads=n_threads, token=token)
+    if ready_file:
+        ready = {"url": base, "port": port, "pid": os.getpid(), "datasets": srcs, "neuroglancer": link}
+        application = on_startup(application, lambda: write_ready_file(ready_file, ready))
+    try:
+        _run(application, sock, host, port, ssl, server=server, workers=workers)
+    finally:
+        if ready_file and ready_file != "-":
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(ready_file)
+
+
+def _run(application, sock, host: str, port: int, ssl: dict, *, server: str, workers: int) -> None:
+    """Serve ``application`` on the bound ``sock`` with uvicorn or hypercorn."""
     if server != "hypercorn" or workers > 1:
         import uvicorn
 
-        uvicorn.run(
-            application,
-            host=host,
-            port=port,
-            workers=workers if workers > 1 else None,
-            log_level="info",
-            **ssl,
-        )
+        if workers > 1:
+            sock.close()
+            uvicorn.run(application, host=host, port=port, workers=workers, log_level="info", **ssl)
+            return
+        config = uvicorn.Config(application, host=host, port=port, log_level="info", **ssl)
+        uvicorn.Server(config).run(sockets=[sock])
         return
     import asyncio
 
@@ -234,7 +287,7 @@ def serve(
     from hypercorn.config import Config
 
     config = Config()
-    config.bind = [f"{host}:{port}"]
+    config.bind = [f"fd://{sock.detach()}"]
     config.accesslog = "-"
     config.errorlog = "-"
     config.access_log_format = '%(h)s - "%(r)s" %(s)s %(b)s'

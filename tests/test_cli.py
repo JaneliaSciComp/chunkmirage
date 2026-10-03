@@ -34,3 +34,36 @@ def test_self_signed_cert_roundtrip(tmp_path):
     ctx.load_cert_chain(certfile, keyfile)  # raises if the pair is inconsistent
     # second call reuses the files
     assert ensure_self_signed_cert(str(tmp_path)) == (certfile, keyfile)
+
+
+def test_serve_announces_its_address_once_it_accepts_connections(tmp_path):
+    """--port 0 binds any free port, and --ready-file appears only when that port answers;
+    it is removed again when the server exits."""
+    import json
+    import signal
+    import subprocess
+    import sys
+    import time
+    import urllib.request
+
+    ready = tmp_path / "ready.json"
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "chunkmirage.cli", "serve", "synthetic://blobs?shape=16,16,16&chunk=8,8,8&levels=1",
+         "--host", "127.0.0.1", "--port", "0", "--no-raw", "--name", "d", "--ready-file", str(ready)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 60
+        while not ready.exists():
+            assert proc.poll() is None, "the server exited"
+            assert time.monotonic() < deadline, "no ready file"
+            time.sleep(0.1)
+        info = json.loads(ready.read_text())
+        assert info["port"] > 0 and info["url"] == f"http://localhost:{info['port']}"
+        assert info["pid"] == proc.pid and set(info["datasets"]) == {"d"}
+        with urllib.request.urlopen(f"http://127.0.0.1:{info['port']}/api/datasets", timeout=10) as r:
+            assert json.loads(r.read()) == {"datasets": ["d"]}
+    finally:
+        proc.send_signal(signal.SIGINT)
+        proc.wait(timeout=30)
+    assert not ready.exists()
