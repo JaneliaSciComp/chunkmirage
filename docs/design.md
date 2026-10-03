@@ -198,8 +198,8 @@ Three layers, from most to least structured:
 1. **Built-in ops**: pointwise (threshold, cast, scale), filters (gaussian, uniform, dog),
    morphology, connected components with a size filter (`label`), spot detection (`spots`),
    and `contacts` over the channels of a `stack://` source, the first op over several images
-   (the stack reads them on one grid; the op drops the channel axis). Planned: distance transform, on-the-fly
-   downsampling, a `Combine` op taking another pipeline as input. Registration is a source,
+   (the stack reads them on one grid; the op drops the channel axis), and `downsample`.
+   Planned: distance transform, a `Combine` op taking another pipeline as input. Registration is a source,
    not an op (see below).
 2. **Plugins**: subclass `Op`, declare `name`, `halo`, `cache`, register via the
    `chunkmirage.ops` entry point. cellmap-flow's models become one plugin package.
@@ -212,6 +212,43 @@ Three layers, from most to least structured:
    `neuroglancer_link`, `cache_stats`), so an LLM agent can drive the viewer. Arbitrary
    code (a `PythonOp` taking source text) is possible but off by default; it is only
    acceptable on a single-user machine.
+
+### What stays in the core (a proposal)
+
+chunkmirage is worth most as the engine others build on: sources, formats, the cached
+pipeline, the demand queue and the plugin entry points. Domain features belong in the
+applications built on it, where the attention for those uses goes: cellmap-flow for models,
+others later. A core that collects one field's ops and application features stops looking
+general, competes with what is built on it, and has its API shaped by one domain. The rule
+of thumb: if someone serving data from a different field would not use it, it does not
+belong in the core.
+
+The demos show the range well and should stay. Their ops and sources, though, live in the
+core package today. This proposal moves them into plugin packages that register through
+the same `chunkmirage.ops` and `chunkmirage.sources` entry points any plugin uses:
+
+| package | ops and sources | extra dependencies it takes along |
+| ------- | --------------- | --------------------------------- |
+| core | `threshold`, `cast`, `scale`, `gaussian`, `uniform`, `dog`, `diff`, `gradient`, `downsample`, `morphology`, `label`; `synthetic://`, `scene://`, `warp://`, `stack://`, `flip://`; surface meshes | scipy for the filters |
+| `chunkmirage-geo` | `normalized_difference`, `slope`, `hillshade`; GeoTIFF sources; terrain meshes | tifffile, imagecodecs |
+| `chunkmirage-microscopy` | `spots`, `contacts`, `chunkmirage.tracking`; `stitch://`; `register://` and its solver | torch |
+
+The generic building blocks stay in the core, op by op: filters, morphology, labelling,
+downsampling, differences, gradients, resampling through OME-Zarr transformations.
+
+* **Benefits.** The core stays small and plainly general, with fewer optional
+  dependencies. The plugin API gets exercised by real use, so its gaps show before a third
+  party finds them. The demos become templates for building a domain on chunkmirage.
+* **The cheapest start.** Subpackages in this repo with their own `pyproject.toml`
+  (`plugins/geo/`, `plugins/microscopy/`), installed editable in development and CI, and a
+  `demos` extra that installs both so the gallery keeps working. Separate repositories
+  later, if ever.
+* **Costs.** More packaging and CI. The gallery cards and the docs must say which plugin
+  each demo needs. The browser engine writes the package's own ops into Pyodide, so it must
+  learn to load a plugin's ops too. `tests/test_docs.py` checks that every registered op is
+  documented, so the plugins need docs pages of their own, or the check must span them.
+
+Nothing has moved: this is for the owners to decide.
 
 ## Client-side / browser roadmap
 
@@ -361,8 +398,11 @@ much of what was read came from the cache. Fed the same affine and
 * **Cluster GPU node**: same, with `--public-url` pointing at an SSH tunnel or reverse
   proxy (cellmap-flow's setup).
 * **Multi-user / shared cache**: put the cache in a real zarr store on local SSD (planned
-  `DiskCache`), so workers share it and the cache doubles as a partially materialized
-  output dataset. "Browse to materialize" falls out naturally.
+  `DiskCache`, opt-in and off by default), so workers share it and the cache doubles as a
+  partially materialized output dataset. "Browse to materialize" falls out naturally.
+* **Inside an application**: an application mounts the app in its own
+  (`Mount("/prefix", create_app(...))`), or starts `chunkmirage serve` with
+  `--ready-file` and its plugins installed; see the [API](reference/api.md#mounted-in-another-app).
 
 ## Open questions
 
@@ -370,5 +410,5 @@ much of what was read came from the cache. Fed the same affine and
   64³? Neuroglancer performs best with ≤ 64³-ish chunks; sources often use 128³.
 * Sharded zarr v3 output: worth emitting? Viewers read shards fine; only useful when the
   cache is on disk.
-* Auth: currently none. A bearer token on `/api/*` is the minimum before exposing beyond
-  a tunnel.
+* Auth: `--token` guards `/api/*`; the datasets stay open, because viewers send no
+  headers. Access per dataset (signed URLs, say) is still open.
