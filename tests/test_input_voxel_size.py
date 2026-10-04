@@ -177,3 +177,39 @@ def test_the_level_tolerance_is_the_pipelines_to_set():
     assert Pipeline(open_source(PYRAMID), [AtNearlyEight()]).input_read["resampled"] is True
     loose = Pipeline(open_source(PYRAMID), [AtNearlyEight()], level_rtol=0.1)
     assert loose.input_read["resampled"] is False and loose.info(0).voxel_size == (8.0, 8.0, 8.0)
+
+
+class AtVoxel(Op):
+    """Reads voxels of a given size, which the source's one level is not."""
+
+    name = "_at_voxel"
+    want: tuple[float, float, float] = (12.0, 12.0, 12.0)
+
+    def input_voxel_size(self):
+        return self.want
+
+    def apply(self, block):
+        return block
+
+
+ONE_LEVEL = "synthetic://blobs+noise?shape=24,30,36&chunk=12,15,18&levels=1&voxel_size=4"
+
+
+def test_a_whole_factor_is_resampled_as_the_mean_of_each_block():
+    """Three 4 nm voxels to one 12 nm voxel: their mean, rounded to the dtype, as a stored
+    pyramid level is, not linear interpolation between the middle two."""
+    src = open_source(ONE_LEVEL)
+    raw = src[0].read(Box((0, 0, 0), src[0].info.shape)).astype(np.float64)
+    expected = np.rint(raw.reshape(8, 3, 10, 3, 12, 3).mean((1, 3, 5))).astype(np.uint8)
+    p = Pipeline(src, [AtVoxel()])
+    out = p.levels[0]
+    assert out.info.voxel_size == (12.0, 12.0, 12.0) and out.info.translation == (4.0, 4.0, 4.0)
+    np.testing.assert_array_equal(out.read(Box((0, 0, 0), out.info.shape)), expected)
+
+
+def test_mixed_factors_average_the_whole_ones_and_interpolate_the_rest():
+    p = Pipeline(open_source(ONE_LEVEL), [AtVoxel(want=(12.0, 6.0, 8.0))])
+    info = open_source(ONE_LEVEL)[0].info.rescaled((12.0, 6.0, 8.0))
+    out = p.levels[0]
+    assert out.info.shape == info.shape and out.info.translation == info.translation
+    assert out.read(Box((0, 0, 0), out.info.shape)).dtype == np.uint8

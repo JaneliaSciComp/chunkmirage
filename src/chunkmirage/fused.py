@@ -19,12 +19,24 @@ def _ratio(a: ArrayInfo, b: ArrayInfo, k: int) -> tuple[float, ...]:
     return tuple(float(w) / float(v) for v, w in zip(a.voxel_size[-k:], b.voxel_size[-k:]))
 
 
+CHANNEL_AXES = ("c", "channel", "channels")
+
+
+def _gridded(info: ArrayInfo) -> int:
+    """How many trailing axes are chunked and padded: those after the last channel axis.
+    A channel axis, and any axis before it, is read whole, so an op may change its length
+    (select channels, combine them) or drop it."""
+    last = max((a for a, name in enumerate(info.axes) if name in CHANNEL_AXES), default=-1)
+    return info.ndim - last - 1
+
+
 def _infos(info: ArrayInfo, ops: Sequence[Op]) -> tuple[list[ArrayInfo], int]:
-    """Each op's output, and how many trailing axes every op keeps."""
-    infos, kept = [info], info.ndim
+    """Each op's output, and how many trailing axes every op keeps: those no op drops or
+    adds, and none of them a channel axis."""
+    infos, kept = [info], _gridded(info)
     for op in ops:
         infos.append(op.output_info(infos[-1]))
-        kept = min(kept, infos[-1].ndim)
+        kept = min(kept, _gridded(infos[-1]))
     return infos, kept
 
 
@@ -115,8 +127,9 @@ def run(ops: Sequence[Op], block: np.ndarray, in_box: Box, out_box: Box, out: Ar
                 )
             space = space.pad([-a for a in h])  # a valid convolution: it returned the interior
         lead = result.shape[: result.ndim - k]  # leading axes are read whole
-        box = Box(box.start[: len(lead)] if result.ndim == block.ndim else (0,) * len(lead),
-                  box.stop[: len(lead)] if result.ndim == block.ndim else tuple(lead))
+        same = lead == block.shape[: block.ndim - k]  # as they came, or made anew
+        box = Box(box.start[: len(lead)] if same else (0,) * len(lead),
+                  box.stop[: len(lead)] if same else tuple(lead))
         box = Box(box.start + space.start, box.stop + space.stop)
         block = result
     if block.ndim != out.ndim:

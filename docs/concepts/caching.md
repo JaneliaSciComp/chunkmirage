@@ -169,7 +169,11 @@ with a few slots (three for `register://`'s refined blocks, whose fits share the
 op's `slots` for an op that declares them, a model on a GPU say, in a queue named `op
 <name>`): a job is shared by every request that needs it, dropped unrun once none of them waits any
 more, and kept if it had started. Among waiting jobs the finest level goes first, then the
-first asked for. A request waiting on
+one whose request arrived first. A request takes its place in line when it arrives, not
+when its job reaches the queue: an op's input is read before its job queues (so no slot is
+held reading), and reads take different times, so ordering by queueing would run a
+viewer's centre-first requests in stripes. A job only waits once its input is read, so a
+free slot never waits on a slow read. A request waiting on
 queued work gives its compute slot up meanwhile, so requests that need nothing expensive
 never wait behind ones that do. Work asked for from Python, with no request behind it, is
 never dropped. Ten requests for

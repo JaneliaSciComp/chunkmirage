@@ -70,6 +70,13 @@ def on_startup(app, callback):
     return wrapped
 
 
+def frontends_for(compressor: str):
+    """Every frontend, the zarr v2 and v3 ones compressing chunks with ``compressor``."""
+    from chunkmirage.frontends import FRONTENDS, get_frontend
+
+    return {n: get_frontend(n, compressor=compressor) if n in ("zarr", "zarr3") else get_frontend(n) for n in FRONTENDS}
+
+
 def build_registry(
     source: str,
     name: str,
@@ -172,7 +179,13 @@ def serve(
         help="URL clients use to reach this server. Default: this machine's network address "
         "(http(s)://<lan-ip>:<port>) when binding 0.0.0.0, else http(s)://localhost:<port>",
     ),
-    cache_gb: float = typer.Option(2.0, help="in-process chunk cache size"),
+    cache_gb: float = typer.Option(2.0, help="in-process chunk cache size (0: no cache)"),
+    compressor: str = typer.Option(
+        "blosc",
+        help="how zarr v2 and v3 chunks are compressed: blosc (zstd with byte shuffle, the "
+        "quickest), zstd, gzip (for clients without blosc, such as Fiji without its native "
+        "library) or none",
+    ),
     source_cache_gb: float = typer.Option(
         0.5, help="tensorstore's cache of decoded source chunks, shared by every source"
     ),
@@ -274,7 +287,9 @@ def serve(
         typer.echo(f"python viewer: {v.url}   (layers follow live edits; camera preserved)")
     n_threads = threads or max(40, 2 * (os.cpu_count() or 4))
     typer.echo(f"threads:      {n_threads} for chunk computation")
-    application = create_app(registry, public_url=public_url, threads=n_threads, token=token)
+    application = create_app(
+        registry, frontends=frontends_for(compressor), public_url=public_url, threads=n_threads, token=token
+    )
     if ready_file:
         ready = {"url": base, "port": port, "pid": os.getpid(), "datasets": srcs, "neuroglancer": link}
         application = on_startup(application, lambda: write_ready_file(ready_file, ready))
@@ -295,8 +310,10 @@ def _run(application, sock, host: str, port: int, ssl: dict, *, server: str, wor
             sock.close()
             uvicorn.run(application, host=host, port=port, workers=workers, log_level="info", **ssl)
             return
-        config = uvicorn.Config(application, host=host, port=port, log_level="info", **ssl)
-        uvicorn.Server(config).run(sockets=[sock])
+        from chunkmirage.serving import Server
+
+        tls = (ssl["ssl_certfile"], ssl["ssl_keyfile"]) if ssl else None
+        Server(application, sock, ssl=tls).run()  # the public helper, in this thread
         return
     import asyncio
 

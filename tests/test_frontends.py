@@ -94,7 +94,8 @@ def test_zarr3(client, volume):
     cs = meta["chunk_grid"]["configuration"]["chunk_shape"]
     r = client.get("/thr/zarr3/s1/c/0/0/0")
     assert r.status_code == 200
-    data = np.frombuffer(gzip.decompress(r.content), dtype=np.uint8).reshape(cs)
+    assert [c["name"] for c in meta["codecs"]][-1] == "blosc"  # the default
+    data = np.frombuffer(numcodecs.Blosc().decode(r.content), dtype=np.uint8).reshape(cs)
     exp = expected(volume[::2, ::2, ::2])[: cs[0], : cs[1], : cs[2]]
     np.testing.assert_array_equal(data[: exp.shape[0], : exp.shape[1], : exp.shape[2]], exp)
 

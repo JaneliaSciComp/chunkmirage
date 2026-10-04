@@ -110,3 +110,24 @@ FastAPI app: every path above is then under `/prefix`, the token guards `/prefix
 links carry the prefix, and the control page calls the API relative to where it is served.
 A mounted app gets no lifespan events, so the threadpool is sized by the first chunk
 request instead (it is the host's pool too, and only ever made larger).
+
+## Serving it from Python
+
+`chunkmirage.serve(app, host="0.0.0.0", port=0, *, on_ready=None, ssl=None)` serves an app
+as `chunkmirage serve` does, for an application that builds its own (`create_app`, or its
+own app with chunkmirage mounted in it). The port is bound before anything announces it
+(`port=0`: any free one). `on_ready(server)` is called once connections are accepted. It
+returns a running `Server` with `port`, `url` and `stop()`, served from a background thread;
+`block=True` serves in the calling thread instead, until stopped.
+
+```python
+import chunkmirage
+
+server = chunkmirage.serve(app, port=0, on_ready=lambda s: print("ready at", s.url))
+...
+server.stop()
+```
+
+`Server(app, sock, ...)` takes a socket bound already (`netutil.bind_socket`), when the
+address must be known before the app is built.
+

@@ -75,7 +75,8 @@ class DatasetRegistry:
         source_cache_bytes: int = 0,
         resolver: Resolver | None = None,
     ):
-        self.cache = cache or LRUCache()
+        # not ``cache or ...``: an empty cache is falsy (it has a length), and was replaced
+        self.cache = cache if cache is not None else LRUCache()
         self.source_cache_bytes = source_cache_bytes
         self.resolver = resolver
         self._pipelines: dict[str, Pipeline] = {}
