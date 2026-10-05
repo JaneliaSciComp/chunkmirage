@@ -4,9 +4,9 @@ Notable changes per release. Versions follow the rules in
 [contributing](docs/contributing.md#plugin-api-and-versioning): the plugin API is stable,
 and a release that breaks it says so here.
 
-## 0.1.0 (unreleased)
+## 0.1.0a1 (unreleased)
 
-The first release.
+The first release, an alpha: the plugin API can still change before 0.1.0.
 
 ### Serving
 
