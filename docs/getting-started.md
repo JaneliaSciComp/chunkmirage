@@ -3,7 +3,7 @@
 ## Install
 
 ```bash
-git clone https://github.com/yuriyzubov/chunkmirage
+git clone https://github.com/JaneliaSciComp/chunkmirage
 cd chunkmirage
 uv sync --extra all --group dev        # or: pip install -e ".[all]"; add --extra gpu (or cpu) for register://
 ```

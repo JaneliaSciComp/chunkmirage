@@ -432,13 +432,13 @@ The parameters follow the last `?`, so the moving image's URL may carry its own 
 `warp://` URL, say, which is how the tests check that a known swirl is undone). They are
 one Pydantic model, `RegisterParams`, whose JSON Schema (`chunkmirage schema`) the browser
 engine's types and form defaults are generated from: the
-[browser page](https://yuriyzubov.github.io/chunkmirage/browser/register.html) solves the
+[browser page](https://janeliascicomp.github.io/chunkmirage/browser/register.html) solves the
 same spec on the viewer's GPU and shows the `chunkmirage serve 'register://…'` command for
 its settings, and fed the same affine and levels the two fields agree to 0.01 µm (median)
 on the fly templates, whose field moves tissue by 7 µm (median). It fits blocks on demand
 (`refine`) the same way, on the viewer's GPU, so the EASI-FISH pair above runs from a link
 with nothing installed:
-[register.html with the EASI-FISH rounds](https://yuriyzubov.github.io/chunkmirage/browser/register.html?fixed=https://janelia-data-examples.s3.amazonaws.com/fly-efish/NP31_R2_20240119/NP31_R2_1_1_SS00090_Spab_546_Nplp1_647_1x_Central.zarr/0&moving=https://janelia-data-examples.s3.amazonaws.com/fly-efish/NP31_R2_20240119/NP31_R2_2_1_SS00090_FMRFa_546_Proc_647_1x_Central.zarr/0&refine=3&iterations=100,40,40,40&window=15,31,31,31)
+[register.html with the EASI-FISH rounds](https://janeliascicomp.github.io/chunkmirage/browser/register.html?fixed=https://janelia-data-examples.s3.amazonaws.com/fly-efish/NP31_R2_20240119/NP31_R2_1_1_SS00090_Spab_546_Nplp1_647_1x_Central.zarr/0&moving=https://janelia-data-examples.s3.amazonaws.com/fly-efish/NP31_R2_20240119/NP31_R2_2_1_SS00090_FMRFa_546_Proc_647_1x_Central.zarr/0&refine=3&iterations=100,40,40,40&window=15,31,31,31)
 (it shows the two rounds; Register solves).
 
 ### Stack sources (several images as one array's channels)
