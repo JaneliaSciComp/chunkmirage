@@ -342,7 +342,7 @@ much of what was read came from the cache. Fed the same affine and
   site needs neither: the docs workflow builds Neuroglancer from Google's source at a
   pinned tag (cached, so about 15 s the first time) and publishes it at `browser/ng/`
   next to the page, at
-  [browser/register.html](https://yuriyzubov.github.io/chunkmirage/browser/register.html).
+  [browser/register.html](https://janeliascicomp.github.io/chunkmirage/browser/register.html).
   Nothing of Neuroglancer is kept in this repo. With no images in its link the page opens
   with an example, two fly brain templates (JRC2018F and FCWB) as they are stored:
   `web/scripts/fetch_example.py` copies them at deploy time from the OME-NGFF

@@ -2,13 +2,13 @@
 
 **Spoof chunked array formats over HTTP with on-the-fly processing.**
 
-[▶ Try the demos in your browser](https://yuriyzubov.github.io/chunkmirage/browser/){ .md-button .md-button--primary }
+[▶ Try the demos in your browser](https://janeliascicomp.github.io/chunkmirage/browser/){ .md-button .md-button--primary }
 [All demos](demos.md){ .md-button }
 
 <div class="grid" markdown>
-[![Los Angeles fires: burn severity, read by Neuroglancer, a web map or GDAL](https://yuriyzubov.github.io/chunkmirage/browser/cards/fires.jpg){ width="32%" }](https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=fires)
-[![A 3-D fractal 2^28 voxels across](https://yuriyzubov.github.io/chunkmirage/browser/cards/mandelbulb.jpg){ width="32%" }](https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=mandelbulb)
-[![The Gulf Stream's fronts](https://yuriyzubov.github.io/chunkmirage/browser/cards/fronts.jpg){ width="32%" }](https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=fronts)
+[![Los Angeles fires: burn severity, read by Neuroglancer, a web map or GDAL](https://janeliascicomp.github.io/chunkmirage/browser/cards/fires.jpg){ width="32%" }](https://janeliascicomp.github.io/chunkmirage/browser/pipeline.html?card=fires)
+[![A 3-D fractal 2^28 voxels across](https://janeliascicomp.github.io/chunkmirage/browser/cards/mandelbulb.jpg){ width="32%" }](https://janeliascicomp.github.io/chunkmirage/browser/pipeline.html?card=mandelbulb)
+[![The Gulf Stream's fronts](https://janeliascicomp.github.io/chunkmirage/browser/cards/fronts.jpg){ width="32%" }](https://janeliascicomp.github.io/chunkmirage/browser/pipeline.html?card=fronts)
 </div>
 
 chunkmirage serves *virtual* datasets that look, to any HTTP-capable viewer or library
@@ -53,7 +53,7 @@ zarr (sea temperature, weather, images of the sun) reads with its own axes and c
 so a day-to-day change is an op along time.
 
 The demos also run entirely in the browser, with no server and nothing to install:
-[the gallery](https://yuriyzubov.github.io/chunkmirage/browser/) has registration solved on
+[the gallery](https://janeliascicomp.github.io/chunkmirage/browser/) has registration solved on
 your GPU and pipelines of chunkmirage's own ops run in the page (see [Demos](demos.md)).
 
 See [FAQ](faq.md) for when *not* to use it.

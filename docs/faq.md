@@ -31,7 +31,7 @@ on **its own origin**. A worker on `chunkmirage.github.io` never sees requests m
 `neuroglancer-demo.appspot.com`. CORS is unrelated: CORS governs whether a page may *read* a
 response a real server sent, and here there is no server. The fix is to host our own
 Neuroglancer build on the same origin as the service worker, which the docs site does for
-[its browser demos](https://yuriyzubov.github.io/chunkmirage/browser/)
+[its browser demos](https://janeliascicomp.github.io/chunkmirage/browser/)
 (see the [design notes](design.md#client-side-browser-roadmap)).
 
 ## Chunks load slowly. Why?

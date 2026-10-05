@@ -50,11 +50,11 @@ cpu = ["torch>=2.6", "scipy>=1.12"]
 all = ["chunkmirage[hdf5,tiff,ops,mesh,mcp,viewer,https]"]
 
 [project.urls]
-Homepage = "https://yuriyzubov.github.io/chunkmirage/"
-Documentation = "https://yuriyzubov.github.io/chunkmirage/"
-Source = "https://github.com/yuriyzubov/chunkmirage"
-Issues = "https://github.com/yuriyzubov/chunkmirage/issues"
-Changelog = "https://github.com/yuriyzubov/chunkmirage/blob/main/CHANGELOG.md"
+Homepage = "https://janeliascicomp.github.io/chunkmirage/"
+Documentation = "https://janeliascicomp.github.io/chunkmirage/"
+Source = "https://github.com/JaneliaSciComp/chunkmirage"
+Issues = "https://github.com/JaneliaSciComp/chunkmirage/issues"
+Changelog = "https://github.com/JaneliaSciComp/chunkmirage/blob/main/CHANGELOG.md"
 
 [project.scripts]
 chunkmirage = "chunkmirage.cli:app"
