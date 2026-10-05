@@ -10,21 +10,21 @@ source (zarr, N5, precomputed, HDF5, GeoTIFF; local, S3, GCS or HTTP) or generat
 through a pipeline of ops, encoded in the format the client asked for, and cached per
 stage, so changing a parameter downstream never recomputes what comes before it.
 
-**▶ [Try the demos in your browser](https://yuriyzubov.github.io/chunkmirage/browser/)**,
+**▶ [Try the demos in your browser](https://janeliascicomp.github.io/chunkmirage/browser/)**,
 nothing to install. Every chunk on screen is computed in the page by chunkmirage's own
 Python, from public data, as the viewer asks for it.
 
 <p>
-<a href="https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=fires"><img src="web/public/cards/fires.jpg" alt="Los Angeles fires: burn severity, read by Neuroglancer, a web map or GDAL" title="Los Angeles fires: burn severity, read by Neuroglancer, a web map or GDAL" width="32%"></a>
-<a href="https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=mandelbulb"><img src="web/public/cards/mandelbulb.jpg" alt="A 3-D fractal 2^28 voxels across" title="A 3-D fractal 2^28 voxels across" width="32%"></a>
-<a href="https://yuriyzubov.github.io/chunkmirage/browser/pipeline.html?card=fronts"><img src="web/public/cards/fronts.jpg" alt="The Gulf Stream's fronts" title="The Gulf Stream's fronts" width="32%"></a>
+<a href="https://janeliascicomp.github.io/chunkmirage/browser/pipeline.html?card=fires"><img src="https://raw.githubusercontent.com/JaneliaSciComp/chunkmirage/main/web/public/cards/fires.jpg" alt="Los Angeles fires: burn severity, read by Neuroglancer, a web map or GDAL" title="Los Angeles fires: burn severity, read by Neuroglancer, a web map or GDAL" width="32%"></a>
+<a href="https://janeliascicomp.github.io/chunkmirage/browser/pipeline.html?card=mandelbulb"><img src="https://raw.githubusercontent.com/JaneliaSciComp/chunkmirage/main/web/public/cards/mandelbulb.jpg" alt="A 3-D fractal 2^28 voxels across" title="A 3-D fractal 2^28 voxels across" width="32%"></a>
+<a href="https://janeliascicomp.github.io/chunkmirage/browser/pipeline.html?card=fronts"><img src="https://raw.githubusercontent.com/JaneliaSciComp/chunkmirage/main/web/public/cards/fronts.jpg" alt="The Gulf Stream's fronts" title="The Gulf Stream's fronts" width="32%"></a>
 </p>
 
 They include burn severity of the Los Angeles fires, the Gulf Stream's fronts and
 hurricanes' cold wakes, landing slopes at the Moon's south pole, a 3-D fractal, microscope
 tiles stitched by RANSAC, two fly brains registered on your GPU, organelle contact sites,
 mRNA spots and nuclei tracked through a colony. Each shows the `chunkmirage serve` command
-that serves the same from Python. The [demos page](docs/demos.md) lists them all, with the
+that serves the same from Python. The [demos page](https://janeliascicomp.github.io/chunkmirage/demos/) lists them all, with the
 Python examples.
 
 ## How it works
@@ -75,7 +75,7 @@ curl -X PUT localhost:8000/api/datasets/<name> -H 'content-type: application/jso
   -d '{"source": "/path/to/data.zarr/em/fibsem-uint8", "ops": [{"op": "threshold", "low": 150}]}'
 ```
 
-More in [getting started](docs/getting-started.md), including viewing from another machine.
+More in [getting started](https://janeliascicomp.github.io/chunkmirage/getting-started/), including viewing from another machine.
 
 ## As a library
 
@@ -97,8 +97,8 @@ app = create_app({"em": pipe})                   # a Starlette ASGI app
 
 Ops, source schemes and HTTP routes from other packages register through entry points
 (`chunkmirage.ops`, `chunkmirage.sources`, `chunkmirage.routes`), and the app can be mounted
-inside another one. See [pipelines](docs/concepts/pipelines.md) and the
-[REST API](docs/reference/api.md).
+inside another one. See [pipelines](https://janeliascicomp.github.io/chunkmirage/concepts/pipelines/) and the
+[REST API](https://janeliascicomp.github.io/chunkmirage/reference/api/).
 
 ## What it does today
 
@@ -114,12 +114,12 @@ inside another one. See [pipelines](docs/concepts/pipelines.md) and the
   ask for and dropped when they stop waiting.
 * **In the browser:** the same ops run in Pyodide, and registration on WebGPU.
 
-Not yet: GPU ops other than registration, an MCP server. See the [roadmap](docs/roadmap.md).
+Not yet: GPU ops other than registration, an MCP server. See the [roadmap](https://janeliascicomp.github.io/chunkmirage/roadmap/).
 
 ## Documentation
 
-**https://yuriyzubov.github.io/chunkmirage/** (built from `docs/`; `uv run mkdocs serve`
-locally). [docs/design.md](docs/design.md) explains the architecture and the choices behind
+**https://janeliascicomp.github.io/chunkmirage/** (built from `docs/`; `uv run mkdocs serve`
+locally). [the design page](https://janeliascicomp.github.io/chunkmirage/design/) explains the architecture and the choices behind
 it.
 
 ## License
