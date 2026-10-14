@@ -8,8 +8,8 @@
 entirely in your browser (Chrome, Edge or Safari 26, for WebGPU and service workers). Images
 are read from their public buckets and every chunk on screen is computed in the page when
 the viewer asks for it; nothing is uploaded or precomputed. Each card also shows the
-`chunkmirage serve` command that serves the same from Python, for Neuroglancer, Fiji,
-napari or a dask script.
+command that serves the same from Python (`chunkmirage serve`, or one of the example
+scripts), for Neuroglancer, Fiji, napari or a dask script.
 
 | demo | what is computed per chunk | data |
 | ---- | -------------------------- | ---- |
@@ -35,7 +35,8 @@ ops and `chunkmirage.fused`, the code a server's pipeline stage runs, in a few w
 (4 to 7 s, once). Meanwhile the page opens the data and starts the viewer, whose first
 requests wait for Python; a package an op imports unannounced is loaded when it first does. One reader worker
 reads the images in TypeScript, as the Python sources do (OME-Zarr through zarrita, N5
-itself, xarray-written zarr with its coordinates and CF packing, `stack://` and `flip://`),
+itself, xarray-written zarr with its coordinates and CF packing, cloud-optimized GeoTIFFs,
+`stack://` and `flip://`),
 decoding each store chunk once for the page; the page hands a worker the block a chunk
 needs and gets the chunk back. `tests/test_fused.py` checks that a chunk computed this way equals the pipeline's.
 On an RTX 2080 Ti workstation the contact-sites view filled in about 40 s, a spot or
@@ -49,7 +50,9 @@ layer and add a [`python` op](reference/ops.md#your-own-python-the-python-op), e
 ([interactivity](concepts/interactivity.md#your-own-python-edited-live)). The code gets the
 layer's data (*as read*, or *after* the demo's ops) and the layer shows what it returns: pick
 a layer as read to start from the data, or one after ops to change their result. The nuclei
-and fractal demos start with code to edit.
+and fractal demos start with code to edit. Under the code, *Ask a model to write it* writes
+it from a request, with your own key for Claude, OpenAI, Gemini and others, or Ollama on your
+computer.
 A demo is an entry of `web/src/cards.ts`:
 views (each a pipeline spec: source, `select`, ops, chunks), a Neuroglancer layout and,
 if it starts with some, the Python of its code panel (`code`, after one view's ops), or

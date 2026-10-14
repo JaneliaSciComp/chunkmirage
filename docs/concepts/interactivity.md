@@ -22,7 +22,8 @@ pipeline: what Neuroglancer's shader editor is for a layer's pixels, it is for t
 themselves (a threshold and connected components, a filter no op has). Its `#uicontrol`
 lines become sliders under it, in the same syntax as the shaders'.
 
-* **The browser demos**: every pipeline demo has a *Your Python* panel. Pick a layer, add
+* **The browser demos**: every demo tagged ✎ in the gallery (a pipeline demo with an image
+  or segmentation layer) has a *Your Python* panel. Pick a layer, add
   Python, edit it: the code gets what the layer shows (its data as read, or after the
   demo's ops, as the panel says) and returns what it shows instead. A moment after each
   change the layer is computed again (what the code prints shows under it) in the page's
@@ -31,7 +32,17 @@ lines become sliders under it, in the same syntax as the shaders'.
   its line. The code is highlighted as Python, in VS Code's colours, and Ctrl+/ (⌘/ on a
   Mac) comments the selected lines out or in, as in VS Code (CodeMirror). Two demos start
   with Python of their own to edit: nuclei counted in a light-microscopy image, and the
-  fractal's slice, with lines to uncomment. *Copy link* gives a link to the demo with the code, which opens showing it
+  fractal's slice, with lines to uncomment. *Ask a model to write it*, under the code, is a
+  chat ([Deep Chat](https://deepchat.dev)) that writes the code from a request ("threshold
+  it with a slider and number the connected pieces"), with the visitor's own key for
+  Claude, OpenAI, Gemini, OpenRouter, Mistral, DeepSeek or Groq, or Ollama on the
+  visitor's computer (no key; started with `OLLAMA_ORIGINS` set so a page may call it).
+  The model box shows which model answers (Claude Opus 5.5 to start) and takes any other.
+  Each message goes with the layer's axes, shape, dtype and chunks, the code as it is and
+  its error or output, so "it fails, fix it" works. The code a reply ends with replaces
+  the code and runs, as typed code does. The key is kept in the page's memory, for the
+  visit, and sent only to the provider picked, from the page; the page has no server to
+  keep it from the visitor's own browser. *Copy link* gives a link to the demo with the code, which opens showing it
   and runs only when the visitor presses *Run it*: Python in a page can fetch what it
   likes and read the site's storage, so someone else's should be read first. *Copy as
   plugin* gives a module defining the same op for a package.
@@ -133,9 +144,10 @@ viewers.
 Editing a pipeline reads data, but writes nothing; code does. With `--allow-code`, specs
 sent to `/api` may carry `python` ops, and whoever can send one runs code as you: on a
 cluster node, every other user logged in to it can reach its `localhost` too. So
-`--allow-code` generates a token unless given one, printed in the control-page link (the
-one link to keep to yourself, or give to someone you would let run code as you);
-`--no-token` drops it on purpose.
+`--allow-code` always has a token, generated unless given one, printed in the control-page
+link: the one link to keep to yourself, or give to someone you would let run code as you.
+A page you visit cannot know it, so even a website that reaches your server through your
+browser cannot send it code.
 
 A machine that cannot connect to its own network address, as some VPN clients forbid (a
 laptop at home), would print links that hang even on itself. So the server tries to reach

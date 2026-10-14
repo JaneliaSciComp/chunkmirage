@@ -59,7 +59,7 @@ uv run chunkmirage serve "synthetic://blobs+noise?shape=4096,4096,4096" \
     --op morphology:operation=open,radius=2 --op label:min_size=200 --python-viewer
 ```
 
-Open the printed control page (`http://<your-ip>:8000/ui`) and drag the `threshold` slider:
+Open the printed control page (`http://<your-ip>:8000/ui`) and drag the threshold's `low` slider:
 only the changed stage recomputes. Or point any viewer at one of these:
 
 | viewer source URL                                        | format                   |
@@ -116,7 +116,9 @@ inside another one. See [pipelines](https://janeliascicomp.github.io/chunkmirage
 * **In the browser:** the same ops run in Pyodide, and registration on WebGPU.
 * **Your own Python:** a [`python` op](https://janeliascicomp.github.io/chunkmirage/reference/ops/#your-own-python-the-python-op)
   carries its code in the pipeline, edited live like a Neuroglancer shader, in the browser
-  demos and on a server started with `--allow-code`.
+  demos (where a chat writes it from a request, with your own key for Claude, OpenAI,
+  Gemini or others) and on a server started with `--allow-code`. An op you will reuse is
+  [a class in your own package](https://janeliascicomp.github.io/chunkmirage/reference/ops/#your-own-op).
 
 Not yet: GPU ops other than registration, an MCP server. See the [roadmap](https://janeliascicomp.github.io/chunkmirage/roadmap/).
 

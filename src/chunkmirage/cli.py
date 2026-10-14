@@ -29,9 +29,15 @@ def _parse_op(text: str) -> dict:
             except json.JSONDecodeError:
                 spec[k] = v
     code = spec.get("code")
-    if spec.get("op") == "python" and isinstance(code, str) and code.startswith("@"):
-        with open(os.path.expanduser(code[1:]), encoding="utf-8") as f:
-            spec["code"] = f.read()
+    # a file's name, not code starting with a decorator (which has more lines)
+    if spec.get("op") == "python" and isinstance(code, str) and code.startswith("@") and "\n" not in code:
+        path = os.path.expanduser(code[1:])
+        try:
+            with open(path, encoding="utf-8") as f:
+                spec["code"] = f.read()
+        except (OSError, UnicodeDecodeError) as e:
+            why = getattr(e, "strerror", None) or "not UTF-8 text"
+            raise typer.BadParameter(f"code=@{code[1:]}: {why} (in {os.getcwd()})") from None
     return spec
 
 
@@ -133,7 +139,7 @@ def serve(
     source: str = typer.Argument(
         ...,
         help="zarr/n5/precomputed path or URL (file, s3://, gs://, http(s)://), file.h5::/dataset, "
-        "or a synthetic://, scene://, warp://, register://, stack:// or flip:// URL",
+        "or a synthetic://, scene://, warp://, register://, stitch://, stack:// or flip:// URL",
     ),
     name: str = typer.Option("processed", help="dataset name in the served URL"),
     op: list[str] = typer.Option(
@@ -185,7 +191,8 @@ def serve(
     public_url: str | None = typer.Option(
         None,
         help="URL clients use to reach this server. Default: this machine's network address "
-        "(http(s)://<lan-ip>:<port>) when binding 0.0.0.0, else http(s)://localhost:<port>",
+        "(http(s)://<lan-ip>:<port>) when binding 0.0.0.0 (localhost if it cannot reach itself there), "
+        "http(s)://localhost:<port> when binding 127.0.0.1, else the address bound",
     ),
     cache_gb: float = typer.Option(2.0, help="in-process chunk cache size (0: no cache)"),
     compressor: str = typer.Option(
@@ -219,10 +226,7 @@ def serve(
         False,
         "--allow-code",
         help="let pipelines sent to /api carry python ops: code that runs as you. A token is "
-        "generated (in the printed control UI link) unless --token or --no-token is given",
-    ),
-    no_token: bool = typer.Option(
-        False, "--no-token", help="with --allow-code, no token: for a server only you can reach"
+        "generated (in the printed control UI link) unless --token is given",
     ),
     workers: int = typer.Option(
         1,
@@ -252,9 +256,7 @@ def serve(
     from chunkmirage.neuroglancer import source_url, viewer_link
     from chunkmirage.server import create_app
 
-    if no_token and (token or not allow_code):
-        raise typer.BadParameter("--no-token goes with --allow-code, and without --token")
-    if allow_code and not token and not no_token:
+    if allow_code and not token:  # code runs only for whoever holds the token: there is always one
         token = secrets.token_urlsafe(16)
     registry = build_registry(
         source,

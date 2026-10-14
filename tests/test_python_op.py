@@ -41,10 +41,23 @@ def test_the_lines_say_what_it_reads_and_makes_and_the_code_runs_on_a_block():
     ("#uicontrol float a slider(max=3)\ndef apply(block, a): return block", "needs min and max"),
     ("#uicontrol float a slider(min=0, max=3)\ndef apply(block): return block", "no parameter 'a'"),
     ("#output complex64\ndef apply(block): return block", "integer or float"),
+    ("#halo 4096\ndef apply(block): return block", "above 1024"),
+    ("def apply(block): return block\napply = 3", "line 2: apply is no longer"),
+    ("def apply(block, extra): return block", "'extra' has no #uicontrol and no default"),
+    ("#uicontrol float name slider(min=0, max=1)\ndef apply(block, name): return block", "the op has that name itself"),
+    ("#uicontrol float a slider(min=0, max=1, default=5)\ndef apply(block, a): return block", "default is outside"),
+    ("#uicontrol float a slider(min=2, max=1)\ndef apply(block, a): return block", "min is above its max"),
 ])
 def test_mistakes_are_named_by_line_without_running_anything(code, says):
     with pytest.raises(ValidationError, match=says):
         op_from_spec({"op": "python", "code": code})
+
+
+def test_only_lines_at_the_first_column_are_directives():
+    indented = "def apply(block):\n    #halo 7\n    return block\n"
+    assert op_from_spec({"op": "python", "code": indented}).halo == (0,)
+    with_default = "def apply(block, box=None, scale=2.0): return block * scale\n"  # defaults need no slider
+    assert op_from_spec({"op": "python", "code": with_default}).apply(np.ones((2, 2))).tolist() == [[2, 2], [2, 2]]
 
 
 def test_code_written_for_the_op_is_a_plugin_with_its_sliders_as_parameters():
@@ -70,19 +83,31 @@ def test_a_server_runs_code_sent_to_it_only_when_allowed():
     assert c.get("/d/zarr3/s0/c/0/0/0").status_code == 200
 
 
+def test_a_dataset_name_is_a_path_segment():
+    c, spec = client(), {"source": SRC, "ops": []}
+    for name in ("<img src=x onerror=alert(1)>", "a/b", 5, "-x"):
+        r = c.post("/api/datasets", json={"name": name, "spec": spec})
+        assert r.status_code == 400 and "name" in r.json()["error"], name
+    assert c.post("/api/datasets", json={"name": "cells_v2.1", "spec": spec}).status_code == 201
+    assert c.get("/api/datasets").status_code == 200  # still listable after the refused names
+
+
 def test_without_a_token_api_changes_come_only_from_its_own_pages():
     c, edit = client(), {"source": SRC, "ops": []}
     assert c.put("/api/datasets/d", json=edit).status_code == 200  # curl, a notebook
     assert c.put("/api/datasets/d", json=edit, headers={"Origin": "http://testserver"}).status_code == 200  # /ui
     other = c.put("/api/datasets/d", json=edit, headers={"Origin": "https://example.org"})
     assert other.status_code == 403
+    # a page can send any header it likes: naming its own host as the forwarded one is no proof
+    forged = c.put("/api/datasets/d", json=edit, headers={"Origin": "https://example.org", "X-Forwarded-Host": "example.org"})
+    assert forged.status_code == 403
     assert c.get("/api/ops", headers={"Origin": "https://example.org"}).status_code == 200  # reads stay open
     tokened = client(token="t").put("/api/datasets/d", json=edit,
                                     headers={"Origin": "https://example.org", "Authorization": "Bearer t"})
     assert tokened.status_code == 200
 
 
-def test_allow_code_generates_a_token_unless_told_not_to(monkeypatch):
+def test_allow_code_always_has_a_token(monkeypatch):
     from typer.testing import CliRunner
 
     import chunkmirage.cli as cli
@@ -93,9 +118,9 @@ def test_allow_code_generates_a_token_unless_told_not_to(monkeypatch):
     out = runner.invoke(cli.app, ["serve", SRC, "--allow-code", "--port", "0", "--host", "127.0.0.1"])
     assert out.exit_code == 0, out.output
     assert "/ui?token=" in out.output
-    out = runner.invoke(cli.app, ["serve", SRC, "--allow-code", "--no-token", "--port", "0", "--host", "127.0.0.1"])
-    assert out.exit_code == 0 and "/ui?token=" not in out.output
-    assert runner.invoke(cli.app, ["serve", SRC, "--no-token", "--port", "0"]).exit_code != 0
+    out = runner.invoke(cli.app, ["serve", SRC, "--allow-code", "--token", "mine", "--port", "0", "--host", "127.0.0.1"])
+    assert out.exit_code == 0 and "/ui?token=mine" in out.output
+    assert runner.invoke(cli.app, ["serve", SRC, "--no-token", "--port", "0"]).exit_code != 0  # gone
 
 
 def test_the_command_line_reads_a_python_ops_code_from_a_file(tmp_path):

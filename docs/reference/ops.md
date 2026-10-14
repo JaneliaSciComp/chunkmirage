@@ -4,7 +4,8 @@ Run `chunkmirage ops` or `GET /api/ops` for the live list with JSON schemas. Thi
 list every registered op; `tests/test_docs.py` enforces it.
 
 Ops that make masks (`threshold`, `morphology`, `contacts`) and labels (`label`, `spots`)
-say so (`output_kind`), and viewers show what they make as segmentations.
+say so (`output_kind`, or the `kind` their `output_info` sets), and viewers show what they
+make as segmentations.
 
 Every parameter carries a description (pydantic `Field(description=...)`) that the control
 page shows under the control and `GET /api/ops` returns in the JSON schema. Add one to any
@@ -19,9 +20,9 @@ new op; `tests/test_docs.py` requires it.
 |             | `clip`      | true    | clip to the integer range first to avoid wrap-around |
 | `scale`     | `factor`    | 1.0     | multiply (contrast); output float32 |
 |             | `offset`    | 0.0     | then add (brightness) |
-| `gaussian`  | `sigma`     | 1.0     | blur width in voxels; halo = `ceil(sigma × truncate)` |
+| `gaussian`  | `sigma`     | 1.0     | blur width in voxels; output float32; halo = `ceil(sigma × truncate)` |
 |             | `truncate`  | 3.0     | kernel radius in sigmas; rarely changed |
-| `uniform`   | `size`      | 3       | edge of the averaging cube in voxels; halo = `size // 2 + 1` |
+| `uniform`   | `size`      | 3       | edge of the averaging cube in voxels; output float32; halo = `size // 2 + 1` |
 | `dog`       | `sigma`     | 2.0     | difference of Gaussians: enhances blobs of about this size; halo = `ceil(3 × sigma × ratio)` |
 |             | `ratio`     | 1.6     | larger blur = `sigma × ratio` |
 |             | `gain`      | 4.0     | scales the difference into 0..255 (output uint8, 128 = zero) |
@@ -33,9 +34,9 @@ new op; `tests/test_docs.py` requires it.
 |             | `mode`      | auto    | `mean` of each block (integers rounded), `mode` (its most common value), or `auto`: mode for labels and masks, mean otherwise |
 | `morphology`| `operation` | open    | `open`, `close`, `erode`, `dilate` on a mask (input > 0); output uint8 |
 |             | `radius`    | 2       | spherical structuring element radius in voxels; halo = `2 × radius + 1` |
-| `label`     | `min_size`  | 0       | connected components of a mask, output uint32 segment ids; drop components smaller than this |
+| `label`     | `min_size`  | 0       | connected components of a mask, output uint32 segment ids; drop components smaller than this (halo 4 when set, so the size filter sees more of each object near a chunk's edge; else 0) |
 |             | `connectivity` | 1    | 1 = 6-connected, 2 = 18, 3 = 26 |
-| `spots`     | `sigma`     | 1.0     | bright diffraction-limited spots (single mRNAs in smFISH, EASI-FISH): difference of Gaussians, local maxima above `threshold`, each drawn as a small ball whose uint32 id comes from its position, so it is the same whichever chunk finds it; spot size in y-x voxels; needs a `z, y, x` volume (`select` a channel) |
+| `spots`     | `sigma`     | 1.0     | bright diffraction-limited spots (single mRNAs in smFISH, EASI-FISH): difference of Gaussians, local maxima above `threshold`, each drawn as a small ball whose uint32 id comes from its position, so it is the same whichever chunk finds it; spot size in y-x voxels; needs a `z, y, x` volume (`select` a channel); halo per axis: `ceil(4.8 × sigma) + separation + radius` in y and x, the same in z with `sigma_z` and the two distances scaled by `sigma_z / sigma` |
 |             | `sigma_z`   | 0.6     | spot size in z voxels |
 |             | `threshold` | 10      | least difference-of-Gaussians response, image intensity units |
 |             | `separation`| 2       | spots closer than this (y-x voxels) are one |
@@ -44,7 +45,7 @@ new op; `tests/test_docs.py` requires it.
 | `hillshade` | `azimuth`   | 315     | shaded relief, the terrain lit by a distant sun from this direction (degrees clockwise from the top of the image), local illumination only (no cast shadows); output uint8, 1 unlit to 255 facing the sun, 0 where the elevation is NaN; halo 1 |
 |             | `altitude`  | 45      | the sun's height above the horizon, degrees |
 |             | `z_factor`  | 1.0     | as for `slope`; above 1 exaggerates relief |
-| `contacts`  | `radius`    | 3.0     | contact sites between the first two channels of a `stack://` source: voxels within this many voxels (Euclidean) of both structures; output uint8 mask; halo = `radius + 1` |
+| `contacts`  | `radius`    | 3.0     | contact sites between the first two channels of a `stack://` source: voxels within this many voxels (Euclidean) of both structures; output uint8 mask; halo = `ceil(radius) + 1` |
 |             | `distance`  | none    | the reach in the data's units (nm) instead: each level counts it in its own voxels, so a contact means the same at every zoom; halo planned on the finest level |
 |             | `a_low`     | 128     | values at or above this in the first channel are the first structure (128 for a uint8 probability map, 1 for a segmentation) |
 |             | `b_low`     | 128     | the same for the second channel |
@@ -76,8 +77,9 @@ it in the same stage see the plain spatial block.
 
 None of the built-ins cache their output by default (`cache=False`); a pipeline turns it on
 for one op with `"cache": true` in its spec ([caching](../concepts/caching.md#why-not-cache-every-stage)).
-Everything except `threshold`,
-`cast`, `scale`, `diff`, `slope` and `hillshade` needs the `ops` extra (scipy).
+Everything except `threshold`, `cast`, `scale`, `diff`, `downsample`,
+`normalized_difference`, `slope` and `hillshade` needs the `ops` extra (scipy); `python`
+needs it when its code imports scipy.
 
 `slope` on NASA's 5 m south-pole elevation of the Moon (the ridge between Shackleton and de
 Gerlache craters, LOLA, Barker et al.) equals the slope USGS publishes with it, to 0.0°
@@ -109,12 +111,13 @@ def apply(block, low):
 returns the block computed (or its interior, shaved by the halo on every side). numpy is
 `np`. A parameter named `box` gets where the block sits, as `apply_at` does. The result is
 cast to the output dtype. What it prints shows under the code in the browser demos, by
-level and chunk, and in a server's log. Three kinds of line, read as text so a pipeline is
-planned without running the code:
+level and chunk, and in a server's log. Three kinds of line, starting at the first column
+(an indented comment inside `apply` is not one), read as text so a pipeline is planned
+without running the code:
 
 | line | says | default |
 | ---- | ---- | ------- |
-| `#halo 2`, `#halo 0 4 4` | voxels of context needed on each side: one for every axis, or one per axis for the last axes | 0 |
+| `#halo 2`, `#halo 0 4 4` | voxels of context needed on each side (up to 1024): one for every axis, or one per axis for the last axes | 0 |
 | `#output uint32 label` | the dtype returned (an integer or float numpy dtype), and/or whether it is an `image`, `label` or `mask` | the input's |
 | `#uicontrol float low slider(min=0, max=255, step=1, default=128)` | a slider, in Neuroglancer's shader syntax: `float` or `int` `slider` (min and max required), or `bool` `checkbox(default=true)`; `apply` takes a parameter of the same name | `default`: `min`, or false |
 
@@ -131,20 +134,72 @@ new spec, so the view is computed again. Nothing in the code belongs to a viewer
 from Python, `Pipeline.from_spec({"source": ..., "ops": [{"op": "python", "code": code,
 "params": {"low": 400}}]})` runs it the same way. Both are part of the
 op's digest, so an edit is a new URL and viewers fetch the result afresh. Mistakes (a
-syntax error, an unknown dtype, a slider `apply` does not take) are refused when the
-pipeline is built, naming the line.
+syntax error, an unknown dtype, a slider `apply` does not take or a parameter of `apply`
+with neither a slider nor a default, a slider whose default is outside its range or whose
+name the op has itself, such as `name` or `halo`) are refused when the pipeline is built,
+naming the line.
 
 **Where it runs.** In the browser engine, always: the code runs in the visitor's own
 Pyodide workers, which load what it imports (numpy, scipy, scikit-image and the rest of
 Pyodide's packages; not torch, cupy or tensorstore). On a server, the code runs as the
 server's user, with its files, so `chunkmirage serve` refuses specs with `python` ops sent to
-`/api` unless started with `--allow-code`, which then needs a token
+`/api` unless started with `--allow-code`, which generates a token unless given `--token`
 ([CLI](cli.md#serve)). Pipelines built in your own process (`Pipeline`, `--op`) run it
 regardless.
 
 **As a plugin.** `chunkmirage.ops.python_op(name, code)` makes an op class of the same code
 whose sliders are its parameters (pydantic fields, with their bounds), for the
 `chunkmirage.ops` entry point; the code boxes' "copy as plugin" gives such a module.
+
+**Written for you.** In the browser demos, *Ask a model to write it* under the code box is a
+chat that writes the code from a request, with your own key for Claude, OpenAI, Gemini and
+others, or Ollama on your computer; see
+[Interactivity](../concepts/interactivity.md#your-own-python-edited-live).
+
+## Your own op
+
+An op of your own is a small class in your own package, and behaves as the built-in ops do
+once it is installed: `chunkmirage ops` and `GET /api/ops` list it, `--op invert:top=200`
+and specs sent to `/api` take it, and the control page gives it sliders from its
+parameters' bounds and descriptions.
+
+```python
+from chunkmirage.ops import Op, register
+from pydantic import Field
+
+@register
+class Invert(Op):
+    """Each voxel as `top` minus it."""   # what `chunkmirage ops` shows
+    name = "invert"
+    halo = 0                              # voxels of context read on every side
+    top: float = Field(255, ge=0, description="The value a zero becomes")
+
+    def apply(self, block):
+        return self.top - block
+```
+
+```toml
+[project.entry-points."chunkmirage.ops"]
+invert = "mypackage.ops:Invert"
+```
+
+`apply` gets each block padded by `halo` and returns it computed, as the `python` op's
+does; `output_dtype`, `output_kind` or `output_info` say what it makes when that differs
+from its input, `apply_at` is told where the block sits, `input_voxel_size` runs it at one
+resolution (a model trained at 8 nm), `for_level` adapts it to each level's voxel size, and
+`cache = True` keeps its output for cheaper ops after it. The whole contract, with what a
+returned block may look like, is on the [pipelines page](../concepts/pipelines.md#ops); a
+template with a test is in [Contributing](../contributing.md#adding-an-op), and the API a
+plugin may rely on is listed [there](../contributing.md#plugin-api-and-versioning).
+`examples/model_at_one_resolution.py` is a complete one: a model's stand-in with its own
+input resolution and two output channels.
+
+Three ways to get there, from least to most work: code in the `python` op's box, which
+needs nothing installed and runs in the browser demos too; the same code as a plugin, from
+*Copy as plugin* or `python_op`, with its sliders as parameters; a class as above, for a
+halo that depends on parameters, several channels, a resolution of its own or a GPU.
+Plugin ops run on a server or in Python: the browser demos run chunkmirage's own ops and
+the code box, not other packages.
 
 ## CLI syntax
 

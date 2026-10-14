@@ -51,6 +51,10 @@
   #code-output { color: var(--muted); }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .trust { padding: 8px; border: 1px solid #6b5a1e; border-radius: 6px; color: #f3d77a; }
+  #ask summary { cursor: pointer; color: var(--accent); }
+  #ask > .controls { margin-top: 8px; }
+  #ask input { width: 100%; padding: 4px 6px; font: inherit; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; }
+  #ask .row input { flex: 1; width: auto; min-width: 0; }
   @media (max-width: 720px) { body { grid-template-columns: 1fr; grid-template-rows: auto 70vh; } aside { border-right: 0; border-bottom: 1px solid var(--line); } }
 </style>
 </head>
@@ -83,6 +87,15 @@
       <div class="controls" id="code-sliders"></div>
       <div class="row"><button id="code-share" type="button">Copy link</button><button id="code-plugin" type="button">Copy as plugin</button><button id="code-remove" type="button">Remove</button></div>
     </div>
+    <details id="ask">
+      <summary>Ask a model to write it</summary>
+      <div class="controls">
+        <div class="row"><select id="ask-provider" aria-label="provider"></select><input id="ask-model" list="ask-models" spellcheck="false" aria-label="model"><datalist id="ask-models"></datalist></div>
+        <input id="ask-key" type="password" autocomplete="off" spellcheck="false" aria-label="API key">
+        <p class="faint" id="ask-note">Your key stays in this tab for this visit and goes only to the provider picked, billed to you. The code a reply ends with replaces the code above and runs here, as yours does.</p>
+        <div class="chat"></div>
+      </div>
+    </details>
   </section>
   <section>
     <div class="label">Status</div>

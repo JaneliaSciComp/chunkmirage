@@ -9,8 +9,8 @@ chunkmirage schema [--out FILE]
 
 `SOURCE` is anything chunkmirage reads: a stored array or multiscale group (zarr, N5,
 precomputed; local, `s3://`, `gs://`, `http(s)://`), `file.h5::/dataset`, or a computed
-`synthetic://`, `scene://`, `warp://`, `register://` or `stitch://` URL
-([sources](../concepts/formats.md#sources)).
+`synthetic://`, `scene://`, `warp://`, `register://`, `stitch://`, `stack://` or `flip://`
+URL ([sources](../concepts/formats.md#sources)).
 
 ## `serve`
 
@@ -31,12 +31,11 @@ precomputed; local, `s3://`, `gs://`, `http(s)://`), `file.h5::/dataset`, or a c
 | `--compressor`        | `blosc`                                   | how zarr v2 and v3 chunks are compressed: `blosc` (zstd with byte shuffle), `zstd`, `gzip` or `none`. blosc encodes a 16 MB float32 chunk in 30 ms where gzip takes 900 ms; use `gzip` for a client without blosc (Fiji and BigDataViewer read zarr through n5-zarr, which needs the native Blosc library; their N5 frontend stays gzip). In Python: `create_app(..., frontends=cli.frontends_for("gzip"))`, or the frontends' own `compressor` |
 | `--source-cache-gb`   | `0.5`                                     | tensorstore's cache of decoded source chunks, one pool shared by every source the server reads |
 | `--viewer`            | `https://neuroglancer-demo.appspot.com`   | viewer for the printed link |
-| `--format`            | `zarr3`                                   | format used in the printed link |
+| `--format`            | `zarr3`                                   | format of the printed source URLs and link: `n5`, `zarr`, `zarr3` or `precomputed` (every format is served regardless) |
 | `--threads`           | `2 × CPUs` (min 40)                       | chunk requests computing at once; numpy/scipy/tensorstore release the GIL so this is the effective parallelism. The thread pool itself is larger, so requests waiting on queued work (GPU fits) hold no slot ([caching](../concepts/caching.md#order-of-work-and-requests-given-up-on)) |
 | `--resolver`          | none                                      | `module:function` building the pipeline for a dataset name nobody registered, on its first request ([API](api.md#datasets-resolved-by-name)) |
 | `--token`             | `CHUNKMIRAGE_TOKEN`                       | require this token for `/api/*` (`Authorization: Bearer <token>` or `?token=`); datasets stay open; the printed control-page link carries it ([API](api.md)) |
-| `--allow-code`        | off                                       | let pipelines sent to `/api` carry [`python` ops](ops.md#your-own-python-the-python-op), code the server runs as you; a token is generated (in the printed control-page link) unless `--token` or `--no-token` is given |
-| `--no-token`          | off                                       | with `--allow-code`, no token: for a server only you can reach (not a shared cluster node, where other users reach its localhost) |
+| `--allow-code`        | off                                       | let pipelines sent to `/api` carry [`python` ops](ops.md#your-own-python-the-python-op), code the server runs as you; a token is generated (in the printed control-page link) unless `--token` is given, so code runs only for whoever holds it |
 | `--workers`           | `1`                                       | uvicorn worker processes; each has its own registry and cache, so live edits reach only one: fixed pipelines only |
 | `--server`            | `uvicorn`                                 | `uvicorn` is HTTP/1.1; `hypercorn` adds HTTP/2 over https (lifts the browser's 6-connections-per-host limit) but is experimental: check that chunks load in your browser |
 | `--python-viewer`     | off                                       | also start a python-neuroglancer viewer whose layers follow live edits (needs the `viewer` extra) |
@@ -44,8 +43,10 @@ precomputed; local, `s3://`, `gs://`, `http(s)://`), `file.h5::/dataset`, or a c
 | `--viewer-host`       | same as `--host`                          | bind address of the python viewer; `0.0.0.0` lets other machines open it |
 | `--viewer-port`       | random                                    | fixed port for the python viewer (handy for port forwarding) |
 
-`serve` prints the source URL, an appspot link, the control page (`/ui`), the control API
-URL and, with `--python-viewer`, the viewer URL.
+`serve` prints a source URL per dataset (`raw` included), a link to the `--viewer` site,
+the control page (`/ui`, with the token when there is one), the control API URL and, with
+`--python-viewer`, the viewer URL; the port and thread count when they differ from what
+was asked for.
 
 ## `ops`
 
@@ -59,8 +60,8 @@ them, which is useful for checking metadata detection before serving.
 ## `schema`
 
 Prints the JSON Schema of what chunkmirage exchanges: `PipelineSpec`, each registered op's
-parameters (tagged with its `op` name, and their union `OpSpec`), and `RegisterParams`, the
+parameters (tagged with its `op` name, and their union `OpSpec`), `RegisterParams`, the
 query of a [`register://`](../concepts/formats.md#register-sources-deformable-registration-on-a-gpu)
-URL. `--out FILE` writes it instead. The browser engine (`web/`) generates its TypeScript
+URL, and `StitchParams`, a [`stitch://`](../concepts/formats.md#stitch-sources-tiles-stitched-by-interest-points-and-ransac) one's. `--out FILE` writes it instead. The browser engine (`web/`) generates its TypeScript
 types and form defaults from the copy in `web/src/generated/`, so the two engines share one
 definition; `tests/test_schema.py` keeps that copy current, and CI checks the generated types.

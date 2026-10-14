@@ -12,6 +12,8 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const engine = new Engine(showCounts);
 
 function status(text: string) { $("state").textContent = text; }
+/** The served view whose chunk failed last, if one did (read afresh: a worker sets it). */
+function failedView(): string | null { return engine.failure?.view ?? null; }
 function showCounts() {
   const c = engine.counts;
   $("counts").textContent = `Chunks computed here: ${c.computed} · computing ${engine.running} · waiting ${engine.waiting}`
@@ -146,7 +148,7 @@ function reserve(card: PipelineCard, ng: HTMLIFrameElement, view: string): Promi
     status("Computing again for what is on screen…");
     const name = await engine.edit(view, { ops: structuredClone(opsOf(card, view)) });
     served[view] = name;
-    swapLayers(card, ng, view, name);
+    swapLayers(card, await viewerIn(ng), view, name);
     status("Chunks are computed as the viewer asks for them.");
     return name;
   });
@@ -154,12 +156,25 @@ function reserve(card: PipelineCard, ng: HTMLIFrameElement, view: string): Promi
   return run;
 }
 
+/** Neuroglancer in `ng`, once its page has made it: an edit can come while the iframe is
+ * still loading (the code panel is live from the start). */
+function viewerIn(ng: HTMLIFrameElement): Promise<NgViewer | undefined> {
+  const t0 = performance.now();
+  return new Promise((resolve) => {
+    const look = () => {
+      const viewer = (ng.contentWindow as (Window & { viewer?: NgViewer }) | null)?.viewer;
+      if (viewer?.state || performance.now() - t0 > 60_000) resolve(viewer);
+      else setTimeout(look, 200);
+    };
+    look();
+  });
+}
+
 /** The viewer's layers of `view` reading it as served under `name`: each as the card made it
  * (its shader, colours), unless what the ops make now needs another kind of layer (labels: a
  * segmentation; floats: an image) or another value range (another dtype), when it is a
  * plain layer of that kind, for Neuroglancer to set up. */
-function swapLayers(card: PipelineCard, ng: HTMLIFrameElement, view: string, name: string) {
-  const viewer = (ng.contentWindow as (Window & { viewer?: NgViewer }) | null)?.viewer;
+function swapLayers(card: PipelineCard, viewer: NgViewer | undefined, view: string, name: string) {
   if (!viewer) return;
   const old = new RegExp(`/virtual/${engine.page}/${view}(~\\d+)?/`), to = `/virtual/${engine.page}/${name}/`;
   const url = (src: unknown) => typeof src === "string" ? src : (src as { url?: string } | null)?.url ?? "";
@@ -173,7 +188,10 @@ function swapLayers(card: PipelineCard, ng: HTMLIFrameElement, view: string, nam
     // a segmentation the card made of its code's labels, without them (another dtype): an image
     const type = now.kind === "label" ? "segmentation"
       : now.out.startsWith("float") || (made.type === "segmentation" && now.out !== was.out) ? "image" : made.type;
-    if (type === made.type && now.out === was.out) return { ...firstLayers[l.name], source: moved(firstLayers[l.name].source) };
+    if (now.out === was.out) {
+      if (l.type === type) return { ...l, source: moved(l.source) };  // the same kind of layer: as the visitor has it (hidden, its shader's controls)
+      if (type === made.type) return { ...firstLayers[l.name], source: moved(firstLayers[l.name].source) };  // back to the card's
+    }
     return { type, name: l.name, source: moved(l.source), ...(l.visible === false ? { visible: false } : {}) };
   });
   viewer.state.restoreState(state);
@@ -296,6 +314,8 @@ function code(card: PipelineCard, ng: HTMLIFrameElement): () => void {
     if (coding === view) $("code-error").hidden = true;
     try {
       const name = await reserve(card, ng, view);
+      // an error of the view as served before, shown meanwhile, is not this code's
+      if (coding === view && failedView() !== name) $("code-error").hidden = true;
       if (coding === view && python[view]) sliders(view, engine.infos[name].controls?.[at(view)] ?? []);
     } catch (e) {
       if (coding === view) showError(String((e as Error).message ?? e));
@@ -356,6 +376,41 @@ function code(card: PipelineCard, ng: HTMLIFrameElement): () => void {
     void navigator.clipboard.writeText(pluginSource(text.value));
     status("Copied a module defining the op, for the chunkmirage.ops entry point.");
   });
+  // the chat: what the model is told of the layer with each message, and the code it writes,
+  // into the editor and run (a link's code it was not shown is dropped, as by "Remove")
+  let asked: string | null = null;  // the view a question was about: the code that answers it is its
+  const context = () => {
+    const view = coding!, src = engine.sources[view];
+    if (!src) throw new Error("the data is still opening: ask once the status says Python is ready");
+    asked = view;
+    const l0 = src.levels[0], chunk = card.views[view].chunk;
+    const ops = card.views[view].ops ?? [], op = pending[view] ?? python[view];
+    const input = !ops.length ? src.dtype : card.code?.view === view ? "" : engine.infos[view]?.out ?? "";
+    const whole = l0.shape.every((n, i) => (chunk.at(i - l0.shape.length) ?? 0) >= n);
+    const shown = (id: string) => $(id).hidden ? "" : $(id).textContent ?? "";
+    return [
+      `Layer ${names(view)}: apply gets its data ${pythonInput(card, view)}${input ? `, ${input}` : ""}${src.channels > 1 ? `, ${src.channels} channels` : ""}.`,
+      `Axes ${src.axes.map((a) => a.name).join(", ")}; full resolution ${l0.shape.join(" x ")} voxels of ${l0.voxel.map((v) => +v.toPrecision(4)).join(" x ")} ${src.axes.at(-1)!.unit};`
+        + ` ${src.levels.length} levels: ${src.levels.map((l) => l.shape.join(" x ")).join(", ")}.`,
+      `Chunks: ${chunk.join(" x ")} voxels${whole ? " (at full resolution the layer is one chunk)" : ""}.`,
+      op ? `The code now${pending[view] ? " (from a link, shown but not run yet)" : ""}:\n\`\`\`python\n${String(op.code).trimEnd()}\n\`\`\`` : "No code yet: the layer shows its data as is.",
+      op?.params ? `Its sliders: ${Object.entries(op.params as object).map(([k, v]) => `${k}=${v}`).join(", ")}.` : "",
+      shown("code-error") ? `It fails: ${shown("code-error")}` : "",
+      shown("code-output") ? `It printed:\n${shown("code-output")}` : "",
+    ].filter(Boolean).join("\n");
+  };
+  const put = (code: string) => {
+    const view = asked ?? coding!;  // the layer asked about, if the picker moved meanwhile
+    delete pending[view];
+    python[view] = { ...python[view], op: "python", code };
+    open(view);
+    void run(view);
+  };
+  const ask = $<HTMLDetailsElement>("ask");
+  ask.addEventListener("toggle", () => {
+    void import("./chat").then((m) => m.chatPanel(ask, { context, put }))
+      .catch((e) => status(`The chat failed to load: ${(e as Error).message ?? e}`));
+  }, { once: true });
   // a link's Python, else the card's, else a layer as read (the data itself), else the first
   open(Object.keys(pending)[0] ?? card.code?.view ?? views.find((v) => !card.views[v].ops?.length) ?? views[0]);
   $("code").hidden = false;
@@ -395,7 +450,7 @@ async function start() {
       const a = Object.assign(document.createElement("a"), { download: file,
         href: URL.createObjectURL(new Blob([withParams(String(op.code), op.params as Record<string, unknown>)], { type: "text/x-python" })) });
       a.click();
-      URL.revokeObjectURL(a.href);
+      setTimeout(() => URL.revokeObjectURL(a.href), 0);  // after the download has started
     });
   }
   ng.src = `ng/index.html#!${encodeURIComponent(JSON.stringify(state))}`;

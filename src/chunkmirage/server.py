@@ -320,7 +320,7 @@ def create_app(
             "ops_info": [
                 {
                     "op": op.name,
-                    "halo": list(op.halo_for(p.info(0).ndim)),
+                    "halo": list(op.for_level(p.info(0)).halo_for(p.info(0).ndim)),  # an op in physical units: this level's
                     "cached": op.cached,
                     "doc": (op.__doc__ or "").strip(),
                     **({"controls": [c.model_dump() for c in op.directives.controls]} if isinstance(op, PythonOp) else {}),
@@ -387,6 +387,10 @@ def create_app(
         spec = body.get("spec", body)
         if not name:
             return JSONResponse({"error": "missing 'name'"}, 400)
+        # a path segment of the served URLs, and text the control page shows
+        if not (isinstance(name, str) and name.isascii() and name[0].isalnum()
+                and name.replace(".", "").replace("_", "").replace("-", "").isalnum()):
+            return JSONResponse({"error": "'name': letters, digits, '.', '_' and '-', starting with a letter or digit"}, 400)
         try:
             spec = PipelineSpec.model_validate(spec)
             if (no := refused(spec)) is not None:
@@ -674,10 +678,13 @@ class _SameSite:
                 and _route_path(scope).startswith("/api/")):
             headers = Headers(scope=scope)
             origin = headers.get("origin")
-            own = {headers.get("host"), headers.get("x-forwarded-host"), self.public} - {None}
+            # Host, not X-Forwarded-Host: a page elsewhere can send any header it likes (the
+            # CORS viewers need allows them all); behind a proxy, public_url names the host
+            own = {headers.get("host"), self.public} - {None}
             if origin is not None and urlsplit(origin).netloc not in own:
                 response = JSONResponse({"error": "this server's /api takes changes from its own pages; "
-                                                  "start it with --token to take them from others"}, 403)
+                                                  "start it with --token to take them from others, or with "
+                                                  "--public-url if a proxy's address is how pages reach it"}, 403)
                 await response(scope, receive, send)
                 return
         await self.app(scope, receive, send)

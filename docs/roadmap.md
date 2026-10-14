@@ -38,7 +38,9 @@ describe shipped features as future work.
    [caching](concepts/caching.md#order-of-work-and-requests-given-up-on). Inference ops
    would join its queues.)
 3. **Lazy-compute story for non-viewer clients.** Demonstrate dask/tensorstore reading a
-   served pipeline and running downstream analysis with no intermediate written.
+   served pipeline and running downstream analysis with no intermediate written. (The
+   read itself is shown in [getting started](getting-started.md#read-the-result-from-python-instead-of-a-viewer);
+   the analysis on top of it is what remains.)
 4. **DAG pipelines, multi-source ops.** Named stages with fan-out (one model, many
    post-processors) and a `Combine` op taking another pipeline as input. Unlocks masking,
    the difference of any two sources (two models' outputs, two conditions), registration
@@ -88,18 +90,19 @@ describe shipped features as future work.
    [Demos](demos.md)). What remains, in order:
     * Cards built from the schema: a form for each card's parameters, so a visitor edits the
       pipeline as the control page edits a server's.
-    * Ops on data nobody hosts. `synthetic://` ported to TypeScript (a hash of world
-      coordinates, exact at every scale), the pointwise and filter ops as WebGPU compute
-      shaders, `label` on the CPU, each with a parity test against Python on seeded synthetic
-      data. Cards: a filter chain, morphology on shells, the same volume served as zarr v2,
-      v3, N5 and precomputed by the service worker, a 4096³ pyramid that costs nothing.
+    * Ops on the GPU. The pointwise and filter ops as WebGPU compute shaders, each with a
+      parity test against Python on seeded synthetic data; `synthetic://` in TypeScript (a
+      hash of world coordinates, exact at every scale) for the same reason. (Through
+      Pyodide, `synthetic://`, `label` and the rest already run in the page, and the
+      fractal is a computed pyramid 2^28 voxels across that costs nothing.) The same volume
+      served as N5 and precomputed by the service worker, beside its zarr v2 and v3.
     * A layer of where `refine` has fitted the field and how well (each block's
       correlation before and after), in both engines.
-    * User code, in two tiers. A `python` op holding a block-to-block function runs in the
-      page through Pyodide (as the built-in ops already do there) and natively in
-      Python, where the server takes it only from the command line or a spec file, never
-      through the REST API. Array functions exported to ONNX run on the GPU in both engines
-      (ONNX Runtime and ONNX Runtime Web).
+    * User code on the GPU. Array functions exported to ONNX run in both engines (ONNX
+      Runtime and ONNX Runtime Web). (The CPU tier has shipped: the
+      [`python` op](reference/ops.md#your-own-python-the-python-op) runs in the page
+      through Pyodide and natively in Python, where a server takes it through the REST
+      API only with `--allow-code`; the demos' chat asks a model for it.)
     * A CI job that runs the page headless and diffs its chunks against Python's, so the
       engines cannot drift. Whether the page's WebGPU shaders can also serve Python
       (wgpu-py), as one implementation of the solver for both, is still to be measured

@@ -207,9 +207,10 @@ Three layers, from most to least structured:
    Source schemes come through `chunkmirage.sources`, and endpoints of a plugin's own
    through `chunkmirage.routes` ([API](reference/api.md#routes-of-your-own)); the app can
    also be mounted inside another one.
-3. **Live control**: the REST API takes a `PipelineSpec` (source + list of op specs). An
-   MCP server is a thin wrapper over it (tools: `list_ops`, `set_pipeline`,
-   `neuroglancer_link`, `cache_stats`), so an LLM agent can drive the viewer.
+3. **Live control**: the REST API takes a `PipelineSpec` (source + list of op specs), so
+   a script, a notebook or an agent can drive the viewer; an MCP server as a thin wrapper
+   over it (tools: `list_ops`, `set_pipeline`, `neuroglancer_link`) is on the
+   [roadmap](roadmap.md).
 4. **Code in the spec**: the [`python` op](reference/ops.md#your-own-python-the-python-op)
    carries its source, for what no op does yet, edited live as a Neuroglancer shader is
    (see below).
@@ -239,6 +240,16 @@ Three layers, from most to least structured:
   every interface by default, and on a shared cluster node its `localhost` is every user's.
   Without a token, `/api` refuses changes from other sites' pages (their `Origin`), since
   the CORS that viewers need would let any open tab send them.
+* **A model writing it, in the page.** The demos' chat sends the visitor's request to the
+  model the visitor picks, with the visitor's own key, from the page, and puts the code it
+  writes in the editor. The demos are static pages, so there is no server of ours to hold a
+  key, nor one to pay for every visitor's requests; the key stays in the page's memory,
+  never in its storage, which a link's Python could read. The chat is
+  [Deep Chat](https://deepchat.dev), a web component that needs no framework and connects
+  to each provider itself (their APIs differ); the page only adds the layer's context to
+  each message and takes the code from each reply. It is in `web/` only, loaded when the
+  chat is opened. An agent with a server of its own drives `/api` instead (an MCP surface
+  is on the [roadmap](roadmap.md)).
 
 ### What stays in the core (a proposal)
 

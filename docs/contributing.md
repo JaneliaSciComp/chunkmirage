@@ -58,7 +58,12 @@ class MyOp(Op):
 ```
 
 Register it in `pyproject.toml` under `[project.entry-points."chunkmirage.ops"]` (or in your
-own package's entry points), add a test, and add a row to `docs/reference/ops.md`.
+own package's entry points), add a test, and add a row to `docs/reference/ops.md` (a
+built-in op; a plugin's op is documented by its own package). An op that is a few lines of
+numpy with sliders needs no class: `python_op(name, code)` makes one from code written for
+the [`python` op](reference/ops.md#your-own-python-the-python-op), as the demos' *Copy as
+plugin* does. Users' choice between the three is set out under
+[your own op](reference/ops.md#your-own-op).
 
 ## Adding a source
 
