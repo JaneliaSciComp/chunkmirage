@@ -54,6 +54,8 @@ def test_serving_address_uses_the_network_ip_and_given_certificate(monkeypatch):
     from chunkmirage import netutil
 
     monkeypatch.setattr(netutil, "lan_ip", lambda: "10.1.2.3")
+    monkeypatch.setattr(netutil, "reachable", lambda host, port, timeout=1.0: True)
+    netutil.public_host_for.cache_clear()
     assert netutil.serving_address("0.0.0.0", 8005, https=False) == ("http://10.1.2.3:8005", {})
     assert netutil.serving_address("127.0.0.1", 8005, https=False)[0] == "http://localhost:8005"
     url, ssl = netutil.serving_address("0.0.0.0", 8005, https=True, cert="c.pem", key="k.pem")
@@ -105,3 +107,39 @@ def test_without_cryptography_openssl_applies_the_same_rules(tmp_path, monkeypat
         capture_output=True,
     )
     assert not netutil._cert_usable(str(old))
+
+
+def test_links_use_localhost_where_this_machine_cannot_reach_its_own_address(monkeypatch, caplog):
+    """As over some VPNs: the network address hangs, localhost answers."""
+    from chunkmirage import netutil
+
+    monkeypatch.setattr(netutil, "lan_ip", lambda: "10.1.2.3")
+    for ok, host in ((True, "10.1.2.3"), (False, "localhost")):
+        netutil.public_host_for.cache_clear()
+        monkeypatch.setattr(netutil, "reachable", lambda h, p, timeout=1.0, ok=ok: ok)
+        assert netutil.public_host_for("0.0.0.0", 8005) == host
+    assert "cannot reach itself at 10.1.2.3:8005" in caplog.text
+    netutil.public_host_for.cache_clear()
+    assert netutil.public_host_for("0.0.0.0") == "10.1.2.3"  # no port, nothing to try
+    netutil.public_host_for.cache_clear()
+
+
+def test_reachable_tells_a_listening_port_from_a_closed_one():
+    from chunkmirage.netutil import bind_socket, reachable
+
+    s = bind_socket("127.0.0.1", 0)
+    port = s.getsockname()[1]
+    assert reachable("127.0.0.1", port)
+    s.close()
+    assert not reachable("127.0.0.1", port, timeout=0.5)
+
+
+def test_the_printed_link_shows_all_of_the_data():
+    """Not Neuroglancer's default of a voxel a pixel, a few hundred voxels of a big volume."""
+    from chunkmirage import Pipeline, open_source
+    from chunkmirage.neuroglancer import viewer_state
+
+    p = Pipeline(open_source("synthetic://blobs?shape=1600,800,400&chunk=64,64,64&levels=1"), [])
+    s = viewer_state({"d": p}, {"d": "zarr3://http://example.org/d/zarr3"})
+    assert s["crossSectionScale"] == pytest.approx(1600 / 800)  # the longest axis across 800 pixels
+    assert s["projectionScale"] == pytest.approx(1600 * 1.1)

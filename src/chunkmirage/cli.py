@@ -275,7 +275,7 @@ def serve(
     if port is None and bound != 8000:
         typer.echo(f"port:         {bound} (8000 is in use)")
     port = bound
-    public_host = public_host_for(host)
+    public_host = public_host_for(host, port)  # the network IP, or localhost where this machine cannot reach it
     address, ssl = serving_address(host, port, https=https, cert=cert, key=key)
     base = (public_url or address).rstrip("/")
     public_url = base

@@ -34,7 +34,9 @@ neuroglancer: https://neuroglancer-demo.appspot.com/#!...
 control API:  http://localhost:8000/api/datasets/data
 ```
 
-URLs use the machine's network address so they work from other machines too. Open the
+URLs use the machine's network address so they work from other machines too, unless the
+machine cannot reach itself there (some VPNs refuse it): then they use `localhost`, and a
+line says so. The Neuroglancer link opens showing all of the data. Open the
 Neuroglancer link in Chrome or Firefox.
 See [FAQ: does this work with the hosted Neuroglancer?](faq.md#does-this-work-with-neuroglancer-demoappspotcom)
 

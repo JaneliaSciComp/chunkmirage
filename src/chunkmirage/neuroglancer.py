@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from urllib.parse import quote
 
 from chunkmirage.core import ArrayInfo
@@ -153,16 +153,32 @@ def global_dimensions(info: ArrayInfo) -> tuple[dict[str, list], list[float], li
     return dims, position, spatial[::-1]
 
 
+def fit_scales(info: ArrayInfo, dims: Mapping[str, list], display: Sequence[str],
+               pixels: int = 800) -> tuple[float, float]:
+    """Neuroglancer's ``crossSectionScale`` and ``projectionScale`` that show all of a
+    dataset: its largest displayed extent across ``pixels`` screen pixels, and filling a
+    3-D panel. Neuroglancer's own default, a voxel a pixel, shows a few hundred voxels of
+    a volume (3 nm of a fractal 0.27 m across)."""
+    shape = dict(zip(info.axes, info.shape))
+    extent = max(shape[a] * float(dims[a][0]) for a in display if a in shape and a in dims)
+    smallest = min(float(scale) for scale, _ in dims.values())
+    return extent / pixels / smallest, extent * 1.1 / smallest
+
+
 def viewer_state(pipelines: Mapping[str, Pipeline], sources: Mapping[str, str]) -> dict:
     """One viewer state containing a layer per dataset. Dimensions come from the first."""
     names = list(pipelines)
     if not names:
         return {"layers": [], "layout": "4panel"}
-    dims, position, display = global_dimensions(pipelines[names[0]].info(0))
+    info = pipelines[names[0]].info(0)
+    dims, position, display = global_dimensions(info)
+    cross, projection = fit_scales(info, dims, display)
     return {
         "dimensions": dims,
         "displayDimensions": display,
         "position": position,
+        "crossSectionScale": cross,
+        "projectionScale": projection,
         "layers": [layer_for(n, pipelines[n], sources[n]) for n in names],
         "layout": "4panel",
     }

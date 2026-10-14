@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import functools
+import logging
 import socket
+
+log = logging.getLogger("chunkmirage")
 
 
 def lan_ip() -> str:
@@ -62,10 +66,32 @@ def bind_socket(
     raise OSError(f"no free port in {start}..{start + tries - 1} on {host}")
 
 
-def public_host_for(bind_host: str) -> str:
-    """Host other machines should use to reach a server bound to ``bind_host``."""
+def reachable(host: str, port: int, timeout: float = 1.0) -> bool:
+    """Whether this machine can connect to ``host:port``. A server's own address can fail
+    this: a VPN client may refuse connections from the machine to its own VPN address,
+    which then answers only on ``localhost``."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+@functools.lru_cache(maxsize=32)
+def public_host_for(bind_host: str, port: int | None = None) -> str:
+    """Host other machines should use to reach a server bound to ``bind_host``: its network
+    IP when bound to every interface, unless, given the ``port`` it listens on, the machine
+    cannot reach itself there (a VPN): then ``localhost``, so its links work at least here."""
     if bind_host in ("0.0.0.0", "::", ""):
-        return lan_ip()
+        ip = lan_ip()
+        if port is not None and ip != "127.0.0.1" and not reachable(ip, port):
+            log.warning(
+                "this machine cannot reach itself at %s:%s (a VPN can refuse it): links use "
+                "localhost and work on this machine only; --public-url gives another address",
+                ip, port,
+            )
+            return "localhost"
+        return ip
     if bind_host in ("127.0.0.1", "::1", "localhost"):
         return "localhost"
     return bind_host
@@ -78,7 +104,7 @@ def serving_address(
     ``host:port`` (the network IP when bound to every interface), and the uvicorn
     ``ssl_*`` arguments. With ``https`` and no ``cert``/``key``, a self-signed certificate
     for that address is generated (or reused)."""
-    public_host = public_host_for(host)
+    public_host = public_host_for(host, port)
     ssl: dict = {}
     if https:
         if not (cert and key):
