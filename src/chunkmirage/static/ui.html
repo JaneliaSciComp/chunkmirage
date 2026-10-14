@@ -294,8 +294,11 @@ async function viewerLink() {
   if (k === 'python') return VIEWER_URL;          // state lives server-side; the URL never changes
   const fmt = $('#format').value;
   const r = await api(`api/neuroglancer?format=${fmt}&viewer=${encodeURIComponent(viewerBase())}`);
+  if (!r.ok) { status(r.status === 401 ? NO_TOKEN : `the viewer link failed: ${r.status}`); return null; }
   return (await r.json()).url;
 }
+// the token this page was opened with no longer works: none, or the server restarted with a new one
+const NO_TOKEN = 'This page needs the server\'s token: open the "control UI" link the server printed (a restart makes a new one, unless started with --token).';
 
 function updateHint() {
   const k = viewerKind(), pageHttps = location.protocol === 'https:';
@@ -330,12 +333,13 @@ function pushViewer() {
   pushTimer = setTimeout(async () => {
     lastPush = Date.now();
     const url = await viewerLink();
+    if (!url) return;
     if ($('#embed').checked && $('#ngFrame').style.display !== 'none') $('#ngFrame').src = url;   // camera resets (cross-origin)
     if (ngWin && !ngWin.closed) ngWin.location.href = url;
   }, wait);
 }
 
-$('#openViewer').onclick = async () => { ngWin = window.open(await viewerLink(), 'chunkmirage-neuroglancer'); };
+$('#openViewer').onclick = async () => { const url = await viewerLink(); if (url) ngWin = window.open(url, 'chunkmirage-neuroglancer'); };
 $('#viewerKind').onchange = () => { $('#viewerUrl').style.display = viewerKind() === 'custom' ? '' : 'none'; updateHint(); showEmbedded(); };
 $('#viewerUrl').onchange = showEmbedded;
 $('#format').onchange = showEmbedded;
@@ -350,7 +354,12 @@ es.addEventListener('change', async (ev) => {
                || Object.keys(DATASETS).length !== Object.keys(data.datasets).length;
   if (changed) { await load(); if ($('#autoPush').checked) pushViewer(); }
 });
-es.onerror = () => status('event stream disconnected; retrying…');
+es.onerror = async () => {
+  status('event stream disconnected; retrying…');
+  // a token the server no longer takes keeps failing: say so once, and stop retrying
+  const r = await api('api/datasets').catch(() => null);
+  if (r && r.status === 401) { es.close(); status(NO_TOKEN); }
+};
 load();
 </script>
 </body>
