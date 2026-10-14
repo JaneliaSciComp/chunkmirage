@@ -231,6 +231,17 @@ function pluginSource(code: string, name = "my_op"): string {
     + `from chunkmirage.ops import python_op\n\n${cls} = python_op("${name}", '''\\\n${body.endsWith("\n") ? body : `${body}\n`}''')\n`;
 }
 
+/** `code` with each `#uicontrol` line's default the value its slider has now (`params`), so
+ * the code saved runs from the command line as it does here. */
+function withParams(code: string, params: Record<string, unknown> = {}): string {
+  return code.split("\n").map((line) => {
+    const m = /^(\s*#uicontrol\s+\w+\s+(\w+)\s+\w+\()(.*)(\)\s*)$/.exec(line);
+    if (!m || !(m[2] in params)) return line;
+    const args = m[3].split(",").map((a) => a.trim()).filter((a) => a && !a.startsWith("default="));
+    return `${m[1]}${[...args, `default=${String(params[m[2]])}`].join(", ")}${m[4]}`;
+  }).join("\n");
+}
+
 /** Python a link carries (`#python=`): python ops by view, the card's views only. */
 function linked(card: PipelineCard): Record<string, OpSpec> {
   const m = /[#&]python=([^&]*)/.exec(location.hash);
@@ -375,6 +386,18 @@ async function start() {
   await engine.start(views, status);  // the data opened; Python still loading
   const state = await viewerState(card);
   firstLayers = Object.fromEntries(state.layers.map((l) => [l.name, l as NgLayer]));
+  if (card.code) {  // the code the command reads, as it is now
+    const view = card.code.view, file = `${view}.py`, save = $<HTMLButtonElement>("save-code");
+    Object.assign(save, { hidden: false, textContent: `Save ${file}` });
+    $("save-note").hidden = false;
+    save.addEventListener("click", () => {
+      const op = python[view] ?? { code: card.code!.code };
+      const a = Object.assign(document.createElement("a"), { download: file,
+        href: URL.createObjectURL(new Blob([withParams(String(op.code), op.params as Record<string, unknown>)], { type: "text/x-python" })) });
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+  }
   ng.src = `ng/index.html#!${encodeURIComponent(JSON.stringify(state))}`;
   ng.hidden = false;
   if (card.timeline) showDates(ng, card.timeline, state.displayDimensions);

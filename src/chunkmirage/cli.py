@@ -14,18 +14,24 @@ app = typer.Typer(
 
 
 def _parse_op(text: str) -> dict:
-    """``threshold:low=120,high=200`` or JSON ``{"op":"threshold","low":120}``."""
+    """``threshold:low=120,high=200`` or JSON ``{"op":"threshold","low":120}``. A python op's
+    ``code=@slice.py`` is that file's text (here only: a spec sent to a server reads no file)."""
     text = text.strip()
     if text.startswith("{"):
-        return json.loads(text)
-    name, _, params = text.partition(":")
-    spec: dict = {"op": name}
-    for kv in filter(None, params.split(",")):
-        k, _, v = kv.partition("=")
-        try:
-            spec[k] = json.loads(v)
-        except json.JSONDecodeError:
-            spec[k] = v
+        spec = json.loads(text)
+    else:
+        name, _, params = text.partition(":")
+        spec = {"op": name}
+        for kv in filter(None, params.split(",")):
+            k, _, v = kv.partition("=")
+            try:
+                spec[k] = json.loads(v)
+            except json.JSONDecodeError:
+                spec[k] = v
+    code = spec.get("code")
+    if spec.get("op") == "python" and isinstance(code, str) and code.startswith("@"):
+        with open(os.path.expanduser(code[1:]), encoding="utf-8") as f:
+            spec["code"] = f.read()
     return spec
 
 
@@ -131,7 +137,8 @@ def serve(
     ),
     name: str = typer.Option("processed", help="dataset name in the served URL"),
     op: list[str] = typer.Option(
-        [], "--op", "-o", help="op spec, e.g. threshold:low=120 (repeatable)"
+        [], "--op", "-o", help="op spec, e.g. threshold:low=120 (repeatable); python:code=@file.py "
+        "reads a python op's code from a file"
     ),
     raw: bool = typer.Option(
         True,

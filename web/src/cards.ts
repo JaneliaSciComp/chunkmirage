@@ -42,7 +42,8 @@ export interface PipelineCard extends Card {
   playback?: { axis: string; velocity: number };  // the viewer's play button: steps per second
   controls?: OpControl[];    // sliders: an op parameter of a view, computed again for what is on screen
   consumers?: CardConsumers; // other readers to pick instead of Neuroglancer (a web map, GDAL)
-  code?: { view: string; code: string };  // Python the code panel opens with, after that view's ops from the start
+  code?: { view: string; code: string };  // Python the code panel opens with, after that view's ops from the start;
+                                          // the command reads it from <view>.py (the page saves it)
 }
 /** Readers of a card's georeferenced views besides Neuroglancer (consumers.ts): a web map of
  * some of them, and GDAL translating one, for an area, to a GeoTIFF. */
@@ -362,8 +363,7 @@ export const CARDS: DemoCard[] = [
     panels: [["DAPI"], ["DAPI", "nuclei"]],
     position: [118, 137, 135], zoom: 0.42, boxes: false,
     code: { view: "nuclei", code: NUCLEI_CODE },
-    command: `chunkmirage serve '${IDR_NUCLEI}' --select c=1 --chunk 236,275,271 --allow-code --python-viewer\n`
-      + "# then, in the control UI it prints: add the op python, and paste the code",
+    command: `chunkmirage serve '${IDR_NUCLEI}' --select c=1 --chunk 236,275,271 --op python:code=@nuclei.py --allow-code --python-viewer`,
   },
   {
     kind: "link", id: "track", image: "cards/track.jpg",
@@ -389,7 +389,7 @@ export const CARDS: DemoCard[] = [
     panels: [["slice"], ["bulb"]], layouts: ["xz", "3d"], turn: [0.28, 0.2, 0.06, 0.94], depth: 2, boxes: false,
     position: [SIDE / 2, SIDE / 2, SIDE / 2], zoom: SIDE / 700,
     code: { view: "slice", code: BULB_CODE },
-    command: `chunkmirage serve '${BULB}' --chunk 256,1,256 --python-viewer`,
+    command: `chunkmirage serve '${BULB}' --chunk 256,1,256 --op python:code=@slice.py --allow-code --python-viewer`,
   },
   {
     kind: "pipeline", id: "mesh-bulb", image: "cards/mesh-bulb.jpg",

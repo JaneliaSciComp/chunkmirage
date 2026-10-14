@@ -17,7 +17,7 @@ precomputed; local, `s3://`, `gs://`, `http(s)://`), `file.h5::/dataset`, or a c
 | option                | default                                   | meaning |
 | --------------------- | ----------------------------------------- | ------- |
 | `--name`              | `processed`                               | dataset name in URLs |
-| `--op`, `-o`          |                                           | op spec, repeatable; `name:k=v,k=v` or JSON |
+| `--op`, `-o`          |                                           | op spec, repeatable; `name:k=v,k=v` or JSON; a [`python` op](ops.md#your-own-python-the-python-op)'s `code=@file.py` (either form) is that file's text |
 | `--raw` / `--no-raw`  | on                                        | also serve the unprocessed source as `raw`; shares the cache, appears as a second layer |
 | `--chunk`             | source chunks                             | output chunk shape, e.g. `64,64,64` |
 | `--select`            | none                                      | pin non-spatial axes, e.g. `c=1,t=0`: the pipeline sees that channel of that time point as a `z, y, x` volume (the spec's `select`) |

@@ -96,3 +96,12 @@ def test_allow_code_generates_a_token_unless_told_not_to(monkeypatch):
     out = runner.invoke(cli.app, ["serve", SRC, "--allow-code", "--no-token", "--port", "0", "--host", "127.0.0.1"])
     assert out.exit_code == 0 and "/ui?token=" not in out.output
     assert runner.invoke(cli.app, ["serve", SRC, "--no-token", "--port", "0"]).exit_code != 0
+
+
+def test_the_command_line_reads_a_python_ops_code_from_a_file(tmp_path):
+    from chunkmirage.cli import _parse_op
+
+    (tmp_path / "labels.py").write_text(CODE)
+    assert _parse_op(f"python:code=@{tmp_path}/labels.py")["code"] == CODE
+    spec = _parse_op(f'{{"op": "python", "code": "@{tmp_path}/labels.py", "params": {{"low": 50}}}}')
+    assert spec["code"] == CODE and spec["params"] == {"low": 50}
