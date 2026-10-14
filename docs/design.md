@@ -209,9 +209,36 @@ Three layers, from most to least structured:
    also be mounted inside another one.
 3. **Live control**: the REST API takes a `PipelineSpec` (source + list of op specs). An
    MCP server is a thin wrapper over it (tools: `list_ops`, `set_pipeline`,
-   `neuroglancer_link`, `cache_stats`), so an LLM agent can drive the viewer. Arbitrary
-   code (a `PythonOp` taking source text) is possible but off by default; it is only
-   acceptable on a single-user machine.
+   `neuroglancer_link`, `cache_stats`), so an LLM agent can drive the viewer.
+4. **Code in the spec**: the [`python` op](reference/ops.md#your-own-python-the-python-op)
+   carries its source, for what no op does yet, edited live as a Neuroglancer shader is
+   (see below).
+
+### Code in the spec: the `python` op
+
+* **Python, not a language for the web.** The browser engine already runs the package's
+  Python in Pyodide, so code written once runs in the page and on a server, with numpy,
+  scipy and scikit-image in both. Code generated for WebGL or WebGPU would be one more
+  language with no scipy of its own, that a server could not run without a GPU runtime;
+  WGSL may come later for GPU pointwise ops and filters (the `wgpu` package runs it on a
+  server too), as an option beside Python.
+* **The code is a parameter.** It is a field of the op like any other, so it is part of
+  the digest: an edit is a new URL, cached stages and refetching work as for a slider, and
+  a share link or an agent's spec carries it whole. No step registers an op first.
+* **Planned without running it.** A pipeline must know an op's halo and output dtype
+  before any chunk is computed (to read padded blocks, to write the format's metadata),
+  and a server that may not run the code must still read the spec to refuse it. So halo,
+  output and sliders are comment lines read as text (`#halo`, `#output`, and `#uicontrol`
+  in Neuroglancer's shader syntax, which its users know), and the code is checked by
+  parsing it (`ast`), not by calling it.
+* **Who may run it.** In the browser engine the code runs in the visitor's own workers, so
+  it is always allowed; a link carrying someone else's code shows it and waits for the
+  visitor to run it, since Python in a page can fetch and read the site's storage. On a
+  server it runs as the server's user, with every file that user can write, so `/api`
+  takes it only with `--allow-code`, which brings a generated token: the server listens on
+  every interface by default, and on a shared cluster node its `localhost` is every user's.
+  Without a token, `/api` refuses changes from other sites' pages (their `Origin`), since
+  the CORS that viewers need would let any open tab send them.
 
 ### What stays in the core (a proposal)
 

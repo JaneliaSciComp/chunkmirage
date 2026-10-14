@@ -54,7 +54,9 @@ so a day-to-day change is an op along time.
 
 The demos also run entirely in the browser, with no server and nothing to install:
 [the gallery](https://janeliascicomp.github.io/chunkmirage/browser/) has registration solved on
-your GPU and pipelines of chunkmirage's own ops run in the page (see [Demos](demos.md)).
+your GPU and pipelines of chunkmirage's own ops run in the page (see [Demos](demos.md)). Most
+demos also take Python of your own, run on the chunks of a layer you pick and edited live,
+as a Neuroglancer shader is: a [`python` op](reference/ops.md#your-own-python-the-python-op).
 
 See [FAQ](faq.md) for when *not* to use it.
 

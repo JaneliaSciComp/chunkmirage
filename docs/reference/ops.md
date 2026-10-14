@@ -53,6 +53,8 @@ new op; `tests/test_docs.py` requires it.
 |             | `offset`    | 0       | added to every channel first, to make reflectances of stored numbers |
 |             | `nodata`    | none    | a stored value meaning no data: the index there is NaN |
 |             | `floor`     | 0       | where a pair sums to less than this, its index is noise (water) and NaN |
+| `python`    | `code`      | a template | Python of your own defining `apply(block, ...)`, with `#halo`, `#output` and `#uicontrol` lines; see [below](#your-own-python-the-python-op). A server runs it only when started with `--allow-code` |
+|             | `params`    | none    | values of the code's `#uicontrol` sliders, over their defaults |
 
 `label` numbers components **per chunk** (salted by chunk position so ids never collide).
 An object spanning chunks therefore gets one colour per chunk. That is the honest per-chunk
@@ -86,6 +88,62 @@ card draws ground under a chosen slope over it, and the relief lit by a sun you 
 day's sea temperature minus the day before's (`examples/hurricane_wakes.py`, and the
 gallery's hurricanes card), each 6-minute image of the sun minus the one before
 (`examples/solar_flares.py`, the running difference solar physicists use).
+
+## Your own Python: the `python` op
+
+The `python` op carries its code in the pipeline spec, so a pipeline can do something no op
+does without a plugin package: edit the code and the view is computed again, as
+Neuroglancer's shaders are edited live on its pixels. The control page and the browser demos
+show it as a code box.
+
+```python
+#halo 1
+#output uint32 label
+#uicontrol float low slider(min=0, max=255, default=128)
+def apply(block, low):
+    from scipy import ndimage
+    return ndimage.label(block > low)[0]
+```
+
+`apply` gets the block, padded by the halo, and the values of the sliders by name, and
+returns the block computed (or its interior, shaved by the halo on every side). numpy is
+`np`. A parameter named `box` gets where the block sits, as `apply_at` does. The result is
+cast to the output dtype. Three kinds of line, read as text so a pipeline is planned
+without running the code:
+
+| line | says | default |
+| ---- | ---- | ------- |
+| `#halo 2`, `#halo 0 4 4` | voxels of context needed on each side: one for every axis, or one per axis for the last axes | 0 |
+| `#output uint32 label` | the dtype returned (an integer or float numpy dtype), and/or whether it is an `image`, `label` or `mask` | the input's |
+| `#uicontrol float low slider(min=0, max=255, step=1, default=128)` | a slider, in Neuroglancer's shader syntax: `float` or `int` `slider` (min and max required), or `bool` `checkbox(default=true)`; `apply` takes a parameter of the same name | `default`: `min`, or false |
+
+The spec gives the sliders' values as `params`, so moving one changes the parameters, not
+the code: `{"op": "python", "code": "...", "params": {"low": 140}}`. A value for a slider
+the code no longer has is dropped.
+
+**How a slider reaches the code.** The `#` lines are comments to Python itself, and `apply`
+is an ordinary function: outside chunkmirage, `apply(volume, sigma=1, low=300, min_size=500)`
+runs it on any numpy array. chunkmirage reads the `#uicontrol` lines to draw the sliders
+(the browser demos and the control page draw the same ones), keeps each slider's value in
+the op's `params`, and calls `apply(block, **params)` on every chunk; a moved slider is a
+new spec, so the view is computed again. Nothing in the code belongs to a viewer or a page:
+from Python, `Pipeline.from_spec({"source": ..., "ops": [{"op": "python", "code": code,
+"params": {"low": 400}}]})` runs it the same way. Both are part of the
+op's digest, so an edit is a new URL and viewers fetch the result afresh. Mistakes (a
+syntax error, an unknown dtype, a slider `apply` does not take) are refused when the
+pipeline is built, naming the line.
+
+**Where it runs.** In the browser engine, always: the code runs in the visitor's own
+Pyodide workers, which load what it imports (numpy, scipy, scikit-image and the rest of
+Pyodide's packages; not torch, cupy or tensorstore). On a server, the code runs as the
+server's user, with its files, so `chunkmirage serve` refuses specs with `python` ops sent to
+`/api` unless started with `--allow-code`, which then needs a token
+([CLI](cli.md#serve)). Pipelines built in your own process (`Pipeline`, `--op`) run it
+regardless.
+
+**As a plugin.** `chunkmirage.ops.python_op(name, code)` makes an op class of the same code
+whose sliders are its parameters (pydantic fields, with their bounds), for the
+`chunkmirage.ops` entry point; the code boxes' "copy as plugin" gives such a module.
 
 ## CLI syntax
 

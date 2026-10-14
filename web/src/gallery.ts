@@ -1,5 +1,6 @@
-// The gallery: one card per demo in cards.ts.
-import { CARDS } from "./cards";
+// The gallery: one card per demo in cards.ts, tagged when its page has a panel for Python of
+// your own.
+import { CARDS, pythonViews } from "./cards";
 
 const root = document.getElementById("cards")!;
 for (const c of CARDS) {
@@ -28,5 +29,12 @@ for (const c of CARDS) {
   card.querySelector(".blurb")!.textContent = c.blurb;
   card.querySelector(".data")!.textContent = `Data: ${c.data}`;
   card.querySelector("pre")!.textContent = c.command;
+  if (pythonViews(c).length) {
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    tag.textContent = "✎ Your Python";
+    tag.title = "Its page has a panel for Python of your own, run on a layer's chunks";
+    card.querySelector(".actions")!.append(tag);
+  }
   root.append(card);
 }

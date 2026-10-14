@@ -65,10 +65,13 @@ describe shipped features as future work.
    saving the result back to the project are still to do).
 6. **Adaptive caching.** Measure stage compute time at runtime and cache automatically when
    it exceeds a threshold, removing the manual `cache` flag.
-7. **MCP surface and hot-loaded ops.** `list_ops`, `set_pipeline`, `define_op` from source,
-   `neuroglancer_link`, `screenshot`. Off by default, local only. (The REST API, `/api/events`
-   stream, control page and python-neuroglancer viewer it would wrap already exist; see
-   [Interactivity](concepts/interactivity.md).)
+7. **MCP surface.** `list_ops`, `set_pipeline`, `try` (a spec on one block: its shape,
+   dtype, value range and time, or the traceback), `neuroglancer_link`. Off by default,
+   local only. (The REST API, `/api/events` stream, control page and python-neuroglancer
+   viewer it would wrap already exist; see [Interactivity](concepts/interactivity.md). Ops
+   from source need no tool of their own: the
+   [`python` op](reference/ops.md#your-own-python-the-python-op) carries its code in the
+   spec.)
 8. **Deployment hardening.** Shared-cache multi-worker mode. (`--https` with an
    auto-generated self-signed certificate, and `--token` on `/api/*`, have shipped; see the
    [CLI reference](reference/cli.md).)

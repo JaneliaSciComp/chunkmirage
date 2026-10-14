@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import secrets
 
 import typer
 
@@ -207,6 +208,15 @@ def serve(
         help="require this token for /api/* (Authorization: Bearer <token>, or ?token=); "
         "datasets stay open, as viewers send no headers",
     ),
+    allow_code: bool = typer.Option(
+        False,
+        "--allow-code",
+        help="let pipelines sent to /api carry python ops: code that runs as you. A token is "
+        "generated (in the printed control UI link) unless --token or --no-token is given",
+    ),
+    no_token: bool = typer.Option(
+        False, "--no-token", help="with --allow-code, no token: for a server only you can reach"
+    ),
     workers: int = typer.Option(
         1,
         help="uvicorn worker processes. Each has its own registry and cache, so live edits "
@@ -235,6 +245,10 @@ def serve(
     from chunkmirage.neuroglancer import source_url, viewer_link
     from chunkmirage.server import create_app
 
+    if no_token and (token or not allow_code):
+        raise typer.BadParameter("--no-token goes with --allow-code, and without --token")
+    if allow_code and not token and not no_token:
+        token = secrets.token_urlsafe(16)
     registry = build_registry(
         source,
         name,
@@ -288,7 +302,12 @@ def serve(
     n_threads = threads or max(40, 2 * (os.cpu_count() or 4))
     typer.echo(f"threads:      {n_threads} for chunk computation")
     application = create_app(
-        registry, frontends=frontends_for(compressor), public_url=public_url, threads=n_threads, token=token
+        registry,
+        frontends=frontends_for(compressor),
+        public_url=public_url,
+        threads=n_threads,
+        token=token,
+        allow_code=allow_code,
     )
     if ready_file:
         ready = {"url": base, "port": port, "pid": os.getpid(), "datasets": srcs, "neuroglancer": link}
