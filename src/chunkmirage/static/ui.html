@@ -35,6 +35,8 @@
   .viewer iframe { width:100%; height:70vh; border:1px solid var(--line); border-radius:6px; background:#000; margin-top:10px; }
   .warn { color:#f5b544; font-size:12px; }
   code { background:#0c0e12; padding:1px 4px; border-radius:3px; font-size:12px; }
+  textarea.code { width:100%; box-sizing:border-box; min-height:15em; resize:vertical; background:#0c0e12; color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:6px 8px; font:12px/1.45 ui-monospace, monospace; tab-size:4; }
+  .codeerr { color:#f87171; font:12px/1.4 ui-monospace, monospace; white-space:pre-wrap; margin:4px 0; }
 </style>
 </head>
 <body>
@@ -100,24 +102,24 @@ function bounds(ds, key) {
   return [0, 1, 0.001];
 }
 
-function paramControl(ds, opIdx, key, schema, value) {
+function paramControl(ds, opIdx, key, schema, value, control = null) {
   const wrap = document.createElement('div'); wrap.className = 'param';
   const label = document.createElement('label'); label.textContent = key; label.title = schema.description || ''; wrap.appendChild(label);
   const types = [].concat(schema.type || (schema.anyOf||[]).map(a=>a.type)).filter(Boolean);
   const isNum = types.includes('number') || types.includes('integer');
   if (isNum) {
-    const [lo, hi, step] = bounds(ds, key);
+    const [lo, hi, step] = control ? [control.min, control.max, control.step ?? 'any'] : bounds(ds, key);
     const range = document.createElement('input'); range.type='range'; range.min=lo; range.max=hi; range.step=step;
     const num = document.createElement('input'); num.type='number'; num.step=step;
     const v = (value===null||value===undefined) ? '' : value; range.value = v || lo; num.value = v;
-    const commit = (val, final) => { range.value = val; num.value = val; setParam(ds.name, opIdx, key, val===''? null : Number(val), final); };
+    const commit = (val, final) => { range.value = val; num.value = val; setParam(ds.name, opIdx, key, val===''? null : Number(val), final, !!control); };
     range.oninput = () => commit(range.value, false);     // live: PUT (debounced); python viewer follows
     range.onchange = () => commit(range.value, true);     // release: also navigate external viewers
     num.onchange = () => commit(num.value, true);
     wrap.appendChild(range); wrap.appendChild(num);
   } else if (types.includes('boolean')) {
     const cb = document.createElement('input'); cb.type='checkbox'; cb.checked = !!value;
-    cb.onchange = () => setParam(ds.name, opIdx, key, cb.checked);
+    cb.onchange = () => setParam(ds.name, opIdx, key, cb.checked, true, !!control);
     wrap.appendChild(cb); wrap.appendChild(document.createElement('span'));
   } else {
     const t = document.createElement('input'); t.type='text'; t.value = value ?? '';
@@ -148,7 +150,8 @@ function render() {
       head.appendChild(rm); box.appendChild(head);
       const doc = document.createElement('div'); doc.className = 'opdoc'; doc.textContent = (OPS[op.op]?.doc || '').split('\n')[0]; box.appendChild(doc);
       const props = OPS[op.op]?.schema?.properties || {};
-      for (const [key, schema] of Object.entries(props)) box.appendChild(paramControl(ds, i, key, schema, op[key] ?? schema.default));
+      if (op.op === 'python') box.appendChild(codeEditor(ds, i, op));
+      else for (const [key, schema] of Object.entries(props)) box.appendChild(paramControl(ds, i, key, schema, op[key] ?? schema.default));
       card.appendChild(box);
     });
     const row = document.createElement('div'); row.className = 'row';
@@ -162,9 +165,72 @@ function render() {
   }
 }
 
+// A python op: its code, edited in place (PUT after a pause), and a slider for each of its
+// #uicontrol lines, as the server read them (ops_info), rebuilt after each change.
+function codeEditor(ds, i, op) {
+  const wrap = document.createElement('div');
+  const ta = document.createElement('textarea'); ta.className = 'code'; ta.spellcheck = false;
+  ta.value = op.code ?? OPS.python.schema.properties.code.default;
+  ta.onkeydown = e => {
+    if (e.key === 'Tab') { e.preventDefault(); ta.setRangeText('    ', ta.selectionStart, ta.selectionEnd, 'end'); }
+    if (e.key === '/' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); toggleComment(ta); }
+  };
+  ta.oninput = () => {
+    DATASETS[ds.name].spec.ops[i].code = ta.value; pendingFinal[ds.name] = true;  // each PUT's answer is a new spec
+    clearTimeout(timers[ds.name]); timers[ds.name] = setTimeout(() => push(ds.name), 600);
+  };
+  const err = document.createElement('div'); err.className = 'codeerr'; err.dataset.op = i;
+  const sliders = document.createElement('div'); sliders.className = 'sliders'; sliders.dataset.op = i;
+  const row = document.createElement('div'); row.className = 'row';
+  const copy = document.createElement('button'); copy.textContent = 'copy as plugin';
+  copy.onclick = async () => { await navigator.clipboard.writeText(pluginSource(ta.value)); status('copied: a module defining the op, for the chunkmirage.ops entry point'); };
+  row.appendChild(copy);
+  wrap.append(ta, err, sliders, row);
+  fillSliders(ds, i, sliders);
+  return wrap;
+}
+
+
+// Ctrl+/ (Cmd+/ on a Mac), as in VS Code: the selected lines (or the caret's) commented out,
+// '# ' at their smallest indent, or uncommented when every one of them is a comment.
+function toggleComment(ta) {
+  const v = ta.value, s = ta.selectionStart, e = ta.selectionEnd;
+  const start = v.lastIndexOf('\n', s - 1) + 1;
+  const stop = v.indexOf('\n', e > s && v[e - 1] === '\n' ? e - 1 : e);
+  const end = stop === -1 ? v.length : stop;
+  const lines = v.slice(start, end).split('\n'), code = lines.filter(l => l.trim());
+  if (!code.length) return;
+  const off = code.every(l => /^\s*#/.test(l));
+  const indent = Math.min(...code.map(l => l.length - l.trimStart().length));
+  const out = lines.map(l => !l.trim() ? l : off ? l.replace(/^(\s*)# ?/, '$1') : l.slice(0, indent) + '# ' + l.slice(indent));
+  ta.setRangeText(out.join('\n'), start, end, s === e ? 'preserve' : 'select');
+  if (s === e) ta.selectionStart = ta.selectionEnd = Math.max(start, s + out[0].length - lines[0].length);
+  ta.dispatchEvent(new Event('input'));
+}
+
+function fillSliders(ds, i, box) {
+  box.replaceChildren();
+  const op = ds.spec.ops[i];
+  for (const c of ((ds.ops_info || [])[i] || {}).controls || []) {
+    const schema = c.type === 'bool' ? {type: 'boolean'} : {type: 'number'};
+    const el = paramControl(ds, i, c.name, schema, (op.params || {})[c.name] ?? c.default, c);
+    box.appendChild(el);
+  }
+}
+
+// What "copy as plugin" gives: a module whose op is this code, its sliders its parameters.
+function pluginSource(code, name = 'my_op') {
+  const cls = name.split('_').map(w => w[0].toUpperCase() + w.slice(1)).join('');
+  const body = code.replace(/\\/g, '\\\\').replace(/'''/g, "\\'\\'\\'");
+  return `# ${name}.py: an op made from code written for chunkmirage's python op. Register it in\n`
+    + `# pyproject.toml:  [project.entry-points."chunkmirage.ops"]  ${name} = "${name}:${cls}"\n`
+    + `from chunkmirage.ops import python_op\n\n${cls} = python_op("${name}", '''\\\n${body.endsWith('\n') ? body : body + '\n'}''')\n`;
+}
+
 let pendingFinal = {};
-function setParam(name, opIdx, key, value, final=true) {
-  DATASETS[name].spec.ops[opIdx][key] = value;
+function setParam(name, opIdx, key, value, final=true, control=false) {
+  const op = DATASETS[name].spec.ops[opIdx];
+  if (control) op.params = {...(op.params || {}), [key]: value}; else op[key] = value;
   pendingFinal[name] = pendingFinal[name] || final;
   clearTimeout(timers[name]);
   timers[name] = setTimeout(() => push(name), 150);
@@ -181,15 +247,32 @@ async function push(name, rerender=false) {
   try {
     const r = await api(`api/datasets/${encodeURIComponent(name)}`, {method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify(ds.spec)});
     body = await r.json();
-    if (!r.ok) { status(`error: ${body.error}`); return; }
+    if (!r.ok) { status(`error: ${body.error}`); codeErrors(name, body.error); return; }
   } finally {
     const again = inflight[name] === 'again'; inflight[name] = false;
     if (again) { setTimeout(() => push(name, rerender), 0); }
   }
   DATASETS[name] = body; DATASETS[name].name = name;
-  if (rerender) render(); else { const d = document.querySelector(`.card.ds[data-name="${name}"] .digest`); if (d) d.textContent = `@${body.digest}`; }
+  codeErrors(name, '');
+  if (rerender) render(); else {
+    const card = document.querySelector(`.card.ds[data-name="${CSS.escape(name)}"]`);
+    if (card) {
+      card.querySelector('.digest').textContent = `@${body.digest}`;
+      card.querySelector('h2 small').textContent = `${body.levels[0].dtype} · ${body.levels[0].shape.join('×')} · ${body.levels.length} level(s)`;
+      // the code box keeps its text and caret; its sliders follow its #uicontrol lines
+      for (const box of card.querySelectorAll('.sliders')) fillSliders(DATASETS[name], Number(box.dataset.op), box);
+      for (const [i, op] of body.spec.ops.entries()) if (op.op === 'python') { const ta = card.querySelectorAll('.op')[i]?.querySelector('textarea'); if (ta) op.code = ta.value; }
+    }
+  }
   status(`updated ${name} → @${body.digest}`);
   if ($('#autoPush').checked && final) pushViewer();
+}
+
+// A failed change's message under the code boxes of a dataset (its python ops' code is
+// where most mistakes are): the pydantic wrapping trimmed off.
+function codeErrors(name, error) {
+  const text = (error || '').split('\n').filter(l => /Value error|Error|line \d/.test(l)).map(l => l.replace(/^\s*Value error, /, '').replace(/ \[type=.*$/, '')).join('\n') || error;
+  for (const el of document.querySelectorAll(`.card.ds[data-name="${CSS.escape(name)}"] .codeerr`)) el.textContent = text;
 }
 
 let VIEWER_URL = null;   // python viewer, if the server reports one

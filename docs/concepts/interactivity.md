@@ -15,6 +15,31 @@ Every edit bumps the registry version and fires `GET /api/events` (Server-Sent E
 several control surfaces stay in sync. Only the changed stage and its dependents recompute;
 see [Caching](caching.md).
 
+### Your own Python, edited live
+
+A [`python` op](../reference/ops.md#your-own-python-the-python-op) is a code box in the
+pipeline: what Neuroglancer's shader editor is for a layer's pixels, it is for the chunks
+themselves (a threshold and connected components, a filter no op has). Its `#uicontrol`
+lines become sliders under it, in the same syntax as the shaders'.
+
+* **The browser demos**: every pipeline demo has a *Your Python* panel. Pick a layer, add
+  Python, edit it: the code gets what the layer shows (its data as read, or after the
+  demo's ops, as the panel says) and returns what it shows instead. A moment after each
+  change the layer is computed again in the page's
+  Pyodide workers and the viewer's layers switch to it, keeping the camera (and becoming a
+  segmentation layer when the code returns labels). A mistake shows under the code, with
+  its line. The code is highlighted as Python, in VS Code's colours, and Ctrl+/ (⌘/ on a
+  Mac) comments the selected lines out or in, as in VS Code (CodeMirror). Two demos start
+  with Python of their own to edit: nuclei counted in a light-microscopy image, and the
+  fractal's slice, with lines to uncomment. *Copy link* gives a link to the demo with the code, which opens showing it
+  and runs only when the visitor presses *Run it*: Python in a page can fetch what it
+  likes and read the site's storage, so someone else's should be read first. *Copy as
+  plugin* gives a module defining the same op for a package.
+* **The control page** (`/ui`) shows a `python` op's code in a plain text box (Ctrl+/
+  comments lines out and in; the highlighting is the demos', which a server need not load),
+  with sliders under it, each change sent with `PUT` after a pause. A server runs such code only when started with `--allow-code`,
+  since it runs as the server's user: see below.
+
 ## Making the viewer refetch
 
 Neuroglancer (and most viewers) cache chunks by URL and expose no "invalidate" call. So
@@ -100,7 +125,17 @@ python viewer: http://10.123.4.56:41595/v/<token>/
 Anyone who can reach the server can also edit its pipelines through `/api`. On a shared
 network, start it with `--token <secret>` (or `CHUNKMIRAGE_TOKEN`): `/api/*` then needs the
 token, and the printed control-page link carries it (`/ui?token=...`), which the page sends
-on with every call. The datasets stay open to viewers.
+on with every call. The datasets stay open to viewers, so a viewer link needs no token.
+Without a token, `/api` still refuses changes a browser sends from another site's page:
+any tab you have open could otherwise send them, since the server's CORS is open for the
+viewers.
+
+Editing a pipeline reads data, but writes nothing; code does. With `--allow-code`, specs
+sent to `/api` may carry `python` ops, and whoever can send one runs code as you: on a
+cluster node, every other user logged in to it can reach its `localhost` too. So
+`--allow-code` generates a token unless given one, printed in the control-page link (the
+one link to keep to yourself, or give to someone you would let run code as you);
+`--no-token` drops it on purpose.
 
 The python viewer works over plain `http` from anywhere on the network because it serves
 its own Neuroglancer page from the same machine as the chunks.

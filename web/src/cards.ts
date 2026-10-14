@@ -42,6 +42,7 @@ export interface PipelineCard extends Card {
   playback?: { axis: string; velocity: number };  // the viewer's play button: steps per second
   controls?: OpControl[];    // sliders: an op parameter of a view, computed again for what is on screen
   consumers?: CardConsumers; // other readers to pick instead of Neuroglancer (a web map, GDAL)
+  code?: { view: string; code: string };  // Python the code panel opens with, after that view's ops from the start
 }
 /** Readers of a card's georeferenced views besides Neuroglancer (consumers.ts): a web map of
  * some of them, and GDAL translating one, for an area, to a GeoTIFF. */
@@ -74,6 +75,82 @@ export interface LinkCard extends Card { kind: "link"; href: string }
 /** A demo that runs from Python only (its data cannot be read from a browser page). */
 export interface PythonCard extends Card { kind: "python"; why: string }
 export type DemoCard = PipelineCard | MapCard | LinkCard | PythonCard;
+
+/** The views of a pipeline demo that Python of your own can follow, in the code panel: its
+ * own Python's view alone, else every view an image or segmentation layer shows. */
+export function pythonViews(c: DemoCard): string[] {
+  if (c.kind !== "pipeline") return [];
+  return c.code ? [c.code.view] : [...new Set(c.layers.flatMap((l) => l.view && l.type !== "mesh" ? [l.view] : []))];
+}
+
+/** What a view hands the Python after it: the data as read (one channel, a time point), or
+ * after the view's ops. */
+export function pythonInput(c: PipelineCard, view: string): string {
+  const v = c.views[view], ops = (v.ops ?? []).map((o) => String(o.op));
+  const pinned = v.select ? ` (${Object.entries(v.select).map(([a, i]) => `${a}=${i}`).join(", ")})` : "";
+  return ops.length ? `after ${ops.join(", ")}` : `as read${pinned}`;
+}
+
+// IDR's OME-Zarr sample of nuclei (lamin B1, DAPI), and the Python the nuclei card starts with:
+// smoothed, thresholded and labelled (whole, as one chunk), touching nuclei split on request
+const IDR_NUCLEI = "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.4/idr0062A/6001240.zarr";
+const NUCLEI_CODE = `# Nuclei in the DAPI image: smoothed, thresholded, and what is connected numbered.
+# It runs in this page, on the whole volume as one chunk; edit it and it runs again.
+# Each #uicontrol line is a slider: apply is called with its value, by the same name.
+#output uint32 label
+#uicontrol float sigma slider(min=0, max=3, step=0.25, default=1)
+#uicontrol int low slider(min=50, max=1000, step=10, default=300)
+#uicontrol int min_size slider(min=0, max=5000, step=100, default=500)
+def apply(block, sigma, low, min_size):
+    from scipy import ndimage
+    smooth = ndimage.gaussian_filter(block.astype(np.float32), sigma)
+    labels, n = ndimage.label(smooth > low)
+    sizes = np.bincount(labels.ravel())
+    keep = sizes >= min_size  # specks of noise are smaller
+    keep[0] = False
+    labels = np.where(keep[labels], labels, 0)
+    # Touching nuclei come out as one object. To split them, uncomment these lines
+    # (select them, then Ctrl+/ or ⌘/): a watershed from the points farthest from the
+    # background (a few seconds);
+    # a smaller min_distance splits more.
+    # from skimage.feature import peak_local_max
+    # from skimage.segmentation import watershed
+    # dist = ndimage.distance_transform_edt(labels > 0, sampling=(0.5, 0.36, 0.36))
+    # peaks = peak_local_max(dist, min_distance=12, labels=labels, exclude_border=False)
+    # seeds = np.zeros(labels.shape, np.int32)
+    # seeds[tuple(peaks.T)] = np.arange(1, len(peaks) + 1)
+    # labels = watershed(-dist, seeds, mask=labels > 0)
+    return labels
+`;
+
+// The Python the mandelbulb card's slice starts with: the fractal as computed, and other ways
+// to show it to uncomment (the slice is uint8: 4 x the escape step, 255 for points inside)
+const BULB_CODE = `# The slice's escape times, as computed. Uncomment one of the lines in apply (select it,
+# then Ctrl+/ or Cmd+/) to show them another way, or write your own: the slice updates as
+# you type. Each #uicontrol line is a slider; apply gets its value by the same name.
+#halo 4 0 4
+#uicontrol int band slider(min=2, max=32, default=8)
+#uicontrol int low slider(min=0, max=64, default=16)
+#uicontrol int size slider(min=1, max=9, step=2, default=5)
+
+
+def contours(block, band):
+    """A line where the escape time crosses into the next band of band / 4 iterations."""
+    k = block // band
+    edge = np.zeros(block.shape, bool)
+    edge[1:] |= k[1:] != k[:-1]  # along z
+    edge[..., 1:] |= k[..., 1:] != k[..., :-1]  # along x
+    return np.where(edge, block, 255)  # the lines in their colour, the rest dark
+
+
+def apply(block, band, low, size):
+    out = block
+    # out = contours(block, band)  # contour lines
+    # out = np.where(block >= low, block, 255)  # only what escapes after low / 4 iterations
+    # out = 254 - block  # inside out: the fast escapes and the slow swapped
+    # from scipy import ndimage; out = ndimage.uniform_filter(block, size)  # blurred
+    return np.where(block == 255, 255, out)  # inside stays dark
+`;
 
 const COSEM = "https://janelia-cosem-datasets.s3.amazonaws.com/jrc_hela-2";
 const PRED = `${COSEM}/jrc_hela-2.n5/labels`;
@@ -264,6 +341,25 @@ export const CARDS: DemoCard[] = [
     command: `chunkmirage serve '${ROUND1}' --select c=1,t=0 \\\n  --op spots:threshold=10,radius=2 --chunk 16,128,128 --python-viewer`,
   },
   {
+    kind: "pipeline", id: "nuclei", image: "cards/nuclei.jpg",
+    title: "Count the nuclei with a few lines of your own Python",
+    blurb: "DAPI-stained nuclei, found by a few lines of Python you can edit: smooth, threshold, label. Drag the sliders or change the code and the right panel updates. Touching nuclei come out as one; uncomment the watershed at the end of the code to split them.",
+    data: "Image Data Resource, idr0062A image 6001240: lamin B1 and DAPI, 0.36 µm voxels (an OME-Zarr sample at EMBL-EBI)",
+    views: {
+      dapi: { source: IDR_NUCLEI, select: { c: 1 }, chunk: [16, 275, 271] },
+      nuclei: { source: IDR_NUCLEI, select: { c: 1 }, chunk: [236, 275, 271] },  // one chunk: labels whole
+    },
+    layers: [
+      { name: "DAPI", view: "dapi", type: "image", colour: "#ffffff", range: [20, 1000] },
+      { name: "nuclei", view: "nuclei", type: "segmentation", alpha: 0.55 },
+    ],
+    panels: [["DAPI"], ["DAPI", "nuclei"]],
+    position: [118, 137, 135], zoom: 0.42, boxes: false,
+    code: { view: "nuclei", code: NUCLEI_CODE },
+    command: `chunkmirage serve '${IDR_NUCLEI}' --select c=1 --chunk 236,275,271 --allow-code --python-viewer\n`
+      + "# then, in the control UI it prints: add the op python, and paste the code",
+  },
+  {
     kind: "link", id: "track", image: "cards/track.jpg",
     title: "Follow nuclei through two days of a colony, their (guessed) lineages plotted as frames stream",
     blurb: "A stem cell colony imaged every 5 minutes for 47 hours, every nucleus segmented in every frame but numbered afresh in each. Double-click a nucleus and it is followed frame by frame, forward and back in time, by its overlap with the next frame's nuclei, reading only a box around it from each frame; when it divides, the new nuclei that appear where it was are guessed to be its daughters and followed too. Each nucleus's volume is plotted as frames come in, by chunkmirage's tracking in this page: the sawtooth of growth and division, generation after generation.",
@@ -274,7 +370,7 @@ export const CARDS: DemoCard[] = [
   {
     kind: "pipeline", id: "mandelbulb", image: "cards/mandelbulb.jpg",
     title: "A 3-D fractal to zoom into forever, computed chunk by chunk",
-    blurb: "The Mandelbulb, the best known 3-D fractal, as a zarr array 2^28 voxels across, 21 levels deep: 10^25 voxels that exist nowhere. Each chunk is computed when the viewer asks for it, by chunkmirage's synthetic source running in this page; zoom into the slice on the left and finer levels iterate more, so new buds keep appearing. Right, the bulb volume rendered: zoom into it and finer levels are computed there too. Colours are escape times, the same at every level.",
+    blurb: "The Mandelbulb, the best known 3-D fractal, as a zarr array 2^28 voxels across, 21 levels deep: 10^25 voxels that exist nowhere. Each chunk is computed when the viewer asks for it, by chunkmirage's synthetic source running in this page; zoom into the slice on the left and finer levels iterate more, so new buds keep appearing. Right, the bulb volume rendered: zoom into it and finer levels are computed there too. Colours are escape times, the same at every level. The slice runs Python you can edit, in the panel on the left: uncomment a line to draw it another way.",
     data: "Computed: the power-8 Mandelbulb (White and Nylander, 2009), chunkmirage's synthetic://mandelbulb",
     views: {
       slice: { source: BULB, chunk: [256, 1, 256] },
@@ -286,6 +382,7 @@ export const CARDS: DemoCard[] = [
     ],
     panels: [["slice"], ["bulb"]], layouts: ["xz", "3d"], turn: [0.28, 0.2, 0.06, 0.94], depth: 2, boxes: false,
     position: [SIDE / 2, SIDE / 2, SIDE / 2], zoom: SIDE / 700,
+    code: { view: "slice", code: BULB_CODE },
     command: `chunkmirage serve '${BULB}' --chunk 256,1,256 --python-viewer`,
   },
   {

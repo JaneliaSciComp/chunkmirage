@@ -80,7 +80,16 @@ export interface SourceInfo { dtype: string; channels: number; axes: ViewAxis[];
 /** A view as served: its source, and what its ops make of it (output dtype, the leading axes
  * they consume and the halo they need; the leading axes they add, such as a gradient's
  * components, served as OME channel axes). */
-export interface ViewInfo extends SourceInfo { halo: number[]; lead: number; out: string; added?: number[] }
+export interface ViewInfo extends SourceInfo {
+  halo: number[]; lead: number; out: string; added?: number[];
+  kind?: string | null;                 // image, label or mask, if the ops say
+  controls?: Record<string, Control[]>; // a python op's #uicontrol lines, by the op's index
+}
+/** A python op's `#uicontrol` line, as the op read it: a slider or a checkbox. */
+export interface Control { name: string; type: "float" | "int" | "bool"; min: number | null; max: number | null; step: number | null; default: number | boolean }
+/** What a worker makes of a view's ops: output dtype and kind, the leading axes they consume
+ * and add, the halo they need, and their sliders. */
+export interface Plan { dtype: string; kind: string | null; lead: number; halo: number[]; ndim: number; added: number[]; controls: Record<string, Control[]> }
 
 /** A mesh made from a view's voxels: a legacy fragment, part of the coarsest level's mask
  * (for the multi-resolution octree), or a multi-resolution node's fragment. */

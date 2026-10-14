@@ -5,7 +5,14 @@ All endpoints are CORS-open. Editing endpoints can be disabled with
 `create_app(..., token=...)`) answers `/api/*` only with it, as `Authorization: Bearer
 <token>` or `?token=<token>` (for `/api/events`: a browser's `EventSource` sends no
 headers), and 401 otherwise. The datasets themselves and `/` stay open, since viewers send
-no headers.
+no headers. A server without a token answers changes to `/api/*` (any method but `GET`,
+`HEAD` and `OPTIONS`) with 403 when a browser sends them from another site's page: their
+`Origin` is neither the request's host nor `public_url`'s. Clients outside a browser send
+no `Origin` and are not affected.
+
+Specs given to `POST` and `PUT` with a [`python` op](ops.md#your-own-python-the-python-op)
+are refused with 403 unless the app was made with `create_app(..., allow_code=True)`
+(`--allow-code`): the server would run their code.
 
 | method   | path                                   | purpose |
 | -------- | -------------------------------------- | ------- |
@@ -47,7 +54,7 @@ no headers.
 ```
 
 Responses to `POST`, `PUT` and `GET /api/datasets/{name}` include `digest`, `source_dtype`,
-per-level `levels` (shape, chunks, dtype, voxel size, units, axes, and `kind`: `image`, `label`, `mask` or `null`), `ops_info` (per op: name, per-axis halo, docstring), `reads` (for an op at one voxel size, what it reads: `level`, `voxel_size`, `resampled`; else `null`), and `sources`, a map
+per-level `levels` (shape, chunks, dtype, voxel size, units, axes, and `kind`: `image`, `label`, `mask` or `null`), `ops_info` (per op: name, per-axis halo, docstring, and for a `python` op its `controls`: each `#uicontrol` line's name, type, min, max, step and default), `reads` (for an op at one voxel size, what it reads: `level`, `voxel_size`, `resampled`; else `null`), and `sources`, a map
 from format to Neuroglancer source URL carrying the new digest.
 
 ## Datasets resolved by name

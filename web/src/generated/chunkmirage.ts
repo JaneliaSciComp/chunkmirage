@@ -15,6 +15,7 @@ export type OpSpec =
   | Label
   | Morphology
   | NormalizedDifference
+  | PythonOp
   | Scale
   | Slope
   | Spots
@@ -447,6 +448,25 @@ export interface NormalizedDifference {
    * Where a pair's two values sum to less than this (after offset), its index is noise, a ratio of near zeros (water reflects almost no infrared), and is NaN.
    */
   floor?: number;
+}
+/**
+ * Python of your own, carried in the spec: ``apply(block, ...)`` returns the block
+ * computed (or its interior, shaved by the halo). ``#halo``, ``#output`` and
+ * ``#uicontrol`` lines say what it reads and makes; a server runs it only when started
+ * with ``--allow-code``.
+ */
+export interface PythonOp {
+  op: "python";
+  /**
+   * Python defining apply(block, ...), with #halo, #output and #uicontrol lines.
+   */
+  code?: string;
+  /**
+   * Values of the code's #uicontrol sliders, over their defaults.
+   */
+  params?: {
+    [k: string]: number | boolean;
+  };
 }
 /**
  * Linear intensity rescale ``value * factor + offset`` (output is float32).

@@ -3,6 +3,7 @@
 // hands it each chunk's input region (read by the page's reader) and gets back the bytes a
 // zarr v3 chunk holds, computed as the Python server computes it.
 import pyBase from "../../src/chunkmirage/ops/base.py?raw";
+import pyCode from "../../src/chunkmirage/ops/code.py?raw";
 import pyCombine from "../../src/chunkmirage/ops/combine.py?raw";
 import pyCore from "../../src/chunkmirage/core.py?raw";
 import pyFilters from "../../src/chunkmirage/ops/filters.py?raw";
@@ -17,7 +18,7 @@ import pySynthetic from "../../src/chunkmirage/sources/synthetic.py?raw";
 import pyMeshes from "../../src/chunkmirage/meshes.py?raw";
 import pyStitching from "../../src/chunkmirage/stitching.py?raw";
 import pyTracking from "../../src/chunkmirage/tracking.py?raw";
-import type { Answer, ToPyWorker } from "./types";
+import type { Answer, Plan, ToPyWorker } from "./types";
 
 export const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/";
 const FILES: Record<string, string> = {
@@ -25,6 +26,7 @@ const FILES: Record<string, string> = {
   "chunkmirage/core.py": pyCore, "chunkmirage/fused.py": pyFused, "chunkmirage/ops/__init__.py": pyOps,
   "chunkmirage/ops/base.py": pyBase, "chunkmirage/ops/pointwise.py": pyPointwise, "chunkmirage/ops/filters.py": pyFilters,
   "chunkmirage/ops/segment.py": pySegment, "chunkmirage/ops/combine.py": pyCombine, "chunkmirage/ops/terrain.py": pyTerrain,
+  "chunkmirage/ops/code.py": pyCode,  // the python op: code of the page's visitor, run here
   // the sources the worker computes itself (synthetic://), not read by the page's reader
   "chunkmirage/cache.py": pyCache, "chunkmirage/sources/__init__.py": '"""The computed sources, for the browser engine."""\n',
   "chunkmirage/sources/base.py": pySourceBase, "chunkmirage/sources/synthetic.py": pySynthetic,
@@ -70,7 +72,9 @@ def plan(view, ops, shape, dtype, chunk, voxel, source=None):
         describe(source)
     VIEWS[view] = (ops, dtype, list(chunk), source)
     added = list(out.shape[: out.ndim - len(halo)])  # leading axes the ops add (a model's channels)
-    return json.dumps({"dtype": out.dtype.name, "lead": lead, "halo": list(halo), "ndim": out.ndim, "added": added})
+    controls = {i: [c.model_dump() for c in op.directives.controls] for i, op in enumerate(ops) if op.name == "python"}
+    return json.dumps({"dtype": out.dtype.name, "kind": out.kind, "lead": lead, "halo": list(halo), "ndim": out.ndim,
+                       "added": added, "controls": controls})
 
 def _mesh(m, result, box, shape, dtype, chunk, voxel, origin, unit):
     """legacy: a fragment (Neuroglancer's encoding). octree: from the whole coarsest level,
@@ -215,8 +219,10 @@ async function load(packages: string[] = []) {
  * the leading axes they add (channels). */
 async function plan(views: Extract<ToPyWorker, { type: "plan" }>["views"], packages?: string[]) {
   if (!py) await (loaded ??= load(packages));
-  const out: Record<string, { dtype: string; lead: number; halo: number[]; added: number[] }> = {};
+  const out: Record<string, Plan> = {};
   for (const [id, v] of Object.entries(views)) {
+    // what a python op's code imports (scipy, scikit-image, ...), as Pyodide has it
+    for (const o of v.ops) if (o.op === "python" && typeof o.code === "string") await py.loadPackagesFromImports(o.code);
     const p = JSON.parse(py.globals.get("plan")(id, JSON.stringify(v.ops), v.shape, v.dtype, v.chunk, v.voxel, v.source));
     if (p.halo.length !== 3 || p.added.length > 1) {
       throw new Error(`view ${id}: a viewer shows three-axis volumes, with one channel axis at most; its ops leave ${p.ndim} axes`);

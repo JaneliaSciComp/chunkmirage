@@ -10,7 +10,7 @@
 // for readers that predate zarr v3's final spec, such as GDAL 3.8.
 import { Cancelled, Claim, Queue } from "./demand";
 import schema from "./generated/chunkmirage.schema.json";
-import type { Answer, Later, MeshCall, PipelineView, Reply, SourceInfo, ToPyWorker, ToReader, ViewAxis, ViewInfo } from "./types";
+import type { Answer, Later, MeshCall, PipelineView, Plan, Reply, SourceInfo, ToPyWorker, ToReader, ViewAxis, ViewInfo } from "./types";
 
 export const TO_SECONDS: Record<string, number> = { s: 1, second: 1, millisecond: 1e-3, ms: 1e-3, minute: 60, hour: 3600, day: 86400 };
 const OME_UNIT: Record<string, string> = { nm: "nanometer", um: "micrometer", m: "meter", s: "second" };
@@ -36,7 +36,6 @@ type Answered = null | { status: number; body: string | ArrayBuffer; type: strin
  * order), each fragment's size, the quantization and the index file. */
 type Octree = { nodes: Int32Array; size: number; bits: number; index: ArrayBuffer; mask: Uint8Array; level: number };
 const BAND = 2;  // chunkmirage.meshes.BAND: the border a part of the coarsest level is masked with
-type Plan = { dtype: string; lead: number; halo: number[]; added: number[] };
 
 /** A worker answering requests by reqId. */
 class Rpc<Req extends { reqId: number }> {
@@ -68,6 +67,8 @@ export class Engine {
   readonly page = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
   infos: Record<string, ViewInfo> = {};
   readonly counts = { computed: 0, dropped: 0, failed: 0 };
+  /** The last chunk that failed: its view (as served, `name~n` after an edit) and why. */
+  failure: { view: string; message: string } | null = null;
   private views: Record<string, PipelineView> = {};
   private reader: Rpc<ToReader> | null = null;
   private pool: Rpc<ToPyWorker>[] = [];
@@ -139,7 +140,7 @@ export class Engine {
     const plans = await Promise.all(this.pool.map((w) => w.call<Record<string, Plan>>({ type: "plan", views: specs })));
     for (const v of Object.keys(views)) {
       const p = plans[0][v];
-      this.infos[v] = { ...this.sources[v], out: p.dtype, lead: p.lead, halo: p.halo, added: p.added };
+      this.infos[v] = { ...this.sources[v], out: p.dtype, kind: p.kind, lead: p.lead, halo: p.halo, added: p.added, controls: p.controls };
     }
   }
 
@@ -306,7 +307,7 @@ export class Engine {
     else {
       pending = chunks.submit(key, level, () => this.compute(view, level, index, mesh), () => { this.counts.dropped++; })
         .then((b) => { this.counts.computed++; this.keep(key, b); return b; }, (e) => {
-          if (!(e instanceof Cancelled)) { this.counts.failed++; console.error(`chunk ${key}: ${String((e as Error).message ?? e).trim().split("\n").slice(-3).join(" / ")}`); }
+          if (!(e instanceof Cancelled)) { this.counts.failed++; this.failure = { view, message: String((e as Error).message ?? e) }; console.error(`chunk ${key}: ${String((e as Error).message ?? e).trim().split("\n").slice(-3).join(" / ")}`); }
           throw e;
         })
         .finally(() => { this.inflight.delete(key); this.onChange(); });

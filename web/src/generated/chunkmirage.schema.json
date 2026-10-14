@@ -499,6 +499,9 @@
           "$ref": "#/$defs/NormalizedDifference"
         },
         {
+          "$ref": "#/$defs/PythonOp"
+        },
+        {
           "$ref": "#/$defs/Scale"
         },
         {
@@ -677,6 +680,43 @@
       ],
       "title": "PipelineSpec",
       "type": "object"
+    },
+    "PythonOp": {
+      "additionalProperties": false,
+      "description": "Python of your own, carried in the spec: ``apply(block, ...)`` returns the block\ncomputed (or its interior, shaved by the halo). ``#halo``, ``#output`` and\n``#uicontrol`` lines say what it reads and makes; a server runs it only when started\nwith ``--allow-code``.",
+      "properties": {
+        "op": {
+          "const": "python"
+        },
+        "code": {
+          "default": "# Python run on each block of this view as it is fetched; edit it and the view updates.\n# Lines starting with these are read before it runs:\n#   #halo 2                 voxels of context apply needs on each side\n#   #output uint32 label    the dtype it returns, then image, label or mask (default: as given)\n#   #uicontrol float low slider(min=0, max=255, default=128)\n#                           a slider, as in Neuroglancer's shaders; apply gets its value\n# numpy is np; scipy and scikit-image can be imported.\ndef apply(block):\n    return block\n",
+          "description": "Python defining apply(block, ...), with #halo, #output and #uicontrol lines.",
+          "format": "python",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          },
+          "description": "Values of the code's #uicontrol sliders, over their defaults.",
+          "type": "object"
+        }
+      },
+      "title": "PythonOp",
+      "type": "object",
+      "required": [
+        "op"
+      ]
     },
     "RegisterParams": {
       "additionalProperties": false,

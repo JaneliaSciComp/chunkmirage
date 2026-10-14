@@ -24,7 +24,8 @@ They include burn severity of the Los Angeles fires, the Gulf Stream's fronts an
 hurricanes' cold wakes, landing slopes at the Moon's south pole, a 3-D fractal, microscope
 tiles stitched by RANSAC, two fly brains registered on your GPU, organelle contact sites,
 mRNA spots and nuclei tracked through a colony. Each shows the `chunkmirage serve` command
-that serves the same from Python. The [demos page](https://janeliascicomp.github.io/chunkmirage/demos/) lists them all, with the
+that serves the same from Python, and most take Python of your own, run on a layer's chunks
+in the page and edited live. The [demos page](https://janeliascicomp.github.io/chunkmirage/demos/) lists them all, with the
 Python examples.
 
 ## How it works
@@ -113,6 +114,9 @@ inside another one. See [pipelines](https://janeliascicomp.github.io/chunkmirage
 * **Serving:** per-stage cache, live REST edits, a control page, work ordered by what clients
   ask for and dropped when they stop waiting.
 * **In the browser:** the same ops run in Pyodide, and registration on WebGPU.
+* **Your own Python:** a [`python` op](https://janeliascicomp.github.io/chunkmirage/reference/ops/#your-own-python-the-python-op)
+  carries its code in the pipeline, edited live like a Neuroglancer shader, in the browser
+  demos and on a server started with `--allow-code`.
 
 Not yet: GPU ops other than registration, an MCP server. See the [roadmap](https://janeliascicomp.github.io/chunkmirage/roadmap/).
 

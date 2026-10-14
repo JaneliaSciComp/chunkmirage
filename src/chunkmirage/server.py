@@ -35,9 +35,11 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from importlib.metadata import entry_points
 from importlib.resources import files
 from typing import Any
+from urllib.parse import urlsplit
 
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import Headers
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
@@ -49,6 +51,7 @@ from chunkmirage.cache import LRUCache
 from chunkmirage.frontends import FRONTENDS, ChunkRequest, Frontend, Metadata, get_frontend
 from chunkmirage.neuroglancer import source_url, viewer_link, viewer_state
 from chunkmirage.ops.base import list_ops
+from chunkmirage.ops.code import PythonOp
 from chunkmirage.pipeline import Pipeline, PipelineSpec
 
 log = logging.getLogger("chunkmirage")
@@ -251,6 +254,7 @@ def create_app(
     public_url: str | None = None,
     cache: LRUCache | None = None,
     allow_edit: bool = True,
+    allow_code: bool = False,
     threads: int | None = None,
     token: str | None = None,
     extra_routes: Sequence[BaseRoute] = (),
@@ -263,8 +267,11 @@ def create_app(
     * ``public_url``: base of the links the app hands out (default: the request's own, with
       the prefix the app is mounted under).
     * ``allow_edit``: whether ``/api/datasets`` may create, replace and remove datasets.
+    * ``allow_code``: whether those may carry ``python`` ops, code this process runs as its
+      user; with it, give a ``token`` too unless only you can reach the server.
     * ``threads``: chunk requests computing at once (default 40).
     * ``token``: required on ``/api/*`` (header or ``?token=``); the datasets stay open.
+      Without one, ``/api`` refuses changes a browser sends from another site's page.
     * ``extra_routes``: Starlette routes of your own, matched after the built-in ones and
       before the datasets (``/{name}/...``); under ``/api/`` they share the token.
     * ``route_plugins``: also add the routes of installed ``chunkmirage.routes`` plugins.
@@ -274,6 +281,8 @@ def create_app(
     It can be mounted in another Starlette app (``Mount("/prefix", app)``): paths, the token
     and links are then relative to the prefix.
     """
+    if allow_code and not token:
+        log.warning("python ops allowed with no token: anyone who can reach this server can run code as you")
     # chunk requests computing at once (the rest wait their turn, or give theirs up while they
     # wait on queued work)
     slots = demand.Slots(int(threads) if threads else 40)
@@ -314,6 +323,7 @@ def create_app(
                     "halo": list(op.halo_for(p.info(0).ndim)),
                     "cached": op.cached,
                     "doc": (op.__doc__ or "").strip(),
+                    **({"controls": [c.model_dump() for c in op.directives.controls]} if isinstance(op, PythonOp) else {}),
                 }
                 for op in p.ops
             ],
@@ -363,6 +373,12 @@ def create_app(
     async def list_datasets(request: Request):
         return JSONResponse({"datasets": registry.names()})
 
+    def refused(spec: PipelineSpec) -> Response | None:
+        """Why ``spec`` may not be served from a request, if it may not."""
+        if not allow_code and any(o.get("op") == PythonOp.name for o in spec.ops):
+            return JSONResponse({"error": "this server runs no code sent to it: start it with --allow-code"}, 403)
+        return None
+
     async def create_dataset(request: Request):
         if not allow_edit:
             return JSONResponse({"error": "editing disabled"}, 403)
@@ -372,7 +388,10 @@ def create_app(
         if not name:
             return JSONResponse({"error": "missing 'name'"}, 400)
         try:
-            p = await run_in_threadpool(registry.add, name, PipelineSpec.model_validate(spec))
+            spec = PipelineSpec.model_validate(spec)
+            if (no := refused(spec)) is not None:
+                return no
+            p = await run_in_threadpool(registry.add, name, spec)
         except Exception as e:  # noqa: BLE001
             return JSONResponse({"error": str(e)}, 400)
         return JSONResponse(dataset_summary(request, name, p), 201)
@@ -392,6 +411,8 @@ def create_app(
         name = request.path_params["name"]
         try:
             spec = PipelineSpec.model_validate(await request.json())
+            if (no := refused(spec)) is not None:
+                return no
             p = await run_in_threadpool(registry.add, name, spec)
         except Exception as e:  # noqa: BLE001
             return JSONResponse({"error": str(e)}, 400)
@@ -565,6 +586,8 @@ def create_app(
     ]
     if token:  # inside CORS, so a browser's preflight is answered without one
         middleware.append(Middleware(_TokenGuard, token=token))
+    else:
+        middleware.append(Middleware(_SameSite, public_url=public_url))
 
     app = Starlette(routes=routes, middleware=middleware)
     app.state.registry = registry
@@ -633,6 +656,28 @@ class _TokenGuard:
             given = given or request.query_params.get("token", "")
             if not hmac.compare_digest(given.encode(), self.token):
                 response = JSONResponse({"error": "this server's /api needs its token"}, 401)
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
+class _SameSite:
+    """With no token, ``/api/*`` changes only from this server's own pages or from outside a
+    browser: a page on another site (which any tab may be) sends its ``Origin``, and CORS,
+    open for the viewers, would let it through."""
+
+    def __init__(self, app, public_url: str | None = None):
+        self.app, self.public = app, urlsplit(public_url).netloc if public_url else None
+
+    async def __call__(self, scope, receive, send):
+        if (scope["type"] == "http" and scope["method"] not in ("GET", "HEAD", "OPTIONS")
+                and _route_path(scope).startswith("/api/")):
+            headers = Headers(scope=scope)
+            origin = headers.get("origin")
+            own = {headers.get("host"), headers.get("x-forwarded-host"), self.public} - {None}
+            if origin is not None and urlsplit(origin).netloc not in own:
+                response = JSONResponse({"error": "this server's /api takes changes from its own pages; "
+                                                  "start it with --token to take them from others"}, 403)
                 await response(scope, receive, send)
                 return
         await self.app(scope, receive, send)

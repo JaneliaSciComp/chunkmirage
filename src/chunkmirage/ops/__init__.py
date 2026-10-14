@@ -1,6 +1,7 @@
 """Ops: pure functions on blocks with declared halo, output dtype and cacheability."""
 
 from chunkmirage.ops.base import Op, get_op, list_ops, op_from_spec, register
+from chunkmirage.ops.code import PythonOp, python_op
 from chunkmirage.ops.combine import Contacts, NormalizedDifference
 from chunkmirage.ops.filters import Diff, Downsample, Gaussian, Gradient, Uniform
 from chunkmirage.ops.pointwise import Cast, Scale, Threshold
@@ -20,6 +21,7 @@ __all__ = [
     "Gaussian",
     "Hillshade",
     "Op",
+    "PythonOp",
     "Scale",
     "Slope",
     "Spots",
@@ -28,5 +30,6 @@ __all__ = [
     "get_op",
     "list_ops",
     "op_from_spec",
+    "python_op",
     "register",
 ]
