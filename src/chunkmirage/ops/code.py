@@ -76,12 +76,20 @@ def _control(rest: str, line: int) -> Control:
         values[key.strip()] = _number(value.strip(), line)
     if name in ("block", "box"):
         raise ValueError(f"line {line}: #uicontrol {name!r}: apply gets that name itself")
+    if name in _reserved():
+        raise ValueError(f"line {line}: #uicontrol {name!r}: the op has that name itself; pick another")
     if kind in ("float", "int") and widget == "slider":
         if "min" not in values or "max" not in values:
             raise ValueError(f"line {line}: a slider needs min and max")
         values.setdefault("default", values["min"])
         if kind == "int":
             values.setdefault("step", 1)
+        if values["min"] > values["max"]:
+            raise ValueError(f"line {line}: a slider's min is above its max")
+        if not values["min"] <= values["default"] <= values["max"]:
+            raise ValueError(f"line {line}: a slider's default is outside min..max")
+        if "step" in values and values["step"] <= 0:
+            raise ValueError(f"line {line}: a slider's step must be above 0")
     elif kind == "bool" and widget == "checkbox":
         values.setdefault("default", False)
     else:
@@ -93,13 +101,25 @@ def _control(rest: str, line: int) -> Control:
     return c.model_copy(update={"default": c.cast(c.default)})
 
 
+@lru_cache(maxsize=1)
+def _reserved() -> frozenset[str]:
+    """Names a ``#uicontrol`` may not take: the op's own attributes and fields, which a
+    plugin made of the code (``python_op``) would otherwise shadow."""
+    return frozenset(dir(_Coded)) | frozenset(PythonOp.model_fields)
+
+
+MAX_HALO = 1024
+
+
 @lru_cache(maxsize=256)
 def directives(code: str) -> Directives:
-    """What the ``#`` lines of ``code`` say; ``ValueError`` naming the line if one is wrong."""
+    """What the ``#`` lines of ``code`` say (lines starting at the first column, so an
+    indented comment in ``apply`` is not one); ``ValueError`` naming the line if one is
+    wrong."""
     found: dict[str, Any] = {"controls": []}
     for n, raw in enumerate(code.splitlines(), 1):
         line = raw.strip()
-        word = line.split(maxsplit=1)[0] if line.startswith("#") else ""
+        word = line.split(maxsplit=1)[0] if raw.startswith("#") else ""
         rest = line[len(word):].strip()
         if word in ("#halo", "#output") and word[1:] in found:
             raise ValueError(f"line {n}: a second {word}")
@@ -110,6 +130,8 @@ def directives(code: str) -> Directives:
                 raise ValueError(f"line {n}: #halo takes whole voxels, one or one per axis") from None
             if not found["halo"] or min(found["halo"]) < 0:
                 raise ValueError(f"line {n}: #halo takes whole voxels, one or one per axis")
+            if max(found["halo"]) > MAX_HALO:
+                raise ValueError(f"line {n}: #halo above {MAX_HALO} voxels: every chunk would read that much more")
         elif word == "#output":
             found["output"] = True
             for token in rest.split():
@@ -139,19 +161,37 @@ def check(code: str) -> None:
         tree = ast.parse(code)
     except SyntaxError as e:
         raise ValueError(f"line {e.lineno}: {e.msg}") from None
-    fn = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "apply"), None)
-    if fn is None:
+    defs = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "apply"]
+    if not defs:
         raise ValueError("the code defines no `def apply(block, ...)`")
+    fn = defs[-1]  # the last def is what runs
+    for later in tree.body[tree.body.index(fn) + 1:]:  # ... unless the name is rebound after it
+        targets = getattr(later, "targets", [getattr(later, "target", None)])
+        if isinstance(later, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)) and any(
+            isinstance(t, ast.Name) and t.id == "apply" for t in targets
+        ):
+            raise ValueError(f"line {later.lineno}: apply is no longer the function after this")
     a = fn.args
     names = [x.arg for x in a.posonlyargs + a.args + a.kwonlyargs]
     if not names and a.vararg is None:
         raise ValueError(f"line {fn.lineno}: apply takes the block first")
-    for c in directives(code).controls:
-        if c.name not in names and a.kwarg is None:
-            raise ValueError(f"line {fn.lineno}: apply has no parameter {c.name!r} for its #uicontrol")
+    controls = {c.name for c in directives(code).controls}
+    for c in controls:
+        if c not in names and a.kwarg is None:
+            raise ValueError(f"line {fn.lineno}: apply has no parameter {c!r} for its #uicontrol")
+        if names and c == names[0]:
+            raise ValueError(f"line {fn.lineno}: {c!r} is apply's first parameter, the block, and a #uicontrol")
+    # every other parameter is a slider's, box, or has a default: nothing else is passed
+    positional = a.posonlyargs + a.args
+    defaulted = {x.arg for x in positional[len(positional) - len(a.defaults):]} | {
+        x.arg for x, d in zip(a.kwonlyargs, a.kw_defaults, strict=True) if d is not None
+    }
+    for x in names[1:]:
+        if x not in controls and x != "box" and x not in defaulted:
+            raise ValueError(f"line {fn.lineno}: apply's parameter {x!r} has no #uicontrol and no default")
 
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=4)  # a few versions, while an edit is in flight; each holds its module's namespace
 def _compiled(code: str):
     """``apply`` from ``code``, run once per process, and whether it takes ``box``."""
     ns: dict[str, Any] = {"np": np, "__name__": "chunkmirage_python_op"}
@@ -231,9 +271,10 @@ class PythonOp(_Coded):
     def _current(cls, data: Any) -> Any:
         """Values of sliders the code no longer has dropped: edited live, the code renames
         and removes them, and the value of one gone is no part of what the op computes."""
-        if isinstance(data, dict) and isinstance(data.get("code"), str) and isinstance(data.get("params"), dict):
+        code = data.get("code", TEMPLATE) if isinstance(data, dict) else None
+        if isinstance(code, str) and isinstance(data.get("params"), dict):
             try:
-                names = {c.name for c in directives(data["code"]).controls}
+                names = {c.name for c in directives(code).controls}
             except ValueError:
                 return data  # the code's own check says what is wrong
             data = {**data, "params": {k: v for k, v in data["params"].items() if k in names}}

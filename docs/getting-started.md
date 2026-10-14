@@ -9,11 +9,12 @@ uv sync --extra all --group dev        # or: pip install -e ".[all]"; add --extr
 ```
 
 Requires Python 3.11+. Core dependencies are tensorstore, numpy, numcodecs, starlette,
-uvicorn, pydantic and typer. Optional extras: `hdf5` (h5py), `tiff` (tifffile and
-imagecodecs, for GeoTIFFs), `ops` (scipy filters),
-`mcp` (planned MCP server), and for `register://` either `gpu` (PyTorch with CUDA, about
-3 GB) or `cpu` (its CPU-only build, for machines without an NVIDIA GPU). Neither is in
-`all`, and they cannot be installed together.
+uvicorn, hypercorn, pydantic and typer. Optional extras: `hdf5` (h5py), `tiff` (tifffile
+and imagecodecs, for GeoTIFFs), `ops` (scipy filters), `mesh` (scikit-image and DracoPy,
+for `--mesh`), `viewer` (python-neuroglancer, for `--python-viewer`), `https`
+(cryptography, for `--https`), `mcp` (planned MCP server), and for `register://` either
+`gpu` (PyTorch with CUDA, about 3 GB) or `cpu` (its CPU-only build, for machines without an
+NVIDIA GPU). Neither is in `all`, and they cannot be installed together.
 
 ## Serve something
 
@@ -29,10 +30,14 @@ group, a Neuroglancer precomputed volume, or `file.h5::/dataset`. Local paths an
 `s3://`, `gs://`, `http(s)://` URLs all work. The command prints:
 
 ```
-source:       zarr3://http://localhost:8000/data/@<digest>/zarr3
+source [processed]: zarr3://http://10.123.4.56:8000/processed/@<digest>/zarr3
+source [raw]: zarr3://http://10.123.4.56:8000/raw/@<digest>/zarr3
 neuroglancer: https://neuroglancer-demo.appspot.com/#!...
-control API:  http://localhost:8000/api/datasets/data
+control UI:   http://10.123.4.56:8000/ui
+control API:  http://10.123.4.56:8000/api/datasets/processed
 ```
+
+(`--name` changes `processed`.)
 
 URLs use the machine's network address so they work from other machines too, unless the
 machine cannot reach itself there (some VPNs refuse it): then they use `localhost`, and a
@@ -81,6 +86,22 @@ curl -X PUT localhost:8000/api/datasets/thresh -H 'content-type: application/jso
 The response contains new source URLs with an updated digest. Viewers cache chunks by URL,
 so paste the new URL into the layer's source field and it refetches. Only the changed stage
 recomputes; see [Caching](concepts/caching.md).
+
+## Add a step of your own
+
+For what no op does, write it: a file defining `apply(block, ...)`, with `#` lines for
+the context it needs, what it returns and its sliders, and the pipeline runs it on every
+chunk ([the `python` op](reference/ops.md#your-own-python-the-python-op)):
+
+```bash
+chunkmirage serve data.zarr --op gaussian:sigma=1 --op python:code=@mine.py --allow-code --python-viewer
+```
+
+`--allow-code` lets the control page and `/api` send code too, so it generates a token for
+them; the printed control-page link carries it. The browser demos have the same code box,
+with a chat that writes the code from a request if you give it your key for a model.
+An op you will reuse becomes a class in a package of your own
+([your own op](reference/ops.md#your-own-op)).
 
 ## Use it as a library
 

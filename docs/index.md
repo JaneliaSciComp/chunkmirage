@@ -56,7 +56,8 @@ The demos also run entirely in the browser, with no server and nothing to instal
 [the gallery](https://janeliascicomp.github.io/chunkmirage/browser/) has registration solved on
 your GPU and pipelines of chunkmirage's own ops run in the page (see [Demos](demos.md)). Most
 demos also take Python of your own, run on the chunks of a layer you pick and edited live,
-as a Neuroglancer shader is: a [`python` op](reference/ops.md#your-own-python-the-python-op).
+as a Neuroglancer shader is: a [`python` op](reference/ops.md#your-own-python-the-python-op),
+written by you or, with your own key, by a model you ask in the page.
 
 See [FAQ](faq.md) for when *not* to use it.
 
@@ -68,6 +69,7 @@ BSD 3-Clause, Howard Hughes Medical Institute. Authors: TBD (collaborative proje
 
 * [Getting started](getting-started.md): install, serve, open in Neuroglancer.
 * [Interactivity](concepts/interactivity.md): control page, python viewer, how refetching works.
+* [Ops](reference/ops.md): what is built in, Python of your own in the pipeline, and an op of your own.
 * [Caching](concepts/caching.md): what is cached, where, and why some stages are not.
 * [Formats and URLs](concepts/formats.md): the exact URLs each viewer needs.
 * [Roadmap](roadmap.md): what is planned and why.

@@ -1,14 +1,16 @@
 # REST API
 
-All endpoints are CORS-open. Editing endpoints can be disabled with
-`create_app(..., allow_edit=False)`. A server given a token (`--token`, `CHUNKMIRAGE_TOKEN`,
+All endpoints are CORS-open. Creating, replacing and removing datasets (`POST`, `PUT` and
+`DELETE` on `/api/datasets`) can be disabled with `create_app(..., allow_edit=False)`;
+`refresh` and the cache's `DELETE` stay. A server given a token (`--token`, `CHUNKMIRAGE_TOKEN`,
 `create_app(..., token=...)`) answers `/api/*` only with it, as `Authorization: Bearer
 <token>` or `?token=<token>` (for `/api/events`: a browser's `EventSource` sends no
 headers), and 401 otherwise. The datasets themselves and `/` stay open, since viewers send
 no headers. A server without a token answers changes to `/api/*` (any method but `GET`,
 `HEAD` and `OPTIONS`) with 403 when a browser sends them from another site's page: their
-`Origin` is neither the request's host nor `public_url`'s. Clients outside a browser send
-no `Origin` and are not affected.
+`Origin` is neither the request's `Host` nor `public_url`'s (behind a proxy that rewrites
+`Host`, give `--public-url`). Clients outside a browser send no `Origin` and are not
+affected.
 
 Specs given to `POST` and `PUT` with a [`python` op](ops.md#your-own-python-the-python-op)
 are refused with 403 unless the app was made with `create_app(..., allow_code=True)`
@@ -16,15 +18,15 @@ are refused with 403 unless the app was made with `create_app(..., allow_code=Tr
 
 | method   | path                                   | purpose |
 | -------- | -------------------------------------- | ------- |
-| `GET`    | `/`                                    | index: datasets, their specs, source URLs per format, `viewer_url` of an attached python viewer (or null), cache stats |
-| `GET`    | `/api/ops`                             | registered ops with halo, cache flag, docstring and JSON schema |
+| `GET`    | `/`                                    | index: datasets, their specs, source URLs per format, the `formats` served, the registry `version`, `viewer_url` of an attached python viewer (or null), cache stats |
+| `GET`    | `/api/ops`                             | registered ops with halo, cache flag, `slots`, docstring and JSON schema |
 | `GET`    | `/api/datasets`                        | dataset names |
-| `POST`   | `/api/datasets`                        | create: body `{"name": ..., "spec": PipelineSpec}` (or the spec with a `name` field) |
-| `GET`    | `/api/datasets/{name}`                 | spec, digest, per-level shape/chunks/dtype/voxel size, source URLs |
+| `POST`   | `/api/datasets`                        | create (201): body `{"name": ..., "spec": PipelineSpec}` (or the spec with a `name` field); the name is a path segment of the served URLs: letters, digits, `.`, `_` and `-`, else 400 |
+| `GET`    | `/api/datasets/{name}`                 | spec, digest, per-level shape/chunks/dtype/voxel size, source URLs; 404 for a name not served |
 | `PUT`    | `/api/datasets/{name}`                 | replace the pipeline live; body is a `PipelineSpec`; returns new digest and URLs |
-| `DELETE` | `/api/datasets/{name}`                 | remove |
+| `DELETE` | `/api/datasets/{name}`                 | remove; 404 for a name not served |
 | `POST`   | `/api/datasets/{name}/refresh`         | rebuild the pipeline so its ops' `cache_token` is read again (weights or files they depend on changed); `{"changed", "digest", "sources"}`, and a `change` event if the digest moved ([caching](../concepts/caching.md#state-outside-the-parameters)) |
-| `GET`    | `/api/datasets/{name}/neuroglancer`    | `?format=n5|zarr|zarr3|precomputed&viewer=...` → `{"source", "url"}` |
+| `GET`    | `/api/datasets/{name}/neuroglancer`    | `?format=n5|zarr|zarr3|precomputed|mesh&viewer=...` → `{"source", "url"}`; 400 for another format |
 | `GET`    | `/api/neuroglancer`                    | same query; one viewer state with a layer per dataset → `{"state", "url", "sources"}` |
 | `GET`    | `/api/events`                          | Server-Sent Events; `change` event on start and after every edit, with digests and source URLs |
 | `GET`    | `/ui`                                  | built-in control page; see [Interactivity](../concepts/interactivity.md) |
@@ -39,8 +41,10 @@ are refused with 403 unless the app was made with `create_app(..., allow_code=Tr
 ```json
 {
   "source": "/path/or/url",          // zarr/n5/precomputed array or multiscale group, or file.h5::/dataset
+  "select": {"c": 1, "t": 0},        // optional: pin an axis to one index, so the ops see a z, y, x volume
   "ops": [{"op": "threshold", "low": 120}],
   "chunk_shape": [64, 64, 64],       // optional; default: source chunk shape
+  "mesh": {"kind": "surface", "threshold": 128, "lods": 1},  // optional: what the mesh frontend meshes (--mesh)
   "cache_source": true,              // cache raw chunks (stage 0)
   "voxel_size": [8, 8, 8],           // optional overrides of what the source reports
   "units": ["nm", "nm", "nm"],
@@ -54,7 +58,7 @@ are refused with 403 unless the app was made with `create_app(..., allow_code=Tr
 ```
 
 Responses to `POST`, `PUT` and `GET /api/datasets/{name}` include `digest`, `source_dtype`,
-per-level `levels` (shape, chunks, dtype, voxel size, units, axes, and `kind`: `image`, `label`, `mask` or `null`), `ops_info` (per op: name, per-axis halo, docstring, and for a `python` op its `controls`: each `#uicontrol` line's name, type, min, max, step and default), `reads` (for an op at one voxel size, what it reads: `level`, `voxel_size`, `resampled`; else `null`), and `sources`, a map
+per-level `levels` (shape, chunks, dtype, voxel size, units, axes, and `kind`: `image`, `label`, `mask` or `null`), `ops_info` (per op: name, per-axis halo, whether it is `cached`, docstring, and for a `python` op its `controls`: each `#uicontrol` line's name, type, min, max, step and default), `reads` (for an op at one voxel size, what it reads: `level`, `voxel_size`, `resampled`; else `null`), and `sources`, a map
 from format to Neuroglancer source URL carrying the new digest.
 
 ## Datasets resolved by name
@@ -120,7 +124,7 @@ request instead (it is the host's pool too, and only ever made larger).
 
 ## Serving it from Python
 
-`chunkmirage.serve(app, host="0.0.0.0", port=0, *, on_ready=None, ssl=None)` serves an app
+`chunkmirage.serve(app, host="0.0.0.0", port=0, *, on_ready=None, ssl=None, log_level="info", block=False)` serves an app
 as `chunkmirage serve` does, for an application that builds its own (`create_app`, or its
 own app with chunkmirage mounted in it). The port is bound before anything announces it
 (`port=0`: any free one). `on_ready(server)` is called once connections are accepted. It

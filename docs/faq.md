@@ -82,7 +82,10 @@ at once; lower it if individual ops are memory-hungry.
 
 For pointwise ops on one source (threshold, windowing, colormaps, channel mixing) you
 should. They run on the GPU with zero latency. chunkmirage is for ops a shader cannot do:
-neighbourhoods, models, resampling, multiple sources, format bridging.
+neighbourhoods, models, resampling, multiple sources, format bridging. The
+[`python` op](reference/ops.md#your-own-python-the-python-op) gives those the shader's way
+of working: code edited live, with `#uicontrol` sliders in the same syntax, on the chunks
+instead of the pixels.
 
 ## Why Python and not Rust?
 
@@ -104,7 +107,12 @@ built-in op library or a pipeline-composer UI. What it cannot cheaply reproduce 
 reusable substrate: byte-exact N5/zarr v2/zarr v3/precomputed encodings, OME metadata, halo
 bookkeeping, per-stage caching, cache-busting URLs. And it cannot replace the interactive
 loop where a human looks at the volume and adjusts. The intended division of labour: the
-tool stays thin and correct; Claude writes ops and drives it through the REST/MCP API.
+tool stays thin and correct; a model writes ops and drives it. Both have a place to do so:
+the [`python` op](reference/ops.md#your-own-python-the-python-op) carries code in the
+pipeline, which the browser demos' chat asks a model for
+([Interactivity](concepts/interactivity.md#your-own-python-edited-live)) and an agent of
+your own sends to the [REST API](reference/api.md) with `--allow-code`; an MCP server over
+that API is on the [roadmap](roadmap.md).
 
 ## Where does it fall short?
 

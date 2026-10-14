@@ -136,8 +136,12 @@ function render() {
   for (const [name, ds] of Object.entries(DATASETS)) {
     ds.name = name;
     const card = document.createElement('section'); card.className = 'card ds'; card.dataset.name = name;
-    card.innerHTML = `<h2>${name} <small>${ds.levels[0].dtype} · ${ds.levels[0].shape.join('×')} · ${ds.levels.length} level(s)</small></h2>
-      <div class="src">${ds.spec ? ds.spec.source : '(constructed in Python; not editable here)'} <span class="digest">@${ds.digest}</span></div>`;
+    // built as text, not HTML: the name and source are whatever was sent to /api
+    const h2 = document.createElement('h2'); h2.textContent = `${name} `;
+    const small = document.createElement('small'); small.textContent = `${ds.levels[0].dtype} · ${ds.levels[0].shape.join('×')} · ${ds.levels.length} level(s)`; h2.appendChild(small);
+    const src = document.createElement('div'); src.className = 'src'; src.textContent = `${ds.spec ? ds.spec.source : '(constructed in Python; not editable here)'} `;
+    const digest = document.createElement('span'); digest.className = 'digest'; digest.textContent = `@${ds.digest}`; src.appendChild(digest);
+    card.append(h2, src);
     if (!ds.spec) { main.appendChild(card); continue; }
     if (!ds.spec.ops.length) { const n = document.createElement('div'); n.className = 'opdoc'; n.textContent = 'No ops: this is the source exactly as stored. Add an op below to process it.'; card.appendChild(n); }
     ds.spec.ops.forEach((op, i) => {
@@ -146,7 +150,7 @@ function render() {
       const info = (ds.ops_info || [])[i];
       const halo = info && info.halo && Math.max(...info.halo) > 0 ? ` · reads ${Math.max(...info.halo)} voxel${Math.max(...info.halo)>1?'s':''} of context on each side` : '';
       head.innerHTML = `<span><b>${op.op}</b><span class="hint">${halo}</span></span>`;
-      const rm = document.createElement('button'); rm.textContent = 'remove'; rm.onclick = () => { ds.spec.ops.splice(i,1); pendingFinal[name] = true; push(name, true); };
+      const rm = document.createElement('button'); rm.textContent = 'remove'; rm.onclick = () => { DATASETS[name].spec.ops.splice(i,1); pendingFinal[name] = true; push(name, true); };  // the current spec: a push replaces DATASETS[name]
       head.appendChild(rm); box.appendChild(head);
       const doc = document.createElement('div'); doc.className = 'opdoc'; doc.textContent = (OPS[op.op]?.doc || '').split('\n')[0]; box.appendChild(doc);
       const props = OPS[op.op]?.schema?.properties || {};
@@ -158,7 +162,7 @@ function render() {
     const sel = document.createElement('select');
     for (const opName of Object.keys(OPS)) { const o = document.createElement('option'); o.value = o.textContent = opName; sel.appendChild(o); }
     const add = document.createElement('button'); add.textContent = 'add op';
-    add.onclick = () => { ds.spec.ops.push({op: sel.value}); pendingFinal[name] = true; push(name, true); };
+    add.onclick = () => { DATASETS[name].spec.ops.push({op: sel.value}); pendingFinal[name] = true; push(name, true); };
     row.appendChild(sel); row.appendChild(add);
     card.appendChild(row);
     main.appendChild(card);
