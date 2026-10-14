@@ -108,8 +108,9 @@ def apply(block, low):
 `apply` gets the block, padded by the halo, and the values of the sliders by name, and
 returns the block computed (or its interior, shaved by the halo on every side). numpy is
 `np`. A parameter named `box` gets where the block sits, as `apply_at` does. The result is
-cast to the output dtype. Three kinds of line, read as text so a pipeline is planned
-without running the code:
+cast to the output dtype. What it prints shows under the code in the browser demos, by
+level and chunk, and in a server's log. Three kinds of line, read as text so a pipeline is
+planned without running the code:
 
 | line | says | default |
 | ---- | ---- | ------- |
@@ -151,6 +152,14 @@ whose sliders are its parameters (pydantic fields, with their bounds), for the
 --op threshold:low=120,high=200
 --op '{"op": "gaussian", "sigma": 2}'
 --op gaussian:sigma=2,cache=true
+--op python:code=@slice.py
+--op '{"op": "python", "code": "@slice.py", "params": {"low": 30}}'
 ```
 
-Values are parsed as JSON where possible, else strings. Repeat `--op` to chain.
+Values are parsed as JSON where possible, else strings. Repeat `--op` to chain. A `python`
+op's `code=@file` is read from that file, on the command line only (a spec sent to a server
+reads no file). The demos that start with Python show their command this way, and save the
+file it reads (*Save slice.py*): the code as you have it, its sliders' defaults set to where
+you left them. That is how a result found in a demo reaches Fiji or napari: run the command,
+then open the server's `/processed/n5` in Fiji or `/processed/zarr` in napari (what a demo
+computes exists only in its tab).

@@ -114,4 +114,7 @@ export type ToPyWorker =
   // a step of a page's work (chunkmirage.stitching, chunkmirage.tracking): JSON arguments, arrays as raw bytes
   | { type: "call"; reqId: number; fn: string; args: string; arrays?: ArrayBuffer[] };
 /** Either's answer to request `reqId`. */
-export type Answer = { reqId: number; value: unknown } | { reqId: number; error: string };
+/** A line a view's Python printed while a worker computed one of its chunks (`at`: the
+ * chunk's first voxel). */
+export type Printed = { print: string; view: string; level: number; at: number[] };
+export type Answer = { reqId: number; value: unknown } | { reqId: number; error: string } | Printed;

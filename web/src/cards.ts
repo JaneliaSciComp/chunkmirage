@@ -42,7 +42,8 @@ export interface PipelineCard extends Card {
   playback?: { axis: string; velocity: number };  // the viewer's play button: steps per second
   controls?: OpControl[];    // sliders: an op parameter of a view, computed again for what is on screen
   consumers?: CardConsumers; // other readers to pick instead of Neuroglancer (a web map, GDAL)
-  code?: { view: string; code: string };  // Python the code panel opens with, after that view's ops from the start
+  code?: { view: string; code: string };  // Python the code panel opens with, after that view's ops from the start;
+                                          // the command reads it from <view>.py (the page saves it)
 }
 /** Readers of a card's georeferenced views besides Neuroglancer (consumers.ts): a web map of
  * some of them, and GDAL translating one, for an area, to a GeoTIFF. */
@@ -96,6 +97,7 @@ export function pythonInput(c: PipelineCard, view: string): string {
 const IDR_NUCLEI = "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.4/idr0062A/6001240.zarr";
 const NUCLEI_CODE = `# Nuclei in the DAPI image: smoothed, thresholded, and what is connected numbered.
 # It runs in this page, on the whole volume as one chunk; edit it and it runs again.
+# What it prints shows under it.
 # Each #uicontrol line is a slider: apply is called with its value, by the same name.
 #output uint32 label
 #uicontrol float sigma slider(min=0, max=3, step=0.25, default=1)
@@ -109,6 +111,7 @@ def apply(block, sigma, low, min_size):
     keep = sizes >= min_size  # specks of noise are smaller
     keep[0] = False
     labels = np.where(keep[labels], labels, 0)
+    print(f"{int(keep.sum())} nuclei")  # shown under the code
     # Touching nuclei come out as one object. To split them, uncomment these lines
     # (select them, then Ctrl+/ or ⌘/): a watershed from the points farthest from the
     # background (a few seconds);
@@ -120,6 +123,7 @@ def apply(block, sigma, low, min_size):
     # seeds = np.zeros(labels.shape, np.int32)
     # seeds[tuple(peaks.T)] = np.arange(1, len(peaks) + 1)
     # labels = watershed(-dist, seeds, mask=labels > 0)
+    # print(f"{len(peaks)} nuclei after the watershed")
     return labels
 `;
 
@@ -149,6 +153,9 @@ def apply(block, band, low, size):
     # out = np.where(block >= low, block, 255)  # only what escapes after low / 4 iterations
     # out = 254 - block  # inside out: the fast escapes and the slow swapped
     # from scipy import ndimage; out = ndimage.uniform_filter(block, size)  # blurred
+    # Or as segments: uncomment both of these lines (the first says it returns labels).
+    # #output uint32 label
+    # from scipy import ndimage; return ndimage.label(block == 255)[0]  # the fractal itself, each connected piece (per chunk) one segment
     return np.where(block == 255, 255, out)  # inside stays dark
 `;
 
@@ -343,7 +350,7 @@ export const CARDS: DemoCard[] = [
   {
     kind: "pipeline", id: "nuclei", image: "cards/nuclei.jpg",
     title: "Count the nuclei with a few lines of your own Python",
-    blurb: "DAPI-stained nuclei, found by a few lines of Python you can edit: smooth, threshold, label. Drag the sliders or change the code and the right panel updates. Touching nuclei come out as one; uncomment the watershed at the end of the code to split them.",
+    blurb: "DAPI-stained nuclei, found and counted by a few lines of Python you can edit: smooth, threshold, label. Drag the sliders or change the code and the right panel updates, with the count under the code. Touching nuclei come out as one; uncomment the watershed at the end of the code to split them.",
     data: "Image Data Resource, idr0062A image 6001240: lamin B1 and DAPI, 0.36 µm voxels (an OME-Zarr sample at EMBL-EBI)",
     views: {
       dapi: { source: IDR_NUCLEI, select: { c: 1 }, chunk: [16, 275, 271] },
@@ -356,8 +363,7 @@ export const CARDS: DemoCard[] = [
     panels: [["DAPI"], ["DAPI", "nuclei"]],
     position: [118, 137, 135], zoom: 0.42, boxes: false,
     code: { view: "nuclei", code: NUCLEI_CODE },
-    command: `chunkmirage serve '${IDR_NUCLEI}' --select c=1 --chunk 236,275,271 --allow-code --python-viewer\n`
-      + "# then, in the control UI it prints: add the op python, and paste the code",
+    command: `chunkmirage serve '${IDR_NUCLEI}' --select c=1 --chunk 236,275,271 --op python:code=@nuclei.py --allow-code --python-viewer`,
   },
   {
     kind: "link", id: "track", image: "cards/track.jpg",
@@ -383,7 +389,7 @@ export const CARDS: DemoCard[] = [
     panels: [["slice"], ["bulb"]], layouts: ["xz", "3d"], turn: [0.28, 0.2, 0.06, 0.94], depth: 2, boxes: false,
     position: [SIDE / 2, SIDE / 2, SIDE / 2], zoom: SIDE / 700,
     code: { view: "slice", code: BULB_CODE },
-    command: `chunkmirage serve '${BULB}' --chunk 256,1,256 --python-viewer`,
+    command: `chunkmirage serve '${BULB}' --chunk 256,1,256 --op python:code=@slice.py --allow-code --python-viewer`,
   },
   {
     kind: "pipeline", id: "mesh-bulb", image: "cards/mesh-bulb.jpg",

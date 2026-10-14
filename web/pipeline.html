@@ -48,6 +48,7 @@
   body.coding { grid-template-columns: minmax(360px, 560px) 1fr; }
   #code-text { width: 100%; min-height: 16em; resize: vertical; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; white-space: pre; }
   #code-error { color: #ff8a80; border-color: #5a2a2a; }
+  #code-output { color: var(--muted); }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .trust { padding: 8px; border: 1px solid #6b5a1e; border-radius: 6px; color: #f3d77a; }
   @media (max-width: 720px) { body { grid-template-columns: 1fr; grid-template-rows: auto 70vh; } aside { border-right: 0; border-bottom: 1px solid var(--line); } }
@@ -78,6 +79,7 @@
         <button id="code-run" type="button">Run it</button></p>
       <textarea id="code-text" spellcheck="false" aria-label="Python"></textarea>
       <pre id="code-error" hidden></pre>
+      <pre id="code-output" hidden title="What the code printed"></pre>
       <div class="controls" id="code-sliders"></div>
       <div class="row"><button id="code-share" type="button">Copy link</button><button id="code-plugin" type="button">Copy as plugin</button><button id="code-remove" type="button">Remove</button></div>
     </div>
@@ -90,7 +92,8 @@
   <section>
     <div class="label">The same from Python</div>
     <pre id="command"></pre>
-    <p style="margin-top: 6px"><button id="copy" type="button">Copy</button></p>
+    <p style="margin-top: 6px"><button id="copy" type="button">Copy</button> <button id="save-code" type="button" hidden></button></p>
+    <p class="faint" id="save-note" hidden>Save the code where you run the command: it is the code as you have it, its sliders where you left them. Then open the server's <code>/processed/n5</code> in Fiji, or <code>/processed/zarr</code> in napari.</p>
   </section>
   <p class="faint">Everything here runs in this browser: the images are read from their public
     buckets, and each chunk is computed by chunkmirage's own Python ops, run by Pyodide in web
