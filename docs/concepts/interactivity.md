@@ -37,7 +37,8 @@ lines become sliders under it, in the same syntax as the shaders'.
   it with a slider and number the connected pieces"), with the visitor's own key for
   Claude, OpenAI, Gemini, OpenRouter, Mistral, DeepSeek or Groq, or Ollama on the
   visitor's computer (no key; started with `OLLAMA_ORIGINS` set so a page may call it).
-  The model box shows which model answers (Claude Opus 5.5 to start) and takes any other.
+  The model box shows which model answers (Claude Opus 5.5 to start), offers Claude's
+  others, and takes any model typed in.
   Each message goes with the layer's axes, shape, dtype and chunks, the code as it is and
   its error or output, so "it fails, fix it" works. The code a reply ends with replaces
   the code and runs, as typed code does. The key is kept in the page's memory, for the
