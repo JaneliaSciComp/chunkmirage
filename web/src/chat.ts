@@ -47,8 +47,8 @@ Reply with a sentence or two on what the code does, then all of the code in one 
 its # lines first. Answer a question that asks for no change without code.`;
 
 /** The providers offered, by Deep Chat's name for its connection: the key each takes (none
- * for Ollama, on this computer), the model the box starts with (shown, so the visitor sees
- * what answers; any other can be typed over it: Claude's others are offered), and a note
+ * for Ollama, on this computer), the model that answers unless the visitor names another
+ * (the box's placeholder; for Claude, the others are offered in its dropdown), and a note
  * in place of the one about keys. The models are Deep Chat 2.5.1's defaults, but for
  * Claude's; check them when it is upgraded. */
 export const PROVIDERS: Record<string, { name: string; key: string | null; model: string; models?: string[]; note?: string }> = {
@@ -113,8 +113,10 @@ export function chatPanel(box: HTMLElement, hooks: ChatHooks) {
     key.placeholder = p.key ? `Your ${p.key}` : "";
     key.value = keys[provider.value] ?? "";
     models.replaceChildren(...(p.models ?? []).map((m) => new Option(m, m)));
-    model.value = picked[provider.value] ?? p.model;
-    model.placeholder = p.model;
+    // empty unless the visitor typed one: the model that answers shows as the placeholder,
+    // and a browser lists a box's suggestions only when they match what is typed
+    model.value = picked[provider.value] ?? "";
+    model.placeholder = p.models ? `${p.model} (pick or type another)` : `${p.model} (or type another)`;
     note.textContent = p.note ?? said;
   };
   let chat: DeepChat | undefined, timer = 0, waiting = false;  // a request out, its reply to come
