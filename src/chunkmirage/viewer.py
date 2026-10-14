@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from chunkmirage.neuroglancer import (
     DEFAULT_VIEWER,
     dimensions,
+    fit_scales,
     global_dimensions,
     is_segmentation,
     source_url,
@@ -197,3 +198,4 @@ class Viewer:
         )
         s.position = position
         s.display_dimensions = display
+        s.cross_section_scale, s.projection_scale = fit_scales(p.info(0), dims, display)

@@ -63,7 +63,7 @@ class Server:
     def url(self) -> str:
         """Where other machines reach it: this machine's network address when bound to
         every interface, ``localhost`` for a loopback address."""
-        return f"{'https' if self.https else 'http'}://{public_host_for(self.host)}:{self.port}"
+        return f"{'https' if self.https else 'http'}://{public_host_for(self.host, self.port)}:{self.port}"
 
     @property
     def running(self) -> bool:

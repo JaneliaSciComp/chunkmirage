@@ -137,6 +137,11 @@ cluster node, every other user logged in to it can reach its `localhost` too. So
 one link to keep to yourself, or give to someone you would let run code as you);
 `--no-token` drops it on purpose.
 
+A machine that cannot connect to its own network address, as some VPN clients forbid (a
+laptop at home), would print links that hang even on itself. So the server tries to reach
+itself at that address first, and if it cannot, prints `localhost` links instead, with a
+line saying so: they work on that machine, which on a VPN is all that could.
+
 The python viewer works over plain `http` from anywhere on the network because it serves
 its own Neuroglancer page from the same machine as the chunks.
 
