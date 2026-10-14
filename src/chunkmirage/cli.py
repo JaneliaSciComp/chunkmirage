@@ -30,8 +30,12 @@ def _parse_op(text: str) -> dict:
                 spec[k] = v
     code = spec.get("code")
     if spec.get("op") == "python" and isinstance(code, str) and code.startswith("@"):
-        with open(os.path.expanduser(code[1:]), encoding="utf-8") as f:
-            spec["code"] = f.read()
+        path = os.path.expanduser(code[1:])
+        try:
+            with open(path, encoding="utf-8") as f:
+                spec["code"] = f.read()
+        except OSError as e:
+            raise typer.BadParameter(f"code=@{code[1:]}: no such file in {os.getcwd()} ({e.strerror})") from None
     return spec
 
 

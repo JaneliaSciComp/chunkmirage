@@ -105,3 +105,7 @@ def test_the_command_line_reads_a_python_ops_code_from_a_file(tmp_path):
     assert _parse_op(f"python:code=@{tmp_path}/labels.py")["code"] == CODE
     spec = _parse_op(f'{{"op": "python", "code": "@{tmp_path}/labels.py", "params": {{"low": 50}}}}')
     assert spec["code"] == CODE and spec["params"] == {"low": 50}
+    import typer
+
+    with pytest.raises(typer.BadParameter, match="no such file"):
+        _parse_op("python:code=@not_there.py")
