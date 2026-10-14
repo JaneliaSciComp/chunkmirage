@@ -18,6 +18,14 @@ function showCounts() {
     + ` · given up by the viewer before their turn: ${c.dropped}${c.failed ? ` · failed ${c.failed}` : ""}`;
   const f = engine.failure;  // a chunk of the view whose Python is open failed: say why there
   if (f && coding && f.view === served[coding]) showError(f.message);
+  // what its Python printed, full resolution first, then each coarser level (and chunk,
+  // where a level has several): the code runs on every level the viewer shows
+  const now = coding ? served[coding] : undefined;
+  const out = (now ? engine.printed.filter((p) => p.view === now) : []).slice(-12)
+    .sort((a, b) => a.level - b.level || String(a.at).localeCompare(String(b.at)));
+  $("code-output").hidden = !out.length;
+  $("code-output").textContent = out.map((p) => `${p.level ? `level ${p.level}` : "full resolution"}`
+    + `${p.at.some(Boolean) ? ` (chunk at ${p.at.join(", ")})` : ""}: ${p.print}`).join("\n");
 }
 
 function shader(l: CardLayer, range: [number, number]): string {
@@ -126,7 +134,7 @@ const edited: Record<string, OpSpec[]> = {};  // each view's ops as the sliders 
 const python: Record<string, OpSpec> = {};    // the visitor's python op, after a view's ops
 const served: Record<string, string> = {};    // the name each edited view is served under
 let firstLayers: Record<string, NgLayer> = {};  // the layers as the card made them
-let busy: Promise<unknown> = Promise.resolve();
+let busy: Promise<unknown> = Promise.resolve();  // edits, one at a time (the first after the viewer is up)
 
 const opsOf = (card: PipelineCard, view: string): OpSpec[] =>
   [...(edited[view] ?? card.views[view].ops ?? []), ...(python[view] ? [python[view]] : [])];
@@ -238,9 +246,9 @@ function linked(card: PipelineCard): Record<string, OpSpec> {
 /** The code panel: pick a view, add Python to it and edit it; the view is served again a
  * moment after each change, and the code's #uicontrol lines become sliders under it. Python
  * from a link is shown, and runs when the visitor says so. */
-function code(card: PipelineCard, ng: HTMLIFrameElement) {
+function code(card: PipelineCard, ng: HTMLIFrameElement): () => void {
   const views = pythonViews(card);
-  if (!views.length) return;
+  if (!views.length) return () => {};
   const pick = $<HTMLSelectElement>("code-view"), text = $<HTMLTextAreaElement>("code-text");
   const editor = codeEditor(text);  // highlighted, over the textarea the panel reads
   Object.assign(window, { editor: editor.view });  // for a console, and the headless checks
@@ -339,9 +347,9 @@ function code(card: PipelineCard, ng: HTMLIFrameElement) {
   });
   // a link's Python, else the card's, else a layer as read (the data itself), else the first
   open(Object.keys(pending)[0] ?? card.code?.view ?? views.find((v) => !card.views[v].ops?.length) ?? views[0]);
-  // a card's own Python ran from the start: its sliders once the views are planned
-  void engine.ready.then(() => { if (coding && served[coding] && !pending[coding]) open(coding); });
   $("code").hidden = false;
+  // a card's own Python runs from the start: its sliders, once Python has read them
+  return () => { if (coding && served[coding] && !pending[coding]) open(coding); };
 }
 
 async function start() {
@@ -359,20 +367,25 @@ async function start() {
     served[card.code.view] = card.code.view;
   }
   const views = Object.fromEntries(Object.keys(card.views).map((v) => [v, { ...card.views[v], ops: opsOf(card, v) }]));
-  await engine.start(views, status);  // the data opened; Python still loading
   const ng = $<HTMLIFrameElement>("ng");
+  // the code panel at once (the code is the page's), its edits waiting for the data and viewer
+  let up = () => {};
+  busy = new Promise<void>((r) => { up = r; });
+  const planned = code(card, ng);
+  await engine.start(views, status);  // the data opened; Python still loading
   const state = await viewerState(card);
   firstLayers = Object.fromEntries(state.layers.map((l) => [l.name, l as NgLayer]));
   ng.src = `ng/index.html#!${encodeURIComponent(JSON.stringify(state))}`;
   ng.hidden = false;
   if (card.timeline) showDates(ng, card.timeline, state.displayDimensions);
+  up();
   controls(card, ng);
-  code(card, ng);
   consumers(card);
   $("empty").hidden = true;
   showCounts();
   Object.assign(window, { engine });  // for a console, and the headless checks
   await engine.ready;  // the viewer's requests wait for it
+  planned();
   status(`Python ready in ${((performance.now() - t0) / 1000).toFixed(1)} s. Chunks are computed as the viewer asks for them.`);
 }
 

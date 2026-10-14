@@ -10,7 +10,7 @@
 // for readers that predate zarr v3's final spec, such as GDAL 3.8.
 import { Cancelled, Claim, Queue } from "./demand";
 import schema from "./generated/chunkmirage.schema.json";
-import type { Answer, Later, MeshCall, PipelineView, Plan, Reply, SourceInfo, ToPyWorker, ToReader, ViewAxis, ViewInfo } from "./types";
+import type { Answer, Later, MeshCall, PipelineView, Plan, Printed, Reply, SourceInfo, ToPyWorker, ToReader, ViewAxis, ViewInfo } from "./types";
 
 export const TO_SECONDS: Record<string, number> = { s: 1, second: 1, millisecond: 1e-3, ms: 1e-3, minute: 60, hour: 3600, day: 86400 };
 const OME_UNIT: Record<string, string> = { nm: "nanometer", um: "micrometer", m: "meter", s: "second" };
@@ -41,8 +41,10 @@ const BAND = 2;  // chunkmirage.meshes.BAND: the border a part of the coarsest l
 class Rpc<Req extends { reqId: number }> {
   private pending = new Map<number, { resolve: (v: never) => void; reject: (e: Error) => void }>();
   private seq = 0;
-  constructor(private worker: Worker) {
+  /** `onPrint` hears what Python printed, which comes unasked. */
+  constructor(private worker: Worker, onPrint?: (p: Printed) => void) {
     worker.onmessage = ({ data: m }: MessageEvent<Answer>) => {
+      if ("print" in m) { onPrint?.(m); return; }
       const p = this.pending.get(m.reqId);
       if (!p) return;
       this.pending.delete(m.reqId);
@@ -67,6 +69,13 @@ export class Engine {
   readonly page = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
   infos: Record<string, ViewInfo> = {};
   readonly counts = { computed: 0, dropped: 0, failed: 0 };
+  /** What the views' Python printed, the last 200 lines, newest last. */
+  readonly printed: Printed[] = [];
+  private print(p: Printed) {
+    this.printed.push(p);
+    if (this.printed.length > 200) this.printed.shift();
+    this.onChange();
+  }
   /** The last chunk that failed: its view (as served, `name~n` after an edit) and why. */
   failure: { view: string; message: string } | null = null;
   private views: Record<string, PipelineView> = {};
@@ -95,7 +104,7 @@ export class Engine {
     this.listen();
     const n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 2));
     this.reader = new Rpc<ToReader>(new Worker(new URL("./reader.ts", import.meta.url), { type: "module" }));
-    this.pool = Array.from({ length: n }, () => new Rpc<ToPyWorker>(new Worker(new URL("./pyworker.ts", import.meta.url), { type: "module" })));
+    this.pool = Array.from({ length: n }, () => new Rpc<ToPyWorker>(new Worker(new URL("./pyworker.ts", import.meta.url), { type: "module" }), (p) => this.print(p)));
     this.chunks = new Queue<ArrayBuffer>(n);
     // load Python now, with what the views' ops import (each op's schema says)
     const needed = [...new Set([...packages, ...Object.values(views).flatMap((v) => [

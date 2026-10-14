@@ -25,7 +25,7 @@ lines become sliders under it, in the same syntax as the shaders'.
 * **The browser demos**: every pipeline demo has a *Your Python* panel. Pick a layer, add
   Python, edit it: the code gets what the layer shows (its data as read, or after the
   demo's ops, as the panel says) and returns what it shows instead. A moment after each
-  change the layer is computed again in the page's
+  change the layer is computed again (what the code prints shows under it) in the page's
   Pyodide workers and the viewer's layers switch to it, keeping the camera (and becoming a
   segmentation layer when the code returns labels). A mistake shows under the code, with
   its line. The code is highlighted as Python, in VS Code's colours, and Ctrl+/ (⌘/ on a

@@ -18,7 +18,7 @@ import pySynthetic from "../../src/chunkmirage/sources/synthetic.py?raw";
 import pyMeshes from "../../src/chunkmirage/meshes.py?raw";
 import pyStitching from "../../src/chunkmirage/stitching.py?raw";
 import pyTracking from "../../src/chunkmirage/tracking.py?raw";
-import type { Answer, Plan, ToPyWorker } from "./types";
+import type { Answer, Plan, Printed, ToPyWorker } from "./types";
 
 export const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/";
 const FILES: Record<string, string> = {
@@ -202,10 +202,13 @@ const ctx = self as unknown as DedicatedWorkerGlobalScope;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let py: any = null;
 let loaded: Promise<void> | null = null;
+let computing: Omit<Printed, "print"> | null = null;  // the chunk being computed, for what it prints
 
 async function load(packages: string[] = []) {
   const mod = await import(/* @vite-ignore */ `${PYODIDE}pyodide.mjs`);
   py = await mod.loadPyodide({ indexURL: PYODIDE });
+  // what a view's Python prints, to the page, with the chunk it was computing
+  py.setStdout({ batched: (line: string) => { if (computing) ctx.postMessage({ print: line, ...computing } satisfies Printed); } });
   // with the packages the page's ops declare; any other when first imported (withPackages)
   await py.loadPackage(["numpy", "pydantic", ...packages]);
   for (const [path, text] of Object.entries(FILES)) {
@@ -303,7 +306,11 @@ async function encodeNode(raw: Uint8Array, size: number, bits: number): Promise<
  * padded to `mesh.size` bytes). */
 async function compute(m: Extract<ToPyWorker, { type: "compute" }>): Promise<ArrayBuffer> {
   const mesh = m.mesh ? JSON.stringify({ ...m.mesh, size: undefined, bits: undefined }) : undefined;  // the encoding's, not Python's
-  const bytes = await withPackages(() => py.globals.get("compute")(m.view, m.level, m.data ? new Uint8Array(m.data) : undefined, m.readShape, m.inLo, m.inHi, m.outLo, m.outHi, m.full, m.voxel, m.origin, mesh, m.unit ?? ""));
+  computing = { view: m.view, level: m.level, at: m.outLo };
+  let bytes;
+  try {
+    bytes = await withPackages(() => py.globals.get("compute")(m.view, m.level, m.data ? new Uint8Array(m.data) : undefined, m.readShape, m.inLo, m.inHi, m.outLo, m.outHi, m.full, m.voxel, m.origin, mesh, m.unit ?? ""));
+  } finally { computing = null; }
   const out = bytes.toJs() as Uint8Array;
   bytes.destroy();
   if (m.mesh?.mode === "node") return encodeNode(out, m.mesh.size!, m.mesh.bits!);

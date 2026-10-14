@@ -96,6 +96,7 @@ export function pythonInput(c: PipelineCard, view: string): string {
 const IDR_NUCLEI = "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.4/idr0062A/6001240.zarr";
 const NUCLEI_CODE = `# Nuclei in the DAPI image: smoothed, thresholded, and what is connected numbered.
 # It runs in this page, on the whole volume as one chunk; edit it and it runs again.
+# What it prints shows under it.
 # Each #uicontrol line is a slider: apply is called with its value, by the same name.
 #output uint32 label
 #uicontrol float sigma slider(min=0, max=3, step=0.25, default=1)
@@ -109,6 +110,7 @@ def apply(block, sigma, low, min_size):
     keep = sizes >= min_size  # specks of noise are smaller
     keep[0] = False
     labels = np.where(keep[labels], labels, 0)
+    print(f"{int(keep.sum())} nuclei")  # shown under the code
     # Touching nuclei come out as one object. To split them, uncomment these lines
     # (select them, then Ctrl+/ or ⌘/): a watershed from the points farthest from the
     # background (a few seconds);
@@ -120,6 +122,7 @@ def apply(block, sigma, low, min_size):
     # seeds = np.zeros(labels.shape, np.int32)
     # seeds[tuple(peaks.T)] = np.arange(1, len(peaks) + 1)
     # labels = watershed(-dist, seeds, mask=labels > 0)
+    # print(f"{len(peaks)} nuclei after the watershed")
     return labels
 `;
 
@@ -149,6 +152,9 @@ def apply(block, band, low, size):
     # out = np.where(block >= low, block, 255)  # only what escapes after low / 4 iterations
     # out = 254 - block  # inside out: the fast escapes and the slow swapped
     # from scipy import ndimage; out = ndimage.uniform_filter(block, size)  # blurred
+    # Or as segments: uncomment both of these lines (the first says it returns labels).
+    # #output uint32 label
+    # from scipy import ndimage; return ndimage.label(block == 255)[0]  # the fractal itself, each connected piece (per chunk) one segment
     return np.where(block == 255, 255, out)  # inside stays dark
 `;
 
@@ -343,7 +349,7 @@ export const CARDS: DemoCard[] = [
   {
     kind: "pipeline", id: "nuclei", image: "cards/nuclei.jpg",
     title: "Count the nuclei with a few lines of your own Python",
-    blurb: "DAPI-stained nuclei, found by a few lines of Python you can edit: smooth, threshold, label. Drag the sliders or change the code and the right panel updates. Touching nuclei come out as one; uncomment the watershed at the end of the code to split them.",
+    blurb: "DAPI-stained nuclei, found and counted by a few lines of Python you can edit: smooth, threshold, label. Drag the sliders or change the code and the right panel updates, with the count under the code. Touching nuclei come out as one; uncomment the watershed at the end of the code to split them.",
     data: "Image Data Resource, idr0062A image 6001240: lamin B1 and DAPI, 0.36 µm voxels (an OME-Zarr sample at EMBL-EBI)",
     views: {
       dapi: { source: IDR_NUCLEI, select: { c: 1 }, chunk: [16, 275, 271] },

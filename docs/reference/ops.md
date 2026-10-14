@@ -108,8 +108,9 @@ def apply(block, low):
 `apply` gets the block, padded by the halo, and the values of the sliders by name, and
 returns the block computed (or its interior, shaved by the halo on every side). numpy is
 `np`. A parameter named `box` gets where the block sits, as `apply_at` does. The result is
-cast to the output dtype. Three kinds of line, read as text so a pipeline is planned
-without running the code:
+cast to the output dtype. What it prints shows under the code in the browser demos, by
+level and chunk, and in a server's log. Three kinds of line, read as text so a pipeline is
+planned without running the code:
 
 | line | says | default |
 | ---- | ---- | ------- |
