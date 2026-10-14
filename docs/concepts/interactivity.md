@@ -148,7 +148,9 @@ cluster node, every other user logged in to it can reach its `localhost` too. So
 `--allow-code` always has a token, generated unless given one, printed in the control-page
 link: the one link to keep to yourself, or give to someone you would let run code as you.
 A page you visit cannot know it, so even a website that reaches your server through your
-browser cannot send it code.
+browser cannot send it code. A generated token is new at every start, so after a restart
+open the newly printed link (a control page left open from before says so); `--token` or
+`CHUNKMIRAGE_TOKEN` keeps one across restarts.
 
 A machine that cannot connect to its own network address, as some VPN clients forbid (a
 laptop at home), would print links that hang even on itself. So the server tries to reach
