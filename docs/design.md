@@ -526,7 +526,10 @@ as text). What such a page gets, in the order it uses it:
   the query string with its `?` or empty, where a page's API reads `?offset=12`; its range,
   method, headers and body), and streams the answer, a chunk's body once computed or an
   event stream's pieces as they come, telling the page when the client gives up;
-  `fromStore(request)` is the store cache, with its `stats`. On the page, `route(prefix,
+  `fromStore(request)` is the store cache, with its `stats`, for the chunks only:
+  `metadata(url)` says which requests are a store's metadata, which a page's worker leaves
+  to the network so that Chrome may ask the visitor about a private-network host
+  ([caching](concepts/caching.md#in-the-browser-engine)). On the page, `route(prefix,
   handler)` (`web/src/routes.ts`) answers the asks whose path holds a prefix (the path, not
   the query, so a route matches whatever a request's parameters):
   the engine routes its share of `/virtual/` there, a page adds its own beside it, and a

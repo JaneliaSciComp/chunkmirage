@@ -81,3 +81,6 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
   are; a zarr source stored as 64-bit integers is read as stored, at its own width.
 - A relayed request's query string reaches the page: `Ask.search` (the URL's, with its `?`,
   or empty), beside `path`, which stays the pathname alone that routes match.
+- The service worker leaves a store's metadata to the page (`metadata(url)` in
+  `web/src/relay.ts`) and caches only chunks, so Chrome can ask the visitor about a volume
+  on a private-network host instead of refusing the worker's fetch.

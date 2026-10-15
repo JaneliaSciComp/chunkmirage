@@ -17,7 +17,8 @@
 // `fromStore`: every read of the images' stores, by the page, its chunk workers and the
 // viewer alike, goes through one cache here: a region is read by many (overlapping blocks
 // and chunks, the before and after views, the viewer's own fixed layer), and each worker
-// keeping its own copy fetched the same chunks 13 times over.
+// keeping its own copy fetched the same chunks 13 times over. Chunks only: a store's
+// `metadata` is the page's to fetch (see it).
 import type { Ask, Later, Reply, StoreStats } from "./types";
 
 export type { Ask, Later, Reply, StoreStats } from "./types";
@@ -58,6 +59,17 @@ export async function fromStore(req: Request): Promise<Response> {
   const s = await entry;
   return s ? new Response(s.body, { status: s.status, headers: s.headers }) : fetch(req);  // not kept: as it is
 }
+
+const METADATA = new Set([".zattrs", ".zarray", ".zgroup", ".zmetadata", "zarr.json", "attributes.json", "info"]);
+
+/** Whether `url` is a store's metadata (zarr's, N5's, a precomputed volume's info), which a
+ * service worker leaves to the page or worker that asked rather than answering it
+ * `fromStore`. Chrome refuses a service worker's fetch from a host on a private network
+ * (10.x, say) outright, a bare "Failed to fetch", unless the visitor has already let the
+ * page reach it (Local Network Access), and only the page's own request asks them; a
+ * volume's metadata is what it reads first, so the question comes up, and its chunks then
+ * go through the cache. */
+export const metadata = (url: URL) => METADATA.has(url.pathname.slice(url.pathname.lastIndexOf("/") + 1));
 
 /** A network fetch, at most MAX_FETCHES at once. */
 async function upstream(req: Request): Promise<Response> {
