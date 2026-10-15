@@ -15,7 +15,8 @@ import { asRead, computedSource, needsPython, wholeChunk } from "./asread";
 import { Cancelled, Claim, Queue } from "./demand";
 import schema from "./generated/chunkmirage.schema.json";
 import { Kept } from "./kept";
-import type { Answer, Later, MeshCall, PipelineView, Plan, Printed, Reply, SourceInfo, ToPyWorker, ToReader, ViewAxis, ViewInfo } from "./types";
+import { route } from "./routes";
+import type { Answer, Ask, Later, MeshCall, PipelineView, Plan, Printed, Reply, SourceInfo, ToPyWorker, ToReader, ViewAxis, ViewInfo } from "./types";
 
 export const TO_SECONDS: Record<string, number> = { s: 1, second: 1, millisecond: 1e-3, ms: 1e-3, minute: 60, hour: 3600, day: 86400 };
 const OME_UNIT: Record<string, string> = { nm: "nanometer", um: "micrometer", m: "meter", s: "second" };
@@ -106,7 +107,7 @@ export class Engine {
   private kept = new Kept(KEPT_BYTES);
   private edits = 0;
   private producers = new Map<string, (level: number, index: number[]) => Promise<ArrayBuffer>>();
-  private listener: ((e: MessageEvent<{ path: string; range?: string | null }>) => void) | null = null;
+  private unroute: (() => void) | null = null;  // removes this page's /virtual/ route (routes.ts)
 
   /** `onChange` is told whenever the counts change. */
   constructor(private onChange: () => void = () => {}) {}
@@ -253,8 +254,8 @@ export class Engine {
     this.kept.clear();
     this.infos = {}; this.sources = {}; this.views = {};
     this.ready = Promise.resolve();
-    if (this.listener) navigator.serviceWorker.removeEventListener("message", this.listener);
-    this.listener = null;
+    this.unroute?.();
+    this.unroute = null;
   }
 
   /** Voxels [lo, hi) of a level of a view's source, as the reader reads them for a chunk;
@@ -576,23 +577,22 @@ export class Engine {
     return { status: 206, type: "application/octet-stream", pending, claim, range: `bytes ${start}-${stop - 1}/*` };
   }
 
-  /** Answer the service worker's requests (sw.ts asks every page): those for this page's
-   * share of /virtual/, declining the rest with null. */
+  /** Answer the service worker's requests for this page's share of /virtual/ (routes.ts hands
+   * them here; the rest of the page's routes are the page's own). */
   private listen() {
-    this.listener = async (e) => {
-      const port = e.ports[0];
-      if (!port) return;
-      let a: Answered;
-      try { a = await this.answer(e.data.path, e.data.range); } catch (err) { a = { status: 500, body: String(err), type: "text/plain" }; }
-      if (!a || !("pending" in a)) return port.postMessage(a, a && a.body instanceof ArrayBuffer ? [a.body] : []);
-      // a chunk: the head now, the body once computed; the client may give up in between
-      port.onmessage = (m: MessageEvent<{ cancel?: boolean }>) => { if (m.data?.cancel) a.claim.cancel(); };
-      port.postMessage({ status: a.status, type: a.type, stream: true, ...(a.range ? { range: a.range } : {}) } satisfies Reply);
-      a.pending.then(
-        (body) => port.postMessage({ body } satisfies Later, [body]),
-        (err) => port.postMessage({ error: String((err as Error)?.message ?? err) } satisfies Later),
-      ).finally(() => port.close());
-    };
-    navigator.serviceWorker.addEventListener("message", this.listener);
+    this.unroute = route(`/virtual/${this.page}/`, (ask, port) => void this.reply(ask, port));
+  }
+
+  private async reply(ask: Ask, port: MessagePort) {
+    let a: Answered;
+    try { a = await this.answer(ask.path, ask.range); } catch (err) { a = { status: 500, body: String(err), type: "text/plain" }; }
+    if (!a || !("pending" in a)) return port.postMessage(a, a && a.body instanceof ArrayBuffer ? [a.body] : []);
+    // a chunk: the head now, the body once computed; the client may give up in between
+    port.onmessage = (m: MessageEvent<{ cancel?: boolean }>) => { if (m.data?.cancel) a.claim.cancel(); };
+    port.postMessage({ status: a.status, type: a.type, stream: true, ...(a.range ? { range: a.range } : {}) } satisfies Reply);
+    a.pending.then(
+      (body) => port.postMessage({ body } satisfies Later, [body]),
+      (err) => port.postMessage({ error: String((err as Error)?.message ?? err) } satisfies Later),
+    ).finally(() => port.close());
   }
 }
