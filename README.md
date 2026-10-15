@@ -1,14 +1,20 @@
 # chunkmirage
 
-**Spoof chunked array formats over HTTP with on-the-fly processing.**
+**Browse a computation as if it were a stored dataset: in any viewer, at any scale,
+before anyone has computed it.**
 
 chunkmirage serves *virtual* datasets that look, to any HTTP-capable viewer or library
 (Neuroglancer, BigDataViewer/Fiji, vizarr, napari, webKnossos, zarr-python, dask,
-tensorstore, ...), like ordinary Zarr v2, Zarr v3, N5 or Neuroglancer precomputed volumes.
-Nothing exists on disk. Each chunk is computed when it is requested: read from a real
-source (zarr, N5, precomputed, HDF5, GeoTIFF; local, S3, GCS or HTTP) or generated, pushed
-through a pipeline of ops, encoded in the format the client asked for, and cached per
-stage, so changing a parameter downstream never recomputes what comes before it.
+tensorstore, ...), like ordinary Zarr v2, Zarr v3, N5 or Neuroglancer precomputed volumes,
+pyramid of levels included. Nothing exists on disk. Each chunk is computed when a viewer
+asks for it: read from a real source (zarr, N5, precomputed, HDF5, GeoTIFF; local, S3, GCS
+or HTTP) or generated, pushed through a pipeline of ops, encoded in the format the client
+asked for, and cached per stage. The chunks on screen are computed first, at the level
+shown, and work nobody waits for any more is dropped, which is what panning and zooming
+over an expensive op needs. Zoomed out, you see the ops run on that coarser level (an op
+bound to one resolution runs there and is downsampled), so a coarse view is a preview of
+the fine result, not its exact downsample. And since every stage is cached by what made it,
+changing a parameter recomputes only the stages after it, and viewers refetch.
 
 **▶ [Try the demos in your browser](https://janeliascicomp.github.io/chunkmirage/browser/)**,
 nothing to install. Every chunk on screen is computed in the page by chunkmirage's own
@@ -59,8 +65,10 @@ uv run chunkmirage serve "synthetic://blobs+noise?shape=4096,4096,4096" \
     --op morphology:operation=open,radius=2 --op label:min_size=200 --python-viewer
 ```
 
-Open the printed control page (`http://<your-ip>:8000/ui`) and drag the threshold's `low` slider:
-only the changed stage recomputes. Or point any viewer at one of these:
+Open the printed viewer link and pan and zoom: each chunk is computed as it comes on
+screen, the level you are at first, and zooming out runs the same ops on the coarser
+levels. Then open the control page (`http://<your-ip>:8000/ui`) and drag the threshold's
+`low` slider: only the changed stage recomputes. Or point any viewer at one of these:
 
 | viewer source URL                                        | format                   |
 | -------------------------------------------------------- | ------------------------ |

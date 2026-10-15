@@ -57,8 +57,11 @@ chunkmirage serve "synthetic://blobs+noise?shape=4096,4096,4096" \
     --python-viewer
 ```
 
-Open the printed control page: `raw` shows the generated volume, `processed` the labelled
-objects. Drag `low` and watch objects appear and merge; change `radius` to remove specks.
+Open the printed viewer link: `raw` shows the generated volume, `processed` the labelled
+objects. Pan and zoom first: each chunk is computed as it comes on screen, the level you
+are at first, and zooming out runs the same ops on the coarser levels (a preview of the
+fine result, not its exact downsample: labels differ between levels). Then, on the control
+page, drag `low` and watch objects appear and merge; change `radius` to remove specks.
 The smaller disk-based demo is:
 
 ```bash
