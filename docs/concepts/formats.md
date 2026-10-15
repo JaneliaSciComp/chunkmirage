@@ -618,8 +618,13 @@ but HDF5, and places them as above: OME-Zarr v2/v3, N5 (gzip or raw), xarray-sty
 arrays, and Neuroglancer precomputed volumes, each scale a level, unsharded or sharded
 (`neuroglancer_uint64_sharded_v1` with the `identity` hash), encoded `raw`, `jpeg` (a
 chunk's z planes one tall image, decoded by the browser) or `compressed_segmentation`. A
-precomputed URL may keep Neuroglancer's `precomputed://`, and `gs://` and `s3://` URLs are
-read through their buckets' public `https` ones.
+precomputed URL may keep Neuroglancer's `precomputed://`. `gs://` and `s3://` URLs are
+fetched as Neuroglancer fetches them: `s3://` at the bucket's `https` URL, which S3 serves
+with CORS for a public bucket; `gs://` through the Cloud Storage JSON API
+(`storage.googleapis.com/storage/v1/b/<bucket>/o/<object>?alt=media`, the object's name
+encoded as one piece), because the bucket's own URL answers a page with no CORS headers
+unless its owner set them, and most have not. The service worker's store cache sees the
+API's URLs, and tells metadata from chunks by the decoded name.
 
 ### Your own schemes (sources from other packages)
 

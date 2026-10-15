@@ -3,8 +3,9 @@
 // arrays (geo and climate data), and the stack://, flip:// and select wrappers. Each is a pyramid of three-axis levels (z, y, x, or
 // an xarray array's own, such as time, lat, lon), with channels only for a stack; reads go
 // through the service worker's store cache like every other fetch on the page.
-import { asReals, openImage, prod, RegionReader, TYPED, zarr, type Image, type Numbers, type Settable, type TypedCtor } from "./ome";
+import { asReals, fetchStore, openImage, prod, RegionReader, TYPED, zarr, type Image, type Numbers, type Settable, type TypedCtor } from "./ome";
 import { chunkName, compressedMorton, compressedSegmentation, Shards, type Fetch, type PrecomputedInfo } from "./precomputed";
+import { fetchUrl } from "./urls";
 import type { ViewAxis } from "./types";
 
 export interface SourceLevel { shape: number[]; voxel: number[]; origin: number[]; chunks: number[] }
@@ -29,8 +30,9 @@ const READ_BYTES = 384 * 2 ** 20;  // decoded pieces kept per image (the page's 
 
 /** Any source URL: stack://a|b, flip://image?axes=y, an OME-Zarr or N5 group, a precomputed
  * volume (precomputed://, as Neuroglancer writes it, or found by its info), or an
- * xarray-style zarr array; gs:// and s3:// as their buckets' https URLs. `select` pins
- * non-spatial axes, as a spec's select does ({c: 1, t: 0}). */
+ * xarray-style zarr array; at gs:// or s3:// as well as https://, fetched as Neuroglancer
+ * fetches them (urls.ts). `select` pins non-spatial axes, as a spec's select does
+ * ({c: 1, t: 0}). */
 export async function openSource(url: string, select: Record<string, number> = {}): Promise<Source> {
   if (url.startsWith("stack://")) {
     const parts = url.slice("stack://".length).split("|").filter(Boolean);
@@ -43,8 +45,7 @@ export async function openSource(url: string, select: Record<string, number> = {
     if (q < 0 || !axes) throw new Error("flip:// needs the axes to mirror: flip://<image>?axes=y");
     return flip(await openSource(rest.slice(0, q), select), axes.split(",").map((a) => a.trim()), url);
   }
-  if (url.startsWith("precomputed://")) return precomputedSource(https(url.slice("precomputed://".length)));
-  url = https(url);
+  if (url.startsWith("precomputed://")) return precomputedSource(url.slice("precomputed://".length));
   if (/\.tiff?$/i.test(url.split("?")[0])) return geotiffSource(url);
   try {
     return await zarrSource(url, select);
@@ -54,11 +55,6 @@ export async function openSource(url: string, select: Record<string, number> = {
     try { return await precomputedSource(url); } catch { throw zarrError; }
   }
 }
-
-/** gs://bucket/path and s3://bucket/path as the https URLs a browser fetches them by. */
-const https = (url: string) => url
-  .replace(/^gs:\/\/([^/]+)/, "https://storage.googleapis.com/$1")
-  .replace(/^s3:\/\/([^/]+)/, "https://$1.s3.amazonaws.com");
 
 async function zarrSource(url: string, select: Record<string, number>): Promise<Source> {
   const img = await openImage(url);
@@ -92,7 +88,7 @@ const num = (v: unknown) => Number(v as number | bigint);
 async function coordinate(parent: string, dim: string, n: number): Promise<{ step: number; first: number; unit: string }> {
   const none = { step: 1, first: 0, unit: "" };
   try {
-    const c = await zarr.open(zarr.root(new zarr.FetchStore(`${parent}/${dim}`)), { kind: "array" });
+    const c = await zarr.open(zarr.root(fetchStore(`${parent}/${dim}`)), { kind: "array" });
     if (c.shape.length !== 1 || c.shape[0] !== n || n < 2) return none;
     const head = (await zarr.get(c, [zarr.slice(0, 2)])).data as ArrayLike<unknown>;
     const tail = (await zarr.get(c, [zarr.slice(n - 1, n)])).data as ArrayLike<unknown>;
@@ -110,7 +106,7 @@ async function coordinate(parent: string, dim: string, n: number): Promise<{ ste
  * integers (scale_factor, add_offset) read as float32 in their units, missing ones NaN. */
 async function xarraySource(url: string): Promise<Source> {
   const base = url.replace(/\/+$/, ""), parent = base.slice(0, base.lastIndexOf("/"));
-  const arr = await zarr.open(zarr.root(new zarr.FetchStore(base)), { kind: "array" });
+  const arr = await zarr.open(zarr.root(fetchStore(base)), { kind: "array" });
   const attrs = arr.attrs as Record<string, unknown>;
   const dims = (attrs._ARRAY_DIMENSIONS as string[] | undefined) ?? arr.dimensionNames;
   if (!dims || dims.length !== 3 || arr.shape.length !== 3) throw new Error(`${url}: not a three-axis array with dimension names`);
@@ -148,7 +144,7 @@ const SAMPLE_TYPES: Record<string, string> = {
  * into the block cache; y counting down the image (minus the northing); float no-data NaN. */
 async function geotiffSource(url: string): Promise<Source> {
   const { fromUrl } = await import("geotiff");
-  const tif = await fromUrl(url);
+  const tif = await fromUrl(fetchUrl(url));  // one object: its URL is fixed
   const all = await Promise.all(Array.from({ length: await tif.getImageCount() }, (_, i) => tif.getImage(i)));
   const images = all.filter((im) => !((im.fileDirectory.getValue("NewSubfileType") ?? 0) & 4));  // no masks
   const base = images[0];
@@ -190,7 +186,7 @@ interface N5Attrs {
 }
 
 async function json<T>(url: string): Promise<T | null> {
-  const r = await fetch(url);
+  const r = await fetch(fetchUrl(url));
   return r.ok ? ((await r.json()) as T) : null;
 }
 
@@ -240,7 +236,7 @@ async function n5Source(url: string): Promise<Source> {
  * data, big endian too. A missing block is zeros. */
 async function n5Block(url: string, dtype: string, gzip: boolean, block: number[]): Promise<{ data: Numbers; shape: number[] }> {
   const T = TYPED[dtype] ?? Float32Array;
-  const r = await fetch(url);
+  const r = await fetch(fetchUrl(url));
   if (r.status === 404) return { data: new T(prod(block)), shape: block };
   if (!r.ok) throw new Error(`${url}: ${r.status}`);
   const buf = new DataView(await r.arrayBuffer());
@@ -368,7 +364,7 @@ async function precomputedSource(url: string): Promise<Source> {
 /** Bytes [start, end) of `url`, or all of it; null if it is not there. A server that
  * ignores the range sends all of it, and the range is cut from that. */
 const bytesAt: Fetch = async (url, range) => {
-  const r = await fetch(url, range ? { headers: { range: `bytes=${range[0]}-${range[1] - 1}` } } : {});
+  const r = await fetch(fetchUrl(url), range ? { headers: { range: `bytes=${range[0]}-${range[1] - 1}` } } : {});
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`${url}: ${r.status}`);
   const buf = await r.arrayBuffer();
