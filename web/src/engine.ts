@@ -111,6 +111,9 @@ export class Engine {
   private edits = 0;
   private producers = new Map<string, (level: number, index: number[]) => Promise<ArrayBuffer>>();
   private unroute: (() => void) | null = null;  // removes this page's /virtual/ route (routes.ts)
+  private staging = new Map<string, Promise<Block>>();  // stage outputs being made, by key: once each
+  private status: ((s: string) => void) | null = null;  // start's, for what happens after it
+  private stopped = false;
 
   /** `onChange` is told whenever the counts change. */
   constructor(private onChange: () => void = () => {}) {}
@@ -124,6 +127,8 @@ export class Engine {
   async start(views: Record<string, PipelineView>, status: (s: string) => void, { packages = [], python = "auto" }: StartOptions = {}): Promise<void> {
     if (!window.isSecureContext) throw new Error("This page needs a secure context: open it over https, or through localhost.");
     if (!navigator.serviceWorker) throw new Error("This browser has no service workers (a private window?).");
+    this.stopped = false;
+    this.status = status;
     status("Starting the service worker…");
     await navigator.serviceWorker.register("sw.js", { scope: "./" });
     await navigator.serviceWorker.ready;
@@ -152,7 +157,9 @@ export class Engine {
    * or computed by the page itself (`serve`) never loads it. Python loads with the packages
    * noted so far (`wants`); any an op imports unannounced, a worker loads when it first does. */
   private python(): Rpc<ToPyWorker>[] {
+    if (this.stopped) throw new Error("the engine was stopped: start another");
     if (!this.pool.length) {
+      this.status?.(`Loading Python (Pyodide, ${["numpy", ...this.packages].join(", ")}) and chunkmirage's ops…`);
       this.pool = Array.from({ length: workers() }, () => new Rpc<ToPyWorker>(new Worker(new URL("./pyworker.ts", import.meta.url), { type: "module" }), (p) => this.print(p)));
       this.warm = Promise.all(this.pool.map((w) => w.call({ type: "plan", views: {}, packages: this.packages }))).then(() => {});
       this.warm.catch(() => {});
@@ -175,11 +182,17 @@ export class Engine {
     }
   }
 
-  /** Open `views`' sources and plan their ops. */
-  private async plan(views: Record<string, PipelineView>): Promise<void> {
-    this.wants(views);
-    await this.open(views);
-    await this.planOps(views);
+  /** Open `views`' sources and plan their ops. Requests for a view whose plan is on its way
+   * wait for `ready` (answer), so it follows this too. */
+  private plan(views: Record<string, PipelineView>): Promise<void> {
+    const planned = (async () => {
+      this.wants(views);
+      await this.open(views);
+      await this.planOps(views);
+    })();
+    planned.catch(() => {});
+    this.ready = this.ready.then(() => planned, () => planned);
+    return planned;
   }
 
   /** Open `views`' sources, once each: read ones by the reader, computed ones described by
@@ -236,7 +249,16 @@ export class Engine {
    * the reading. */
   serveStages(view: string, info: ViewInfo, chunk: number[], from: string, stages: Stage[], padding: Padding = "edge") {
     if (!stages.length) throw new Error(`${view}: a staged view needs at least one stage`);
-    if (!this.sources[from]) throw new Error(`${view}: ${from} is not an opened view to read from`);
+    if (!this.sources[from] || this.producers.has(from) || computedSource(this.views[from].source)) {
+      throw new Error(`${view}: ${from} is not a view read from its source (one of start's or add's; not one the page computes)`);
+    }
+    if (stages.slice(1).some((st) => st.inputVoxelSize)) throw new Error(`${view}: only the first stage reads at its own voxel size (inputVoxelSize)`);
+    if (stages[0].inputVoxelSize && info.levels.length > 1) {
+      // the Python pipeline runs such a stage at its one level and downsamples its result for
+      // the coarser ones; the engine does not yet, and the stage fed a coarser level's box on
+      // its grid would return a block of another shape
+      throw new Error(`${view}: a view whose first stage reads at its own voxel size has one level (the engine does not downsample it for coarser ones yet)`);
+    }
     const last = stages[stages.length - 1];
     this.serve(view, { ...info, out: last.dtype, added: last.added ?? [] }, chunk, (level, index) => this.stagedChunk(view, from, stages, padding, level, index));
   }
@@ -253,17 +275,28 @@ export class Engine {
   /** Stage `k`'s output over `at`'s box: kept under the stage's key if made before, else
    * made by the stage from its input, the stage before's output over the box grown by this
    * one's halo, or for the first stage the source read and padded. */
-  private async stage(from: string, stages: Stage[], padding: Padding, k: number, at: StageAt): Promise<Block> {
-    const st = stages[k], halo = st.halo ?? [0, 0, 0], key = `${st.key}/${at.level}/${at.lo.join(".")}/${at.hi.join(".")}`;
+  private stage(from: string, stages: Stage[], padding: Padding, k: number, at: StageAt): Promise<Block> {
+    // the key says what the output is: what the stage computes (its key), what it reads (the
+    // source view, padded how) and where (the box, at the level's voxel size)
+    const st = stages[k], halo = st.halo ?? [0, 0, 0];
+    const key = `${st.key}|${from}|${padding}|${at.voxel.join(".")}|${at.lo.join(".")}|${at.hi.join(".")}`;
     const shape = [...(st.added ?? []), ...at.hi.map((h, a) => h - at.lo[a])], Typed = TYPED[st.dtype] ?? Float32Array;
     const made = this.staged.get(key);
-    if (made) return { data: new Typed(made), shape };
-    const grown = { ...at, lo: at.lo.map((o, a) => o - halo[a]), hi: at.hi.map((h, a) => h + halo[a]) };
-    const input = k ? await this.stage(from, stages, padding, k - 1, grown) : await this.input(from, st, padding, at);
-    const scaled = !k && !!st.inputVoxelSize;  // on another grid: the result is the output's shape, not shaved from the input's
-    const block = fitted(await st.produce(input, at), st.dtype, shape, input.shape, scaled ? null : halo);
-    this.staged.put(key, bytes(block.data));
-    return block;
+    if (made) return Promise.resolve({ data: new Typed(made), shape });
+    let making = this.staging.get(key);  // on its way for another view or chunk: made once
+    if (!making) {
+      making = (async () => {
+        const grown = { ...at, lo: at.lo.map((o, a) => o - halo[a]), hi: at.hi.map((h, a) => h + halo[a]) };
+        const input = k ? await this.stage(from, stages, padding, k - 1, grown) : await this.input(from, st, padding, at);
+        const scaled = !k && !!st.inputVoxelSize;  // on another grid: the result is the output's shape, not shaved from the input's
+        const block = fitted(await st.produce(input, at), st.dtype, shape, input.shape, scaled ? null : halo);
+        this.staged.put(key, bytes(block.data));
+        return block;
+      })();
+      this.staging.set(key, making);
+      making.finally(() => this.staging.delete(key)).catch(() => {});
+    }
+    return making;
   }
 
   /** The first stage's input: `from`'s level at the stage's voxel size (`inputVoxelSize`,
@@ -283,11 +316,13 @@ export class Engine {
    * waiting to be computed are dropped (one being computed finishes, and is not kept), and
    * requests for it answer 404 from now on. For a `serve()` view that is all of it; a view
    * of `start()` or `add()` keeps its source open in the reader and its plan in the workers,
-   * both small. A page that serves a volume again under a new name, as viewers cache by URL,
+   * both small, and loses its mesh's octree (a whole level's mask). A page that serves a
+   * volume again under a new name, as viewers cache by URL,
    * unserves the old one so its chunks make room. Unserving a view not served is nothing. */
   unserve(view: string) {
     delete this.infos[view]; delete this.sources[view]; delete this.views[view];
     this.producers.delete(view);
+    this.octrees.delete(view);
     this.kept.forget(view);
     for (const key of [...this.inflight.keys()]) if (key.startsWith(`${view}/`)) this.chunks?.drop(key, `${view} is no longer served`);
   }
@@ -298,6 +333,7 @@ export class Engine {
    * starts a fresh Engine, whose URLs carry a new page id, so a viewer that cached chunks
    * by URL fetches afresh. */
   stop() {
+    this.stopped = true;  // and stays so: a late call() or read() throws rather than starting workers again
     for (const key of [...this.inflight.keys()]) this.chunks?.drop(key, "the engine was stopped");
     this.reader?.terminate();
     this.reader = null;
@@ -309,6 +345,7 @@ export class Engine {
     this.octrees.clear();
     this.kept.clear();
     this.staged.clear();
+    this.staging.clear();
     this.infos = {}; this.sources = {}; this.views = {};
     this.ready = Promise.resolve();
     this.unroute?.();
@@ -318,7 +355,8 @@ export class Engine {
   /** Voxels [lo, hi) of a level of a view's source, as the reader reads them for a chunk;
    * no Python is needed. */
   read(view: string, level: number, lo: number[], hi: number[], at?: Record<string, number>): Promise<ArrayBuffer> {
-    return this.reader!.call<ArrayBuffer>({ type: "read", view, level, lo, hi, ...(at ? { at } : {}) });
+    if (!this.reader) return Promise.reject(new Error(this.stopped ? "the engine was stopped" : "the engine has not started"));
+    return this.reader.call<ArrayBuffer>({ type: "read", view, level, lo, hi, ...(at ? { at } : {}) });
   }
 
   /** A step of a page's work (chunkmirage.stitching's, or tracking's `track_*`), run by the
@@ -637,6 +675,7 @@ export class Engine {
   /** Answer the service worker's requests for this page's share of /virtual/ (routes.ts hands
    * them here; the rest of the page's routes are the page's own). */
   private listen() {
+    this.unroute?.();  // started again on one instance: one route, not two answering
     this.unroute = route(`/virtual/${this.page}/`, (ask, port) => void this.reply(ask, port));
   }
 

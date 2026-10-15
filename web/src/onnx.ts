@@ -10,7 +10,7 @@
 // ort/ beside the page by default, where the Vite plugin in web/vite-ort.ts serves it.
 import * as ort from "onnxruntime-web/webgpu";
 import type { Numbers } from "./asread";
-import type { Block, Stage } from "./stages";
+import { prod, type Block, type Stage } from "./stages.ts";  // with its extension: Node's runner (npm test) resolves no other
 
 /** A model: its bytes when first needed (the page keeps them as it likes), under a key that
  * is its identity (its file's URL or hash); the tensors to feed and read, the session's
@@ -23,6 +23,9 @@ export interface GpuLimits { maxBufferSize: number | null; maxStorageBufferBindi
 export interface Output { data: Numbers; dims: number[]; type: string; ms: number }
 
 interface Session { session: ort.InferenceSession; provider: Provider; input: string; output: string; turn: Promise<unknown> }
+/** `wasmPaths`: where ORT's WebAssembly runtime is served from, ort/ beside the page by
+ * default (web/vite-ort.ts puts it there); `log` hears what the sessions do. */
+export interface OnnxOptions { wasmPaths?: string; log?: (line: string) => void }
 
 export class Onnx {
   private sessions = new Map<string, Promise<Session>>();
@@ -32,9 +35,9 @@ export class Onnx {
   /** The provider of the first session built: WebGPU, or WASM (the CPU). */
   provider: Provider | null = null;
 
-  /** `wasmPaths`: where ORT's WebAssembly runtime is served from, ort/ beside the page by
-   * default (web/vite-ort.ts puts it there); `log` hears what the sessions do. */
-  constructor(private options: { wasmPaths?: string; log?: (line: string) => void } = {}) {}
+  private options: OnnxOptions;
+
+  constructor(options: OnnxOptions = {}) { this.options = options; }
 
   private log(line: string) { this.options.log?.(line); }
 
@@ -42,7 +45,10 @@ export class Onnx {
   private configure() {
     if (this.configured) return;
     this.configured = true;
-    ort.env.wasm.wasmPaths = this.options.wasmPaths ?? new URL("ort/", document.baseURI).href;
+    // the runtime from where it is served: as given, else ort/ beside the page; in Node (the
+    // tests) nothing is set and ORT reads it from its own package
+    if (this.options.wasmPaths) ort.env.wasm.wasmPaths = this.options.wasmPaths;
+    else if (typeof document !== "undefined") ort.env.wasm.wasmPaths = new URL("ort/", document.baseURI).href;
     // threads need SharedArrayBuffer, which needs cross-origin isolation (COOP/COEP headers
     // a static host may not set); without it ORT would fall back to one thread anyway
     ort.env.wasm.numThreads = globalThis.crossOriginIsolated && navigator.hardwareConcurrency ? navigator.hardwareConcurrency : 1;
@@ -94,10 +100,13 @@ export class Onnx {
   /** A view starts using `key`'s session. */
   retain(key: string) { this.users.set(key, (this.users.get(key) ?? 0) + 1); }
 
-  /** A view is done with `key`'s session: the last one releases it. */
+  /** A view that retained `key`'s session is done with it: the last one releases it. A
+   * release nobody retained is nothing (a session goes only by its users or `reset`), so a
+   * view's stray release cannot take a session from under another's pass. */
   async release(key: string): Promise<void> {
-    const left = (this.users.get(key) ?? 1) - 1;
-    if (left > 0) { this.users.set(key, left); return; }
+    const users = this.users.get(key);
+    if (users === undefined) return;
+    if (users > 1) { this.users.set(key, users - 1); return; }
     this.users.delete(key);
     const pending = this.sessions.get(key);
     this.sessions.delete(key);
@@ -160,7 +169,7 @@ export function onnxStage(onnx: Onnx, model: OnnxModel, options: OnnxStageOption
   return {
     key: options.key ?? model.key, halo: options.halo, inputVoxelSize: options.inputVoxelSize, dtype, added,
     async produce(input: Block): Promise<Block> {
-      const lead = input.shape.slice(0, -3).reduce((a, b) => a * b, 1);
+      const lead = prod(input.shape.slice(0, -3));
       const data = input.data instanceof Float32Array ? input.data : Float32Array.from(input.data as ArrayLike<number>);
       const out = await onnx.run(model, data, [1, lead, ...input.shape.slice(-3)]);
       if (out.type !== dtype) throw new Error(`${model.key} wrote ${out.type}, not the ${dtype} its stage declares`);
@@ -171,7 +180,7 @@ export function onnxStage(onnx: Onnx, model: OnnxModel, options: OnnxStageOption
       }
       if (shape.length < 3 || shape.length > 4) throw new Error(`${model.key} wrote a tensor of rank ${out.dims.length} (${out.dims.join("×")}), not a volume`);
       const channels = shape.length === 4 ? shape[0] : 1, spatial = shape.slice(-3);
-      if (added.length ? added.reduce((a, b) => a * b, 1) !== channels : channels !== 1) {
+      if (added.length ? prod(added) !== channels : channels !== 1) {
         throw new Error(`${model.key} wrote ${channels} channel${channels === 1 ? "" : "s"}, its stage declares ${added.length ? added.join("×") : "none"}`);
       }
       return { data: out.data, shape: [...added, ...spatial] };

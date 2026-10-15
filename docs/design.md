@@ -464,9 +464,13 @@ as text). What such a page gets, in the order it uses it:
   `Op.input_voxel_size`: a model reads 8 nm voxels and writes 16 nm ones, the view declared
   at 16 nm), the box on that grid grown by its halo, padded past the array's edge as the
   pipeline pads (`padding`, edge or zero); a stage may return its block whole or shaved by
-  its halo, as an op may. Each stage's output is kept under the stage's key, not the view's
-  name (512 MB), so a view served again with its postprocessing changed finds the model's
-  output already made, and two views sharing a stage share its outputs; the last stage's
+  its halo, as an op may. Such a view has one level: the Python pipeline runs a pinned op at
+  its level and downsamples its result for the coarser ones, the engine does not yet, so
+  `serveStages` refuses more. Each stage's output is kept under the stage's key with what it
+  reads and where (the source view and its padding, the box at its voxel size), not the
+  view's name (512 MB), so a view served again with its postprocessing changed finds the
+  model's output already made, two views sharing a stage share its outputs, and an output
+  asked for twice while on its way is made once; the last stage's
   output is placed whole in the chunk, its added axes first, as the Pyodide workers lay a
   chunk out. `serve` is the one-stage case with the page doing the reading.
 * An `onnx` stage (`web/src/onnx.ts`): a model's forward pass as a stage of such a view,
@@ -484,9 +488,12 @@ as text). What such a page gets, in the order it uses it:
   and whatever describes its models stays with the page. ORT's WebAssembly runtime (27 MB)
   is served beside the page by the Vite plugin in `web/vite-ort.ts` (`plugins:
   [ortRuntime()]` in the page's Vite config), from the installed package in development
-  and copied into the build, so the page loads nothing from a CDN. The demos do not use it
-  yet; `onnxruntime-web` is a dependency of `web/` all the same, so the stage is typed and
-  checked with the rest.
+  and copied into the build, so the page loads nothing from a CDN. The demos do not use it:
+  `onnxruntime-web` is an optional peer dependency of `web/`, installed by a page that has
+  the stage and by nothing else (the demos' builds carry none of it), and a dev dependency,
+  so the stage is typed with the rest and run in `npm test` through the WebAssembly backend,
+  which runs in Node as in a browser without WebGPU, on two models of a hundred bytes
+  (`web/test/onnx.test.ts`, the models written by `web/test/fixtures/make_onnx.py`).
 * `Engine.unserve(view)` stops serving a view: its infos, producer and kept chunks are
   forgotten and chunks of it waiting to be computed dropped, so a page that serves a model
   again under a new name (viewers cache by URL, so an edit is a new name) does not keep the

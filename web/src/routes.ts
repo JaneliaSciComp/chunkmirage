@@ -26,5 +26,10 @@ function dispatch(e: MessageEvent<Ask>) {
   const port = e.ports[0];
   if (!port || typeof e.data?.path !== "string") return;  // not an ask of the relay's
   const r = routes.find((r) => e.data.path.includes(r.prefix));
-  if (r) r.handle(e.data, port); else port.postMessage(null);
+  if (!r) { port.postMessage(null); return; }
+  try {
+    r.handle(e.data, port);
+  } catch (err) {  // a handler that throws before answering: else the worker waits its whole timeout
+    port.postMessage({ status: 500, body: String((err as Error).message ?? err), type: "text/plain" });
+  }
 }

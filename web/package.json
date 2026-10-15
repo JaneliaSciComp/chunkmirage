@@ -22,13 +22,21 @@
     "deep-chat": "2.5.1",
     "geotiff": "3.1.0-beta.0",
     "ol": "10.10.0",
-    "onnxruntime-web": "1.30.0",
     "zarrita": "0.7.5"
+  },
+  "peerDependencies": {
+    "onnxruntime-web": "1.30.0"
+  },
+  "peerDependenciesMeta": {
+    "onnxruntime-web": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "22.20.4",
     "@webgpu/types": "0.1.74",
     "json-schema-to-typescript": "16.0.0",
+    "onnxruntime-web": "1.30.0",
     "typescript": "7.0.2",
     "vite": "8.3.1"
   }

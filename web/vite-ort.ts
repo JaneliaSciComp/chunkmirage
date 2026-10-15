@@ -28,8 +28,9 @@ export function ortRuntime(prefix = "ort"): Plugin {
     // pre-bundling it is served as it is, its own import.meta.url and wasm loading intact
     config: () => ({ optimizeDeps: { exclude: ["onnxruntime-web"] } }),
     configResolved(config) {
-      // the package as the page's project installed it
-      dist = join(dirname(createRequire(resolve(config.root, "package.json")).resolve("onnxruntime-web/package.json")), "dist");
+      // the package as the page's project installed it, found through a file its exports
+      // map names (package.json is not among them, so resolving it throws)
+      dist = dirname(createRequire(resolve(config.root, "package.json")).resolve(`onnxruntime-web/${RUNTIME_FILES[0]}`));
       outDir = resolve(config.root, config.build.outDir);
     },
     configureServer(server) {
