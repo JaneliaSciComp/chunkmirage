@@ -2,11 +2,21 @@
 
 ## What it is for
 
-Viewers such as Neuroglancer, BigDataViewer, vizarr and napari, and libraries such as
-dask and tensorstore, can read chunked array formats over plain HTTP. chunkmirage answers
-those HTTP requests itself, so the "dataset" can be anything computable per chunk. It is
-meant to be the reusable, general form of a trick that had been re-implemented per project,
-and it was inspired by the two that showed it:
+Browsing a computation as if it were a stored dataset: in any viewer, at any scale, before
+anyone has computed it. Viewers such as Neuroglancer, BigDataViewer, vizarr and napari, and
+libraries such as dask and tensorstore, read chunked array formats over plain HTTP, a
+pyramid of levels, chunk by chunk, as the view moves. chunkmirage answers those requests
+itself, so the "dataset" can be anything computable per chunk, and does three things for
+a viewer that a lazily computed array does not. It serves a pyramid of the computed result:
+each level is the ops run on that level's data, a preview of the fine result rather than
+its exact downsample (a threshold at a coarse level is not the downsampled fine threshold,
+and labels do not agree across levels), except that an op bound to one resolution runs
+there and is downsampled from its cached output. It computes the chunks on screen first, at
+the level shown, and drops the work nobody waits for any more, so an expensive op under a
+panning viewer does the work the viewer still wants. And it speaks every format, so the
+viewer is whoever's viewer. Editing the computation while looking follows from the
+per-stage cache. It is meant to be the reusable, general form of a trick that had been
+re-implemented per project, and it was inspired by the two that showed it:
 
 * [example-virtual-n5](https://github.com/stuarteberg/example-virtual-n5): a Flask app that
   synthesises N5 metadata and chunks. It proved the idea: one format, one dataset.
@@ -26,9 +36,11 @@ computation:
 | reconfiguration    | restart            | custom UI/API           | REST (and MCP) with cache-busting URLs        |
 | deployment         | Flask              | Flask + gunicorn        | ASGI (Starlette) library + CLI                |
 
-Projects like cellmap-flow are natural consumers (it could shrink to "a set of inference
-ops plus a UI" on top of chunkmirage), and serve as a realistic test of the design, but
-chunkmirage is not built around any one of them.
+cellmap-flow is the first consumer, and a realistic test of the design: its server mode
+serves a model's predictions through chunkmirage's server, and its browser mode is a page
+on the browser engine ([another page on the engine](#another-page-on-the-engine)), the
+last card of the [gallery](demos.md), the one not built here. But chunkmirage is not built around it or any one
+project.
 
 ### Where it does *not* add value
 
