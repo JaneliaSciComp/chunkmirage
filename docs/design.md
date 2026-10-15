@@ -39,7 +39,7 @@ computation:
 cellmap-flow is the first consumer, and a realistic test of the design: its server mode
 serves a model's predictions through chunkmirage's server, and its browser mode is a page
 on the browser engine ([another page on the engine](#another-page-on-the-engine)), the
-first card in the [gallery](demos.md). But chunkmirage is not built around it or any one
+last card of the [gallery](demos.md), the one not built here. But chunkmirage is not built around it or any one
 project.
 
 ### Where it does *not* add value
