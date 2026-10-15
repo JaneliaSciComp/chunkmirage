@@ -139,7 +139,7 @@ export class RegionReader {
 
 export const prod = (a: number[]) => a.reduce((x, y) => x * y, 1);
 
-/** numpy's (linear) percentiles, on every step-th value as chunkmirage.registration does. */
+/** numpy's (linear) percentiles, on every step-th value as chunkmirage_contrib.registration does. */
 export function percentiles(data: ArrayLike<number>, ps: number[]): number[] {
   const step = Math.max(1, Math.floor(data.length / 1e6));
   const s = new Float32Array(Math.ceil(data.length / step));

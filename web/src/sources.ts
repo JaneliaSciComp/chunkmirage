@@ -143,7 +143,7 @@ const SAMPLE_TYPES: Record<string, string> = {
   "1/8": "uint8", "1/16": "uint16", "1/32": "uint32", "2/8": "int8", "2/16": "int16", "2/32": "int32", "3/32": "float32", "3/64": "float64",
 };
 
-/** A (cloud-optimized) GeoTIFF, as chunkmirage.sources.geotiff reads it: its pages of
+/** A (cloud-optimized) GeoTIFF, as chunkmirage_contrib.sources.geotiff reads it: its pages of
  * decreasing size the levels, as z, y, x with one z; tiles read by range and decoded once
  * into the block cache; y counting down the image (minus the northing); float no-data NaN. */
 async function geotiffSource(url: string): Promise<Source> {

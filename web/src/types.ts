@@ -120,7 +120,7 @@ export type ToPyWorker =
   | { type: "compute"; reqId: number; view: string; level: number; data: ArrayBuffer | null; readShape: number[]; inLo: number[]; inHi: number[]; outLo: number[]; outHi: number[]; full: number[]; voxel: number[]; origin: number[]; unit?: string; mesh?: MeshCall }
   // a multi-resolution mesh's octree and index, from its coarsest level's surface band (`mesh.levels` the view's)
   | { type: "octree"; reqId: number; band: ArrayBuffer; shape: number[]; mesh: MeshCall; chunk: number[]; unit: string }
-  // a step of a page's work (chunkmirage.stitching, chunkmirage.tracking): JSON arguments, arrays as raw bytes
+  // a step of a page's work (chunkmirage_contrib.stitching, chunkmirage_contrib.tracking): JSON arguments, arrays as raw bytes
   | { type: "call"; reqId: number; fn: string; args: string; arrays?: ArrayBuffer[] };
 /** Either's answer to request `reqId`. */
 /** A line a view's Python printed while a worker computed one of its chunks (`at`: the

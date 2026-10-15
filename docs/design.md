@@ -263,42 +263,36 @@ Three layers, from most to least structured:
   chat is opened. An agent with a server of its own drives `/api` instead (an MCP surface
   is on the [roadmap](roadmap.md)).
 
-### What stays in the core (a proposal)
+### What stays in the core
 
-chunkmirage is worth most as the engine others build on: sources, formats, the cached
-pipeline, the demand queue and the plugin entry points. Domain features belong in the
-applications built on it, where the attention for those uses goes: cellmap-flow for models,
-others later. A core that collects one field's ops and application features stops looking
-general, competes with what is built on it, and has its API shaped by one domain. The rule
-of thumb: if someone serving data from a different field would not use it, it does not
-belong in the core.
+The core composes data and serves it; it does not compute. That is the rule for where code
+goes, chosen so that nothing is left to judge case by case (is spot detection microscopy
+or astronomy? is a ratio of two bands geo?): if it has an algorithm in it, it goes in
+`chunkmirage_contrib`, a second package in the same wheel.
 
-The demos show the range well and should stay. Their ops and sources, though, live in the
-core package today. This proposal moves them into plugin packages that register through
-the same `chunkmirage.ops` and `chunkmirage.sources` entry points any plugin uses:
+| package | holds |
+| ------- | ----- |
+| `chunkmirage` | the pipeline, cache, demand queue, server, REST API and CLI; the frontends; readers of stored formats (zarr, N5, precomputed, HDF5); `scene://` and the transforms (the pipeline's own resampler uses them); the sources that compose other sources (`stack://`, `flip://`, `warp://`); meshes, a frontend's way of serving a surface; and two ops: `downsample`, which the pipeline runs to make the pyramid of an op bound to one resolution, and `python`, code carried in the spec |
+| `chunkmirage_contrib` | every other op (filters, thresholds, morphology, labelling, detectors, terrain); the computed sources (`synthetic://`, `register://`, `stitch://`, GeoTIFF reading); the registration solver, stitching and tracking; and, in `web/src/contrib/`, the browser pages built on them |
 
-| package | ops and sources | extra dependencies it takes along |
-| ------- | --------------- | --------------------------------- |
-| core | `threshold`, `cast`, `scale`, `gaussian`, `uniform`, `dog`, `diff`, `gradient`, `downsample`, `morphology`, `label`; `synthetic://`, `scene://`, `warp://`, `stack://`, `flip://`; surface meshes | scipy for the filters |
-| `chunkmirage-geo` | `normalized_difference`, `slope`, `hillshade`; GeoTIFF sources; terrain meshes | tifffile, imagecodecs |
-| `chunkmirage-microscopy` | `spots`, `contacts`, `chunkmirage.tracking`; `stitch://`; `register://` and its solver | torch |
+Contrib reaches the core only through the entry points any other package would use:
+`chunkmirage.ops`, `chunkmirage.sources`, `chunkmirage.source_matchers` (files told apart by
+their path, a GeoTIFF by its extension) and `chunkmirage.models` (parameter models in
+`chunkmirage schema`). No core module imports it, and `tests/test_core_boundary.py` fails if
+one does. So the engine stands alone, and the plugin API is exercised by the code shipped
+with it: a gap a third party would hit, contrib hits first. The browser engine's Pyodide
+workers take contrib's Python by a glob of its files, so a module added there needs no
+listing.
 
-The generic building blocks stay in the core, op by op: filters, morphology, labelling,
-downsampling, differences, gradients, resampling through OME-Zarr transformations.
+Two exceptions, each to avoid moving code twice: `warp://`'s procedural swirl fields stay in
+the core until `warp://` takes a field from any source, when they become a contrib field
+source; and `meshes.py` keeps its `terrain` kind, a few lines of a frontend option.
 
-* **Benefits.** The core stays small and plainly general, with fewer optional
-  dependencies. The plugin API gets exercised by real use, so its gaps show before a third
-  party finds them. The demos become templates for building a domain on chunkmirage.
-* **The cheapest start.** Subpackages in this repo with their own `pyproject.toml`
-  (`plugins/geo/`, `plugins/microscopy/`), installed editable in development and CI, and a
-  `demos` extra that installs both so the gallery keeps working. Separate repositories
-  later, if ever.
-* **Costs.** More packaging and CI. The gallery cards and the docs must say which plugin
-  each demo needs. The browser engine writes the package's own ops into Pyodide, so it must
-  learn to load a plugin's ops too. `tests/test_docs.py` checks that every registered op is
-  documented, so the plugins need docs pages of their own, or the check must span them.
-
-Nothing has moved: this is for the owners to decide.
+It is one wheel: `pip install chunkmirage` installs both, and the heavy dependencies stay
+extras (`torch` for `register://`, `tifffile` for GeoTIFFs). One bucket, not several: a split
+by field (geo, microscopy) would bring back the judgment the rule removes. Should anyone want
+the engine without contrib, contrib becomes a distribution of its own, with a
+`pyproject.toml` and no change to the code.
 
 ## Client-side / browser roadmap
 
@@ -458,7 +452,7 @@ as text). What such a page gets, in the order it uses it:
   served from the reader, each chunk the region as read placed whole in the chunk
   (`web/src/asread.ts`), and a view whose chunks the page computes itself needs none
   either. So a page that serves only such views never loads Python; one that will `call()`
-  the package's Python (`chunkmirage.stitching`, `tracking`) passes `python: "always"`, so
+  the package's Python (`chunkmirage_contrib.stitching`, `tracking`) passes `python: "always"`, so
   it loads while the data opens. `ready` resolves once every view given to `start` is
   planned, Python loaded if it was started.
 * `Engine.serve(view, info, chunk, produce)` serves a view whose chunks the page computes

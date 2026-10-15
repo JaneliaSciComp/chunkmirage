@@ -2,37 +2,24 @@
 // server's pipeline stage runs) in Pyodide. The page has it plan the views it serves, then
 // hands it each chunk's input region (read by the page's reader) and gets back the bytes a
 // zarr v3 chunk holds, computed as the Python server computes it.
-import pyBase from "../../src/chunkmirage/ops/base.py?raw";
-import pyCode from "../../src/chunkmirage/ops/code.py?raw";
-import pyCombine from "../../src/chunkmirage/ops/combine.py?raw";
-import pyCore from "../../src/chunkmirage/core.py?raw";
-import pyFilters from "../../src/chunkmirage/ops/filters.py?raw";
-import pyFused from "../../src/chunkmirage/fused.py?raw";
-import pyOps from "../../src/chunkmirage/ops/__init__.py?raw";
-import pyPointwise from "../../src/chunkmirage/ops/pointwise.py?raw";
-import pySegment from "../../src/chunkmirage/ops/segment.py?raw";
-import pyTerrain from "../../src/chunkmirage/ops/terrain.py?raw";
-import pyCache from "../../src/chunkmirage/cache.py?raw";
-import pySourceBase from "../../src/chunkmirage/sources/base.py?raw";
-import pySynthetic from "../../src/chunkmirage/sources/synthetic.py?raw";
-import pyMeshes from "../../src/chunkmirage/meshes.py?raw";
-import pyStitching from "../../src/chunkmirage/stitching.py?raw";
-import pyTracking from "../../src/chunkmirage/tracking.py?raw";
+/// <reference types="vite/client" />
 import type { Answer, Plan, Printed, ToPyWorker } from "./types";
 
 export const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/";
+// chunkmirage's Python, as text, for Pyodide: the engine's modules that compute (not its
+// server or its readers, which Pyodide has nothing for), and all of chunkmirage_contrib, the
+// ops and computed sources, so a module added there is picked up here. The two packages'
+// __init__s are stubs: the real ones import the server and tensorstore.
+const PY = import.meta.glob([
+  "../../src/chunkmirage/{core,fused,cache,meshes}.py",
+  "../../src/chunkmirage/ops/*.py",
+  "../../src/chunkmirage/sources/base.py",
+  "../../src/chunkmirage_contrib/**/*.py",
+], { query: "?raw", import: "default", eager: true }) as Record<string, string>;
 const FILES: Record<string, string> = {
-  "chunkmirage/__init__.py": '"""chunkmirage\'s ops and fused stages, for the browser engine."""\n',
-  "chunkmirage/core.py": pyCore, "chunkmirage/fused.py": pyFused, "chunkmirage/ops/__init__.py": pyOps,
-  "chunkmirage/ops/base.py": pyBase, "chunkmirage/ops/pointwise.py": pyPointwise, "chunkmirage/ops/filters.py": pyFilters,
-  "chunkmirage/ops/segment.py": pySegment, "chunkmirage/ops/combine.py": pyCombine, "chunkmirage/ops/terrain.py": pyTerrain,
-  "chunkmirage/ops/code.py": pyCode,  // the python op: code of the page's visitor, run here
-  // the sources the worker computes itself (synthetic://), not read by the page's reader
-  "chunkmirage/cache.py": pyCache, "chunkmirage/sources/__init__.py": '"""The computed sources, for the browser engine."""\n',
-  "chunkmirage/sources/base.py": pySourceBase, "chunkmirage/sources/synthetic.py": pySynthetic,
-  "chunkmirage/meshes.py": pyMeshes,  // meshes of a view, made where a fragment is fetched
-  "chunkmirage/stitching.py": pyStitching,  // the stitch page's steps, one call each
-  "chunkmirage/tracking.py": pyTracking,    // the track page's, one frame each
+  ...Object.fromEntries(Object.entries(PY).map(([path, text]) => [path.slice(path.indexOf("/src/") + "/src/".length), text])),
+  "chunkmirage/__init__.py": '"""chunkmirage\'s engine, for the browser."""\n',
+  "chunkmirage/sources/__init__.py": '"""The sources the browser computes itself."""\n',
 };
 const GLUE = `
 import json
@@ -40,12 +27,13 @@ import numpy as np
 from chunkmirage import fused
 from chunkmirage.core import ArrayInfo, Box
 from chunkmirage.ops import op_from_spec
+import chunkmirage_contrib.ops  # noqa: F401  registers the shipped ops
 
 VIEWS = {}
 SOURCES = {}
 
 def describe(url):
-    from chunkmirage.sources.synthetic import open_synthetic
+    from chunkmirage_contrib.sources.synthetic import open_synthetic
     ms = SOURCES.setdefault(url, open_synthetic(url))
     i = ms[0].info
     return json.dumps({
@@ -144,12 +132,12 @@ def compute(view, level, data, read_shape, in_lo, in_hi, out_lo, out_hi, full_sh
 
 const STEPS = `
 def call(fn, args, arrays):
-    """One step of a page's work in chunkmirage.stitching (the stitch page) or
-    chunkmirage.tracking (track_*: the track page): JSON in, JSON (or a chunk's bytes) out,
+    """One step of a page's work in chunkmirage_contrib.stitching (the stitch page) or
+    chunkmirage_contrib.tracking (track_*: the track page): JSON in, JSON (or a chunk's bytes) out,
     arrays as raw bytes."""
     if fn.startswith("track_"):
         return _track(fn, json.loads(args), arrays)
-    from chunkmirage import stitching as S
+    from chunkmirage_contrib import stitching as S
     a = json.loads(args)
     p = S.StitchParams(**a.get("params", {}))
     if fn == "tiles":
@@ -187,7 +175,7 @@ def call(fn, args, arrays):
     raise ValueError(f"no stitching step {fn}")
 
 def _track(fn, a, arrays):
-    from chunkmirage import tracking as T
+    from chunkmirage_contrib import tracking as T
     block = lambda k: np.frombuffer(arrays[k].to_py(), np.dtype(a["dtype"])).reshape(a["shape"])
     if fn == "track_measure":  # the object at its first frame, in a block from a.start
         return json.dumps(T.measure(block(0), a["label"], a["start"], a["voxel"]))

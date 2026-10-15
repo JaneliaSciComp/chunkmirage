@@ -1,15 +1,15 @@
 // The deformable registration solve on the GPU, in WebGPU compute shaders: the same method,
-// defaults and conventions as chunkmirage.registration (the PyTorch solver behind
+// defaults and conventions as chunkmirage_contrib.registration (the PyTorch solver behind
 // register://), so the two can be checked against each other. The field u lives in the
 // fixed image's physical space on a control grid; the moving image is sampled at
 // affine(p + u(p)). Gradients are written out by hand: the closed-form gradient of the
 // squared local correlation (box sums of three per-window factors), then the chain rule
 // through trilinear sampling; WGSL has no float atomics, so each control point gathers
 // its voxels' gradients rather than voxels scattering into control points.
-import type { RegisterParams } from "./generated/chunkmirage";
-import schema from "./generated/chunkmirage.schema.json";
-import { fieldAt, prod } from "./ome";
-import type { Affine, ControlGrid, Progress, Volume } from "./types";
+import type { RegisterParams } from "../generated/chunkmirage";
+import schema from "../generated/chunkmirage.schema.json";
+import { fieldAt, prod } from "../ome";
+import type { Affine, ControlGrid, Progress, Volume } from "../types";
 
 const WG = 256;
 const FLAT = 1e-4;  // windows with less variance than this carry no signal (registration.FLAT)

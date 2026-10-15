@@ -7,7 +7,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from chunkmirage import Pipeline, create_app, open_source
-from chunkmirage.ops import Threshold
+from chunkmirage_contrib.ops import Threshold
 
 
 @pytest.fixture(scope="module")

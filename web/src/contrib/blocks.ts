@@ -7,10 +7,10 @@
 // The fits go through the page's queue of expensive work (`demand.ts`): the finest level
 // and latest requests first, a few at once, and dropped if every request for one gives up.
 import { halve } from "./affine";
-import { Claim, queue } from "./demand";
-import { asReals, fieldAt, nearestLevel, prod, RegionReader, type Image, type Reals } from "./ome";
+import { Claim, queue } from "../demand";
+import { asReals, fieldAt, nearestLevel, prod, RegionReader, type Image, type Reals } from "../ome";
 import { controlShape, sampled, solve, type Gpu, type Settings } from "./solver";
-import type { Affine, ControlGrid, Lattice, Volume } from "./types";
+import type { Affine, ControlGrid, Lattice, Volume } from "../types";
 
 const MIN_SIZE = 16;  // no coarser copy of a block with fewer voxels than this on an axis (register.MIN_SOLVE_SIZE)
 

@@ -10,7 +10,8 @@ from starlette.testclient import TestClient
 
 from chunkmirage import Pipeline, create_app, fused, open_source
 from chunkmirage.core import ArrayInfo, Box
-from chunkmirage.ops import Downsample, Op, Scale
+from chunkmirage.ops import Downsample, Op
+from chunkmirage_contrib.ops import Scale
 
 pytest.importorskip("scipy")
 

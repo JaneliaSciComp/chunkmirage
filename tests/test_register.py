@@ -8,7 +8,7 @@ import tensorstore as ts
 
 from chunkmirage import open_source
 from chunkmirage.core import Box
-from chunkmirage.sources import register
+from chunkmirage_contrib.sources import register
 
 FIXED = "synthetic://blobs+noise?shape=24,64,64&chunk=24,32,32&levels=2&voxel_size=64"
 SWIRL = "field=swirl&angle=25&radius=1100"
@@ -179,7 +179,7 @@ def test_refined_blocks_live_in_the_pipelines_cache(monkeypatch):
     def constant(fixed, moving, affine, settings, *, box, label="", **kw):
         if "block" not in label:
             return real(fixed, moving, affine, settings, box=box, label=label, **kw)
-        from chunkmirage.registration import Grid, _control_shape
+        from chunkmirage_contrib.registration import Grid, _control_shape
 
         lo, hi = (np.asarray(b, dtype=float) for b in box)
         shape = _control_shape(lo, hi, fixed[-1].voxel_size, settings.grid)
@@ -202,7 +202,7 @@ def test_neighbouring_blocks_blend_across_their_overlap(monkeypatch):
     # every block fits a constant field, 64 nm (a voxel) times its x index: the field steps by
     # a whole block's difference from one block to the next, and blending spreads each step
     # over the overlap instead of one lattice cell
-    from chunkmirage.registration import Grid, _control_shape
+    from chunkmirage_contrib.registration import Grid, _control_shape
 
     real = register.solve
 
@@ -230,7 +230,7 @@ def test_neighbouring_blocks_blend_across_their_overlap(monkeypatch):
 
 
 def test_halving_does_not_wrap_small_integers():
-    from chunkmirage.registration import Level, _halve
+    from chunkmirage_contrib.registration import Level, _halve
 
     lvl = Level(np.full((4, 4, 4), 200, np.uint8), np.ones(3), np.zeros(3))
     assert (_halve(lvl).data == 200).all()  # not (200 + 200) % 256 / 2
@@ -333,7 +333,7 @@ def test_default_levels_go_from_coarse_enough_to_fine_enough():
 
 def test_flat_windows_carry_no_signal():
     torch = pytest.importorskip("torch")
-    from chunkmirage.registration import _lncc, _window_stats
+    from chunkmirage_contrib.registration import _lncc, _window_stats
 
     rng = np.random.default_rng(0)
     img = torch.as_tensor(rng.random((1, 1, 12, 12, 12)), dtype=torch.float32)

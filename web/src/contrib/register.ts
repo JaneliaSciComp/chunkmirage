@@ -4,12 +4,12 @@
 // "same in Python" command come from chunkmirage's RegisterParams, via its JSON Schema.
 import { affineDistance, findAffine, halve, type FoundAffine } from "./affine";
 import { Blocks, normalize } from "./blocks";
-import { Cancelled, Claim, queue } from "./demand";
-import type { RegisterParams } from "./generated/chunkmirage";
-import schema from "./generated/chunkmirage.schema.json";
-import { asReals, nearestLevel, openImage, percentiles, prod, readLevel, type Image, type Numbers } from "./ome";
+import { Cancelled, Claim, queue } from "../demand";
+import type { RegisterParams } from "../generated/chunkmirage";
+import schema from "../generated/chunkmirage.schema.json";
+import { asReals, nearestLevel, openImage, percentiles, prod, readLevel, type Image, type Numbers } from "../ome";
 import { gpu, solve, type Settings } from "./solver";
-import type { Affine, ControlGrid, FromWorker, Later, Reply, StoreStats, ToWorker, ViewKind, Volume } from "./types";
+import type { Affine, ControlGrid, FromWorker, Later, Reply, StoreStats, ToWorker, ViewKind, Volume } from "../types";
 
 const CHUNK = [16, 128, 128];    // chunks of the registered volume, z, y, x
 const MAX_VOXELS = 1 << 22;      // finest automatic level: the whole level sits on the GPU
@@ -192,7 +192,7 @@ class Pool {
 
   constructor(n: number, onField: (w: Worker, m: FieldRequest) => void) {
     this.workers = Array.from({ length: n }, () => {
-      const w = new Worker(new URL("./chunks.ts", import.meta.url), { type: "module" });
+      const w = new Worker(new URL("../chunks.ts", import.meta.url), { type: "module" });
       w.onmessage = ({ data: m }: MessageEvent<FromWorker>) => {
         if (m.type === "ready") return this.starting.get(w)?.resolve();
         if (m.type === "field") return onField(w, m);

@@ -4,7 +4,7 @@
 
 ::: chunkmirage.pipeline.Pipeline
 ::: chunkmirage.pipeline.PipelineSpec
-::: chunkmirage.sources.register.RegisterParams
+::: chunkmirage_contrib.sources.register.RegisterParams
 ::: chunkmirage.schema.spec_schema
 ::: chunkmirage.sources.registry.open_source
 ::: chunkmirage.server.create_app
@@ -48,25 +48,25 @@ deformable solver, and the `scene://`, `warp://` and `register://` sources built
 ::: chunkmirage.ngff.parse_transform
 ::: chunkmirage.sources.scene.open_scene
 ::: chunkmirage.sources.warp.open_warp
-::: chunkmirage.registration.solve
-::: chunkmirage.registration.Settings
-::: chunkmirage.registration.find_affine
-::: chunkmirage.sources.register.open_register
+::: chunkmirage_contrib.registration.solve
+::: chunkmirage_contrib.registration.Settings
+::: chunkmirage_contrib.registration.find_affine
+::: chunkmirage_contrib.sources.register.open_register
 
 ## Stitching
 
 Tiles stitched by interest points and RANSAC, and fused, behind `stitch://` and the
 browser's stitch page.
 
-::: chunkmirage.stitching.StitchParams
-::: chunkmirage.stitching.detect
-::: chunkmirage.stitching.match
-::: chunkmirage.stitching.ransac
-::: chunkmirage.stitching.optimize
-::: chunkmirage.stitching.register
-::: chunkmirage.stitching.fuse
-::: chunkmirage.stitching.tiles_from_bdv
-::: chunkmirage.sources.stitch.open_stitch
+::: chunkmirage_contrib.stitching.StitchParams
+::: chunkmirage_contrib.stitching.detect
+::: chunkmirage_contrib.stitching.match
+::: chunkmirage_contrib.stitching.ransac
+::: chunkmirage_contrib.stitching.optimize
+::: chunkmirage_contrib.stitching.register
+::: chunkmirage_contrib.stitching.fuse
+::: chunkmirage_contrib.stitching.tiles_from_bdv
+::: chunkmirage_contrib.sources.stitch.open_stitch
 
 ## Tracking
 
@@ -75,13 +75,13 @@ through its divisions into its likely daughters (new objects appearing near wher
 guess, not something the labels record), behind the browser's track page and
 `examples/track_nucleus.py`.
 
-::: chunkmirage.tracking.lineage
-::: chunkmirage.tracking.follow
-::: chunkmirage.tracking.step
-::: chunkmirage.tracking.newborns
-::: chunkmirage.tracking.daughters
-::: chunkmirage.tracking.mother_of
-::: chunkmirage.tracking.measure
+::: chunkmirage_contrib.tracking.lineage
+::: chunkmirage_contrib.tracking.follow
+::: chunkmirage_contrib.tracking.step
+::: chunkmirage_contrib.tracking.newborns
+::: chunkmirage_contrib.tracking.daughters
+::: chunkmirage_contrib.tracking.mother_of
+::: chunkmirage_contrib.tracking.measure
 
 ## Frontends
 

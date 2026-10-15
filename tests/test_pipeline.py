@@ -4,7 +4,7 @@ import pytest
 from chunkmirage import Pipeline, open_source
 from chunkmirage.cache import LRUCache
 from chunkmirage.core import Box
-from chunkmirage.ops import Cast, Threshold, Uniform
+from chunkmirage_contrib.ops import Cast, Threshold, Uniform
 
 scipy = pytest.importorskip("scipy")
 

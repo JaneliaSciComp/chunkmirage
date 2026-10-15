@@ -57,9 +57,11 @@ class MyOp(Op):
     def apply(self, block): return block.astype(np.float32) * self.strength
 ```
 
+An op shipped with chunkmirage goes in `src/chunkmirage_contrib/ops/`: the core keeps only
+`downsample` and `python` ([what stays in the core](design.md#what-stays-in-the-core)).
 Register it in `pyproject.toml` under `[project.entry-points."chunkmirage.ops"]` (or in your
 own package's entry points), add a test, and add a row to `docs/reference/ops.md` (a
-built-in op; a plugin's op is documented by its own package). An op that is a few lines of
+shipped op; a plugin's op is documented by its own package). An op that is a few lines of
 numpy with sliders needs no class: `python_op(name, code)` makes one from code written for
 the [`python` op](reference/ops.md#your-own-python-the-python-op), as the demos' *Copy as
 plugin* does. Users' choice between the three is set out under
@@ -86,9 +88,14 @@ def open_ramp(url: str) -> MultiscaleSource:  # ramp://512
 ```
 
 List it under `[project.entry-points."chunkmirage.sources"]` as `ramp = "mypackage:open_ramp"`
-(see [formats](concepts/formats.md#your-own-schemes-sources-from-other-packages)). Sources
-built into chunkmirage are listed in `chunkmirage.sources.registry` instead, and documented
-in `docs/concepts/formats.md`.
+(see [formats](concepts/formats.md#your-own-schemes-sources-from-other-packages)). The core's
+own schemes, the ones that compose other sources (`scene://`, `warp://`, `stack://`,
+`flip://`), are listed in `chunkmirage.sources.registry`; a computed source shipped with
+chunkmirage (`synthetic://`, `register://`) goes in `src/chunkmirage_contrib/sources/` and
+under the entry point like any other package's. A format told apart by its path rather than
+a scheme (a GeoTIFF by its extension) lists a matcher, `path -> opener or None`, under
+`[project.entry-points."chunkmirage.source_matchers"]` (`register_matcher` in a running
+process). Either is documented in `docs/concepts/formats.md`.
 
 ## Plugin API and versioning
 
@@ -101,7 +108,10 @@ Packages build on chunkmirage through its plugin API, which is stable:
 * **Sources.** `Source` (`info`, `read`, `read_padded`, `cache_key`), `ChunkedSource`,
   `MultiscaleSource`, `ArrayInfo` and `Box`; an opener `opener(url, *, cache_bytes, cache)`
   returning a `MultiscaleSource`, registered with `register_source` or the
-  `chunkmirage.sources` entry point; `open_source`.
+  `chunkmirage.sources` entry point, or for files told apart by their path a matcher
+  registered with `register_matcher` or `chunkmirage.source_matchers`; `open_source`.
+* **Schema.** A parameter model listed under `chunkmirage.models` appears in
+  `chunkmirage schema` under the entry point's name, for the browser engine's types.
 * **Serving.** `PipelineSpec`, `Pipeline`, `create_app` and its parameters, `serve` and
   `Server`,
   `DatasetRegistry` (`add`, `get`, `resolve`, `refresh`, `remove`, `subscribe`) and its

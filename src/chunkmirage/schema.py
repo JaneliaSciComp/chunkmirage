@@ -1,5 +1,6 @@
 """The JSON Schema of what chunkmirage exchanges: pipeline specs, each op's parameters, and
-the query of a ``register://`` URL.
+the parameter models other packages add (``chunkmirage_contrib``'s ``register://`` and
+``stitch://`` queries, through the ``chunkmirage.models`` entry point).
 
 This is the one definition both engines share. The browser engine (``web/``) generates its
 TypeScript types and form defaults from it (``chunkmirage schema --out ...``), and a test
@@ -24,16 +25,25 @@ class _Titled(GenerateJsonSchema):
         return False
 
 
+def _models() -> dict[str, type]:
+    """The parameter models packages add, by the key each appears under (the
+    ``chunkmirage.models`` entry point: its name the key, its value a pydantic model):
+    contrib's ``RegisterParams`` as ``register`` and ``StitchParams`` as ``stitch``."""
+    from importlib.metadata import entry_points
+
+    return {ep.name: ep.load() for ep in sorted(entry_points(group="chunkmirage.models"), key=lambda e: e.name)}
+
+
 def spec_schema() -> dict[str, Any]:
-    """One schema whose ``$defs`` hold every model: ``PipelineSpec``, ``RegisterParams``,
-    ``StitchParams``, one per registered op (tagged with its ``op`` name), and ``OpSpec``, the union of them."""
+    """One schema whose ``$defs`` hold every model: ``PipelineSpec``, the models packages add
+    (``RegisterParams``, ``StitchParams``), one per registered op (tagged with its ``op``
+    name), and ``OpSpec``, the union of them."""
     from chunkmirage.ops.base import get_op, list_ops
     from chunkmirage.pipeline import PipelineSpec
-    from chunkmirage.sources.register import RegisterParams
-    from chunkmirage.stitching import StitchParams
 
     ops = {name: get_op(name) for name in list_ops()}
-    models = [PipelineSpec, RegisterParams, StitchParams, *ops.values()]
+    added = _models()
+    models = [PipelineSpec, *added.values(), *ops.values()]
     _, top = models_json_schema([(m, "validation") for m in models], schema_generator=_Titled)
     defs = top["$defs"]
     for name, cls in ops.items():
@@ -54,8 +64,7 @@ def spec_schema() -> dict[str, Any]:
         "type": "object",
         "properties": {
             "pipeline": {"$ref": "#/$defs/PipelineSpec"},
-            "register": {"$ref": "#/$defs/RegisterParams"},
-            "stitch": {"$ref": "#/$defs/StitchParams"},
+            **{key: {"$ref": f"#/$defs/{m.__name__}"} for key, m in added.items()},
             "op": {"$ref": "#/$defs/OpSpec"},
         },
         "$defs": dict(sorted(defs.items())),

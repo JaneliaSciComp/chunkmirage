@@ -14,7 +14,7 @@ import tensorstore as ts
 import uvicorn
 
 from chunkmirage import Pipeline, create_app, open_source
-from chunkmirage.ops import Gaussian, Threshold
+from chunkmirage_contrib.ops import Gaussian, Threshold
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "demo-data.zarr", "blobs")

@@ -110,7 +110,7 @@ An op you will reuse becomes a class in a package of your own
 
 ```python
 from chunkmirage import Pipeline, open_source, create_app
-from chunkmirage.ops import Threshold
+from chunkmirage_contrib.ops import Threshold
 import uvicorn
 
 src = open_source("s3://bucket/data.zarr/em")           # multiscale group or single array

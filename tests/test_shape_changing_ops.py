@@ -12,7 +12,8 @@ from starlette.testclient import TestClient
 
 from chunkmirage import Pipeline, create_app, fused, open_source
 from chunkmirage.core import Box
-from chunkmirage.ops import Gradient, Op, Scale
+from chunkmirage.ops import Op
+from chunkmirage_contrib.ops import Gradient, Scale
 
 
 def central(vol, voxel, axes):

@@ -1,5 +1,5 @@
 // The track page: nuclei followed through a time-lapse of a stem cell colony, frame by
-// frame, as the segmentation is read: chunkmirage.tracking's step, one call a frame in the
+// frame, as the segmentation is read: chunkmirage_contrib.tracking's step, one call a frame in the
 // engine's Pyodide workers, on a box around each nucleus that the page's reader reads from
 // the public bucket. Neuroglancer shows the images and the nuclei straight from the bucket.
 // Each nucleus double-clicked is a track of its own colour, followed both ways in time; when
@@ -10,9 +10,9 @@
 // their track's number, so each lineage is one segment, one colour, in every frame (the
 // bucket's own ids change from frame to frame). Their volumes are plotted as frames come in.
 // Double-click a nucleus to follow it, a tracked one again to drop its track.
-import { Engine } from "./engine";
-import { TYPED } from "./ome";
-import type { ViewInfo } from "./types";
+import { Engine } from "../engine";
+import { TYPED } from "../ome";
+import type { ViewInfo } from "../types";
 
 const BASE = "https://allencell.s3.amazonaws.com/aics/nuc-morph-dataset/hipsc_fov_nuclei_timelapse_dataset/"
   + "hipsc_fov_nuclei_timelapse_data_used_for_analysis/baseline_colonies_fov_timelapse_dataset/20200323_09_small";
@@ -35,7 +35,7 @@ interface Branch { frames: Map<number, Found>; from?: number; lost?: number; end
 interface Track { id: number; colour: string; picked: { t: number; label: number }; branches: Branch[]; dropped: boolean; running: number }
 const COLOURS = ["#45f07a", "#ff4fd8", "#7ab0ff", "#ffd21f", "#ff8a3d", "#3de0ff"];
 const MAX_BRANCHES = 8;  // per track: a lineage two or three divisions deep
-// chunkmirage.tracking's: a collapse (DIVIDED of the largest in the dozen frames before), and
+// chunkmirage_contrib.tracking's: a collapse (DIVIDED of the largest in the dozen frames before), and
 // the daughters looked for after it (GAP frames, WITHIN µm of the mother)
 const DIVIDED = 0.65, GAP = 24, WITHIN = 18;
 let time: Frame = { frames: 1, minutes: 5 };
@@ -115,7 +115,7 @@ async function along(track: Track, branch: Branch, record: Found, t: number, dt:
   await Promise.all(splits);
 }
 
-/** chunkmirage.tracking.mother_of: if a branch lost at frame `lost` had collapsed first, its
+/** chunkmirage_contrib.tracking.mother_of: if a branch lost at frame `lost` had collapsed first, its
  * record at its largest in the dozen frames before (the nucleus that went into mitosis). */
 function motherOf(branch: Branch, lost: number): Found | null {
   const recent = [...branch.frames.entries()].filter(([t]) => lost - 12 <= t && t < lost).sort((a, b) => a[0] - b[0]).map(([, f]) => f);
@@ -124,7 +124,7 @@ function motherOf(branch: Branch, lost: number): Found | null {
   return recent[recent.length - 1].volume <= DIVIDED * biggest.volume ? biggest : null;
 }
 
-/** chunkmirage.tracking.daughters: up to two new nuclei near `mother`, from frame `lost` on,
+/** chunkmirage_contrib.tracking.daughters: up to two new nuclei near `mother`, from frame `lost` on,
  * each followed on as a branch of its own: likely daughters, a guess from where and when
  * they appear (the segmentation does not say which nucleus a new one came from). */
 async function daughters(track: Track, branch: Branch, mother: Found, lost: number) {

@@ -6,7 +6,7 @@ OME-Zarr segmentation, one nucleus at a time and nothing downloaded whole.
     uv run python examples/track_nucleus.py [--frame 100] [--label 148] [--out nucleus.csv]
 
 The segmentation numbers nuclei afresh in every frame, so the nucleus is followed by its
-overlap: in each next frame it is the label that covers most of it (``chunkmirage.tracking``,
+overlap: in each next frame it is the label that covers most of it (``chunkmirage_contrib.tracking``,
 the same code the browser's track page runs). It is followed both ways from ``--frame``
 until it is lost (it leaves the field, or the segmentation misses it). A nucleus dividing
 first collapses (mitosis breaks its envelope down) and is lost; the new nuclei that then
@@ -41,8 +41,9 @@ def main() -> None:
     ap.add_argument("--nuclei", type=int, default=8, help="at most this many in the lineage")
     args = ap.parse_args()
 
-    from chunkmirage import open_source, tracking
+    from chunkmirage import open_source
     from chunkmirage.core import Box
+    from chunkmirage_contrib import tracking
 
     ms = open_source(args.source, cache_bytes=1 << 30)
     level = ms[args.level]

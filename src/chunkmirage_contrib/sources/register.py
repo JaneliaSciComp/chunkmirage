@@ -80,7 +80,11 @@ from chunkmirage import demand
 from chunkmirage.cache import LRUCache
 from chunkmirage.core import ArrayInfo, Box
 from chunkmirage.neuroglancer import compare_shader, field_shader
-from chunkmirage.registration import (
+from chunkmirage.sources.base import MultiscaleSource, Source
+from chunkmirage.sources.scene import SceneLevelSource, _pick_level
+from chunkmirage.sources.warp import _SPATIAL, FieldLevelSource, FramesSource
+from chunkmirage.transforms import Affine, Displacements, Sequence, VectorField, simplify
+from chunkmirage_contrib.registration import (
     Grid,
     Level,
     Settings,
@@ -90,10 +94,6 @@ from chunkmirage.registration import (
     find_affine,
     solve,
 )
-from chunkmirage.sources.base import MultiscaleSource, Source
-from chunkmirage.sources.scene import SceneLevelSource, _pick_level
-from chunkmirage.sources.warp import _SPATIAL, FieldLevelSource, FramesSource
-from chunkmirage.transforms import Affine, Displacements, Sequence, VectorField, simplify
 
 log = logging.getLogger("chunkmirage")
 

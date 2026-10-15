@@ -42,6 +42,7 @@ def open_kept(url: str, *, cache_bytes: int = 0, cache=None) -> MultiscaleSource
 @pytest.fixture
 def clean(monkeypatch):
     monkeypatch.setattr(registry, "_SCHEMES", dict(registry._BUILTIN))
+    monkeypatch.setattr(registry, "_MATCHERS", {})
     monkeypatch.setattr(registry, "_ENTRYPOINTS_LOADED", False)
 
 
@@ -61,8 +62,7 @@ def test_an_entry_point_scheme_is_found_and_given_what_it_takes(clean, monkeypat
 
 def test_built_in_schemes_cannot_be_replaced(clean, monkeypatch):
     with pytest.raises(ValueError, match="built in"):
-        register_source("synthetic", open_ramp)
+        register_source("scene", open_ramp)
     ep = EntryPoint("stack", f"{__name__}:open_ramp", "chunkmirage.sources")
-    monkeypatch.setattr(registry, "entry_points", lambda group: [ep])
-    assert open_source("synthetic://blobs?shape=8,8,8&chunk=8,8,8&levels=1").levels[0].info.shape == (8, 8, 8)
+    monkeypatch.setattr(registry, "entry_points", lambda group: [ep] if group == "chunkmirage.sources" else [])
     assert registry._opener("stack").__module__ == "chunkmirage.sources.stack"

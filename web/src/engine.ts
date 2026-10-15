@@ -359,7 +359,7 @@ export class Engine {
     return this.reader.call<ArrayBuffer>({ type: "read", view, level, lo, hi, ...(at ? { at } : {}) });
   }
 
-  /** A step of a page's work (chunkmirage.stitching's, or tracking's `track_*`), run by the
+  /** A step of a page's work (chunkmirage_contrib.stitching's, or tracking's `track_*`), run by the
    * next Pyodide worker (started, with Python loading, if none runs yet). */
   call<T>(fn: string, args: Record<string, unknown>, arrays: ArrayBuffer[] = []): Promise<T> {
     return this.worker().call<T>({ type: "call", fn, args: JSON.stringify(args), arrays }, arrays);

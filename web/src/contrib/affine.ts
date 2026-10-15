@@ -5,8 +5,8 @@
 // coarse to fine. A few hundred thousand voxels are enough, so this runs on the CPU.
 // Images are {norm, shape, voxel, origin} (C order z, y, x, physical units), as the page
 // hands the field solve; the affine maps fixed to moving coordinates, rows [A | t].
-import { percentiles, prod } from "./ome";
-import type { Affine, Progress, Volume } from "./types";
+import { percentiles, prod } from "../ome";
+import type { Affine, Progress, Volume } from "../types";
 
 interface Scratch { mv: Float32Array; g: Float32Array }  // the fit's per-voxel values and gradients
 
