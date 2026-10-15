@@ -55,12 +55,19 @@ export type FromWorker =
  * ones waiting on a fetch another request started), network fetches and their bytes. */
 export interface StoreStats { requests: number; hits: number; fetches: number; fetchedBytes: number }
 
+/** What the service worker asks a page for (relay.ts): a request's path and range header,
+ * and, for a route that is more than a path, its method, headers and body. */
+export interface Ask { path: string; range: string | null; method: string; headers: [string, string][]; body: ArrayBuffer | null }
 /** The page's answer to a request the service worker relays, or null if it isn't the page's.
  * A chunk's answer comes in two parts: its head at once ({stream: true}), its body later as a
  * Later, so the service worker can stream it and tell the page ({cancel: true}) if the client
- * gives up first. */
-export type Reply = { status: number; body: string | ArrayBuffer; type: string; range?: string } | { status: number; type: string; stream: true; range?: string } | null;
-export type Later = { body: ArrayBuffer } | { error: string };
+ * gives up first; a body that comes in pieces (an event stream) is Laters of `chunk` until
+ * `done`. `headers`: any beyond the content type (an event stream's cache-control, say). */
+export type Reply =
+  | { status: number; body: string | ArrayBuffer; type: string; range?: string; headers?: [string, string][] }
+  | { status: number; type: string; stream: true; range?: string; headers?: [string, string][] }
+  | null;
+export type Later = { body: ArrayBuffer } | { chunk: ArrayBuffer } | { done: true } | { error: string };
 
 // ------------------------------------------------ the pipeline page, its reader and its Pyodide workers
 /** One view a pipeline page serves: chunkmirage's PipelineSpec, as far as the browser goes. */

@@ -430,6 +430,89 @@ much of what was read came from the cache. Fed the same affine and
   readers stay in TypeScript (tensorstore has no WebAssembly build), and the gallery
   (`index.html`) lists the demos; see [Demos](demos.md).
 
+### Another page on the engine
+
+A page of another project builds on the engine as the demos do: it clones `web/` at a
+commit (nothing of `web/` is published to npm yet, and the Python package's wheel holds
+none of it), imports `web/src/engine.ts` and what it needs beside it, and bundles them as
+the demos are bundled (Vite; the Pyodide workers import the package's Python from `src/`
+as text). What such a page gets, in the order it uses it:
+
+* `Engine.start(views, status, {packages, python})` registers the service worker, starts
+  the reader and opens `views`' sources; `Engine.read(view, level, lo, hi)` then reads a
+  region of any of them, and `Engine.add(views)` opens more later. Python (Pyodide, about
+  6 s and 15 MB) loads only when a view needs it, that is has ops to run, a `synthetic://`
+  source or a mesh: a view with no ops is planned on the page from its source alone and
+  served from the reader, each chunk the region as read placed whole in the chunk
+  (`web/src/asread.ts`), and a view whose chunks the page computes itself needs none
+  either. So a page that serves only such views never loads Python; one that will `call()`
+  the package's Python (`chunkmirage.stitching`, `tracking`) passes `python: "always"`, so
+  it loads while the data opens. `ready` resolves once every view given to `start` is
+  planned, Python loaded if it was started.
+* `Engine.serve(view, info, chunk, produce)` serves a view whose chunks the page computes
+  (a model run by ONNX Runtime Web, say): `produce(level, index)` gives each chunk as zarr
+  v3 bytes, the engine queues, shares and drops the work as its own (finest level first,
+  chunks no client waits for any more dropped unrun), keeps the chunks a while (256 MB)
+  and serves them as OME-Zarr 0.5, zarr v2 and GeoZarr at `Engine.url(view)` and the rest.
+* `Engine.serveStages(view, info, chunk, from, stages, padding)` serves a view the page
+  computes in stages (`web/src/stages.ts`), the browser's side of the Python pipeline's
+  per-stage cache: each stage has a `key` (the page's hash of what it computes: a model's
+  weights and parameters), a `halo`, its output `dtype` and the leading axes it adds, and a
+  `produce(input, at)` that makes its output block from its input, the stage before's
+  output over the block grown by the halo. The first stage reads `from`, an opened view, at
+  the level its `inputVoxelSize` names (the model-at-one-resolution case,
+  `Op.input_voxel_size`: a model reads 8 nm voxels and writes 16 nm ones, the view declared
+  at 16 nm), the box on that grid grown by its halo, padded past the array's edge as the
+  pipeline pads (`padding`, edge or zero); a stage may return its block whole or shaved by
+  its halo, as an op may. Such a view has one level: the Python pipeline runs a pinned op at
+  its level and downsamples its result for the coarser ones, the engine does not yet, so
+  `serveStages` refuses more. Each stage's output is kept under the stage's key with what it
+  reads and where (the source view and its padding, the box at its voxel size), not the
+  view's name (512 MB), so a view served again with its postprocessing changed finds the
+  model's output already made, two views sharing a stage share its outputs, and an output
+  asked for twice while on its way is made once; the last stage's
+  output is placed whole in the chunk, its added axes first, as the Pyodide workers lay a
+  chunk out. `serve` is the one-stage case with the page doing the reading.
+* An `onnx` stage (`web/src/onnx.ts`): a model's forward pass as a stage of such a view,
+  ONNX Runtime Web on the GPU through its WebGPU execution provider, on WebAssembly (the
+  CPU) when the browser has none. `new Onnx({wasmPaths, log})` holds the sessions, one per
+  model (`OnnxModel`: a key that is its identity, its bytes when first needed, the tensors
+  to feed and read, the session's first by default), shared by the views that use it
+  (`retain`, `release`; `reset` drops them all, for a session in a bad state), each running
+  one forward pass at a time, since two overlapping on WebGPU never resolve; `limits()`
+  gives the GPU's `maxBufferSize` and whether it has `shader-f16`, for a page choosing
+  among a model's sizes. `onnxStage(onnx, model, {halo, inputVoxelSize, added})` feeds
+  each input block as a float32 tensor `[1, C, z, y, x]` and returns the tensor the model
+  wrote as the stage's block. Nothing of a model's meaning is in it: what its input is
+  normalized to and what its output means are stages of the page's own, before and after,
+  and whatever describes its models stays with the page. ORT's WebAssembly runtime (27 MB)
+  is served beside the page by the Vite plugin in `web/vite-ort.ts` (`plugins:
+  [ortRuntime()]` in the page's Vite config), from the installed package in development
+  and copied into the build, so the page loads nothing from a CDN. The demos do not use it:
+  `onnxruntime-web` is an optional peer dependency of `web/`, installed by a page that has
+  the stage and by nothing else (the demos' builds carry none of it), and a dev dependency,
+  so the stage is typed with the rest and run in `npm test` through the WebAssembly backend,
+  which runs in Node as in a browser without WebGPU, on two models of a hundred bytes
+  (`web/test/onnx.test.ts`, the models written by `web/test/fixtures/make_onnx.py`).
+* `Engine.unserve(view)` stops serving a view: its infos, producer and kept chunks are
+  forgotten and chunks of it waiting to be computed dropped, so a page that serves a model
+  again under a new name (viewers cache by URL, so an edit is a new name) does not keep the
+  old one's chunks. `Engine.stop()` terminates the reader and the Pyodide workers, drops
+  waiting chunks and forgets every view; a page that opens another source then starts a
+  fresh `Engine`, whose URLs carry a new page id, so a viewer fetches afresh.
+* The service worker. The engine registers `sw.js` beside the page, by name, so a page
+  with routes of its own (an API its page answers, files picked on the machine) bundles its
+  own service worker from `web/src/relay.ts`, as `web/src/sw.ts` is: `relay(request,
+  {pick, timeout})` asks the open pages (all of them, or those `pick` chooses) for the
+  request, its path, range, method, headers and body, and streams the answer, a chunk's
+  body once computed or an event stream's pieces as they come, telling the page when the
+  client gives up; `fromStore(request)` is the store cache, with its `stats`. On the page,
+  `route(prefix, handler)` (`web/src/routes.ts`) answers the asks whose path holds a prefix:
+  the engine routes its share of `/virtual/` there, a page adds its own beside it, and a
+  page with no route for a path declines it at once, so the worker never waits on a page
+  that has nothing for it. One listener for the page rather than one per route, since the
+  worker takes a page's first message as its answer.
+
 ## Deployment shapes
 
 * **Laptop**: `chunkmirage serve … --port 8000`, open the printed link.

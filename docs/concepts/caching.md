@@ -66,7 +66,7 @@ dask array reading each chunk once is served as well as a viewer.
 ## In the browser engine
 
 The [browser page](../design.md#client-side-browser-roadmap) keeps the same three, in the
-browser:
+browser, and two more for what a page computes itself:
 
 * **Fetched source bytes**, in its service worker (512 MB, still compressed): every read of
   the images' stores, by the page, its chunk workers and the viewer alike, goes through it,
@@ -76,6 +76,14 @@ browser:
   page for its block fits, each chunk worker for resampling; 128 to 192 MB each), so a store
   chunk is decoded once per context however many regions overlap it.
 * **Fitted blocks** of `refine`d fields, on the page.
+* **Chunks the page computed** for a view it serves (`Engine.serve`; 256 MB, least recently
+  used out), for a viewer that fetches them again.
+* **The outputs of a staged view's stages** (`Engine.serveStages`; 512 MB), by what the
+  stage computes and reads and where (its key, the source view and its padding, the box at
+  its voxel size), not by the view's name: a view served again under a new name after an
+  edit of a later stage finds the earlier stages' outputs made, and two views sharing a stage
+  share them; an output on its way is made once however many ask. `Engine.unserve` drops a
+  view's chunks but not its stages' outputs; `stop` drops both.
 
 Before the first two, zooming the EASI-FISH pair's link to full resolution fetched 11.7 GB
 for 0.9 GB of distinct store chunks, each read 13 times on average, and the network, not the

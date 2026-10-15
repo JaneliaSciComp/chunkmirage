@@ -87,7 +87,9 @@ describe shipped features as future work.
    serves the registered volume to Neuroglancer through a service worker, computed by web
    workers. The docs site hosts it with its own Neuroglancer build, and a gallery of demos
    whose pipelines run chunkmirage's own ops in the page through Pyodide (see
-   [Demos](demos.md)). What remains, in order:
+   [Demos](demos.md)). A page of another project builds on the engine, which loads Python
+   only for the views that need it (see the
+   [design notes](design.md#another-page-on-the-engine)). What remains, in order:
     * Cards built from the schema: a form for each card's parameters, so a visitor edits the
       pipeline as the control page edits a server's.
     * Ops on the GPU. The pointwise and filter ops as WebGPU compute shaders, each with a
@@ -102,7 +104,11 @@ describe shipped features as future work.
       Runtime and ONNX Runtime Web). (The CPU tier has shipped: the
       [`python` op](reference/ops.md#your-own-python-the-python-op) runs in the page
       through Pyodide and natively in Python, where a server takes it through the REST
-      API only with `--allow-code`; the demos' chat asks a model for it.)
+      API only with `--allow-code`; the demos' chat asks a model for it. In the browser,
+      an ONNX Runtime Web stage runs a model on WebGPU as one stage of a view a page
+      computes in stages, with the model's output kept while its postprocessing changes;
+      see the [design notes](design.md#another-page-on-the-engine). Python's ONNX Runtime
+      op is still to do.)
     * A CI job that runs the page headless and diffs its chunks against Python's, so the
       engines cannot drift. Whether the page's WebGPU shaders can also serve Python
       (wgpu-py), as one implementation of the solver for both, is still to be measured
