@@ -388,7 +388,7 @@ function attach() {
 async function start() {
   const t0 = performance.now();
   time = await timeAxis();
-  await engine.start({ seg: { source: SEG, select: { t: 0, c: 0 }, chunk: [1, 256, 256] } }, status);
+  await engine.start({ seg: { source: SEG, select: { t: 0, c: 0 }, chunk: [1, 256, 256] } }, status, { python: "always" });  // the tracking steps are Python
   status(`Data opened in ${((performance.now() - t0) / 1000).toFixed(1)} s; loading Python…`);
   const s = engine.sources.seg, toM = (TO_UM[s.axes[2].unit] ?? 1) * 1e-6;
   // the viewer's grid: the images' finest (the segmentation's is finer still), and frames

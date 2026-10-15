@@ -65,3 +65,7 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
 
 - Registration on WebGPU and pipelines of the package's own ops in Pyodide, in a gallery of
   demos.
+- The engine as a base for a page of another project
+  ([design](docs/design.md#another-page-on-the-engine)): Python loads only when a view
+  needs it, a view with no ops served from the reader alone; `unserve()` forgets a view and
+  its chunks, `stop()` the engine's workers.

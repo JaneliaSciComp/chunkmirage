@@ -87,7 +87,9 @@ describe shipped features as future work.
    serves the registered volume to Neuroglancer through a service worker, computed by web
    workers. The docs site hosts it with its own Neuroglancer build, and a gallery of demos
    whose pipelines run chunkmirage's own ops in the page through Pyodide (see
-   [Demos](demos.md)). What remains, in order:
+   [Demos](demos.md)). A page of another project builds on the engine, which loads Python
+   only for the views that need it (see the
+   [design notes](design.md#another-page-on-the-engine)). What remains, in order:
     * Cards built from the schema: a form for each card's parameters, so a visitor edits the
       pipeline as the control page edits a server's.
     * Ops on the GPU. The pointwise and filter ops as WebGPU compute shaders, each with a

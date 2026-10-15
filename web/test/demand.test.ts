@@ -55,6 +55,32 @@ test("running work is kept when its request gives up", async () => {
   assert.deepEqual([...(await fit)], [7]);
 });
 
+test("work that cannot be done any more is dropped unrun, whatever claims it holds", async () => {
+  const slots = occupy("gone");
+  let ran = false;
+  let dropped = false;
+  const fit = queue.submit("gone/0/0.0.0", 0, () => { ran = true; return done(); }, () => { dropped = true; });
+  queue.claim("gone/0/0.0.0"); // two requests want it still
+  queue.drop("gone/0/0.0.0", "gone is no longer served");
+  await assert.rejects(fit, (e: Error) => e instanceof Cancelled && e.message === "cancelled: gone is no longer served");
+  slots.open();
+  await Promise.all(slots.jobs);
+  assert.equal(ran, false);
+  assert.equal(dropped, true);
+});
+
+test("dropping work that is running, or unknown, changes nothing", async () => {
+  let finish!: () => void;
+  const gate = new Promise<void>((resolve) => (finish = resolve));
+  const fit = queue.submit("running still", 0, async () => { await gate; return new Float32Array([3]); }, () => {});
+  const before = queue.dropped;
+  queue.drop("running still");
+  queue.drop("never submitted");
+  assert.equal(queue.dropped, before);
+  finish();
+  assert.deepEqual([...(await fit)], [3]);
+});
+
 test("a claim cancelled already runs what is hooked to it at once", () => {
   const claim = new Claim();
   let calls = 0;

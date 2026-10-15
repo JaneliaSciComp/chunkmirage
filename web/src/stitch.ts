@@ -305,7 +305,7 @@ function controls() {
 async function start() {
   ($("xml") as HTMLAnchorElement).href = XML;
   const t0 = performance.now();
-  await engine.start({}, status, ["scipy"]);  // the interest points' filters
+  await engine.start({}, status, { packages: ["scipy"], python: "always" });  // every step is Python; scipy for the interest points' filters
   await engine.ready;
   status(`Python ready in ${seconds(t0)}. Reading the project…`);
   controls();

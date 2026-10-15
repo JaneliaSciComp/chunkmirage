@@ -20,7 +20,9 @@ export class Claim {
   cancel() { if (this.cancelled) return; this.cancelled = true; for (const f of this.hooks.splice(0)) f(); }
 }
 
-export class Cancelled extends Error { constructor() { super("cancelled: no request wants this any more"); } }
+/** Work that will not be done: no request wants it any more, or (`why`) it cannot be done,
+ * its view no longer served or its engine stopped. */
+export class Cancelled extends Error { constructor(why = "no request wants this any more") { super(`cancelled: ${why}`); } }
 
 interface Job<T> {
   run: () => Promise<T>; level: number; seq: number;  // seq: when first asked for
@@ -62,10 +64,19 @@ export class Queue<T = Float32Array> {
   release(key: string) {
     const job = this.waiting.get(key);
     if (!job || --job.demand > 0) return;
+    this.drop(key);
+  }
+
+  /** A waiting fit dropped unrun, whatever claims it holds: `release` does this once none
+   * is left, and the page when the fit cannot be done any more (`why`: its view is no
+   * longer served, the engine stopped). One running finishes; one unknown is nothing. */
+  drop(key: string, why?: string) {
+    const job = this.waiting.get(key);
+    if (!job) return;
     this.waiting.delete(key);
     this.dropped++;
     job.onDrop();
-    job.reject(new Cancelled());
+    job.reject(new Cancelled(why));
     this.onChange();
   }
 
