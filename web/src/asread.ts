@@ -23,14 +23,35 @@ export function asRead(source: SourceInfo): Plan {
 }
 
 /** The typed arrays of the dtypes the reader gives (numpy's names); any other dtype is read
- * as float32 (ome.ts). Here, in a module with no other imports, so the pure parts of the
- * engine (this, stages.ts) run in Node's tests. */
-export type Numbers = Uint8Array | Int8Array | Uint16Array | Int16Array | Uint32Array | Int32Array | Float32Array | Float64Array;
+ * as float32 (ome.ts). The 64-bit integers (a segmentation's labels, past 2^53 as numpy's
+ * uint64 goes) are BigUint64Array and BigInt64Array, whose elements are bigints, not
+ * numbers: code over `Numbers` that does arithmetic on an element narrows to the kinds it
+ * takes, or converts (`Number(v)`). Here, in a module with no other imports, so the pure
+ * parts of the engine (this, stages.ts) run in Node's tests. */
+export type Numbers = Uint8Array | Int8Array | Uint16Array | Int16Array | Uint32Array | Int32Array | BigUint64Array | BigInt64Array | Float32Array | Float64Array;
 export type TypedCtor = { new (n: number): Numbers & { buffer: ArrayBuffer }; new (buffer: ArrayBuffer): Numbers; BYTES_PER_ELEMENT: number };
 export const TYPED: Record<string, TypedCtor> = {
-  uint8: Uint8Array, uint16: Uint16Array, uint32: Uint32Array, int8: Int8Array, int16: Int16Array, int32: Int32Array,
+  uint8: Uint8Array, uint16: Uint16Array, uint32: Uint32Array, uint64: BigUint64Array, int8: Int8Array, int16: Int16Array, int32: Int32Array, int64: BigInt64Array,
   float32: Float32Array, float64: Float64Array,
 };
+
+/** The kinds of `Numbers` whose elements are numbers: all but the 64-bit integers. */
+export type Reals = Exclude<Numbers, BigUint64Array | BigInt64Array>;
+
+/** `data` with numbers for elements, for arithmetic over it (display limits, intensities to
+ * register): itself, or for a 64-bit integer kind its bigints converted, exact to 2^53 and
+ * the nearest double past it, so for intensities, not for ids. */
+export function asReals(data: Numbers): Reals {
+  return data instanceof BigUint64Array || data instanceof BigInt64Array ? Float64Array.from(data, Number) : data;
+}
+
+/** `set` and `fill` on a typed array of any kind with elements of its own kind, numbers or
+ * bigints. Code that makes its output of its input's dtype (`padded` and `crop` in stages.ts,
+ * the readers assembling a region from pieces) knows the two are of one kind, which
+ * TypeScript cannot see across the union, where each kind's methods take its own elements
+ * alone; such code casts its output to this (`as unknown as Settable`) and sets it from its
+ * input as it is. */
+export type Settable = { set(values: ArrayLike<number | bigint>, at: number): void; fill(v: number | bigint, from: number, to: number): void };
 
 /** A whole zarr chunk of `chunk` voxels (the channels first, if more than one) from the
  * region the reader read: `read` voxels of each channel one after another, in `dtype`. The

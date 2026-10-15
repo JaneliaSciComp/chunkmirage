@@ -464,7 +464,13 @@ as text). What such a page gets, in the order it uses it:
   `Op.input_voxel_size`: a model reads 8 nm voxels and writes 16 nm ones, the view declared
   at 16 nm), the box on that grid grown by its halo, padded past the array's edge as the
   pipeline pads (`padding`, edge or zero); a stage may return its block whole or shaved by
-  its halo, as an op may. Such a view has one level: the Python pipeline runs a pinned op at
+  its halo, as an op may. A stage's block is the typed array of the dtype it declares, any
+  the engine's table knows (`TYPED` in `web/src/asread.ts`: numpy's names for the integers
+  of 8 to 64 bits and the floats of 32 and 64), the 64-bit integers as `BigUint64Array` and
+  `BigInt64Array`, whose elements are bigints, so a segmentation's labels past 2^53
+  (`np.uint64` as the Python ops write it) reach the chunk whole and are served as zarr's
+  `uint64` (`<u8` in v2); the stage cache and the chunk's layout go by bytes, so nothing
+  converts them. Such a view has one level: the Python pipeline runs a pinned op at
   its level and downsamples its result for the coarser ones, the engine does not yet, so
   `serveStages` refuses more. Each stage's output is kept under the stage's key with what it
   reads and where (the source view and its padding, the box at its voxel size), not the

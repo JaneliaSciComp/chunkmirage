@@ -3,7 +3,7 @@
 // stack://, flip:// and select wrappers. Each is a pyramid of three-axis levels (z, y, x, or
 // an xarray array's own, such as time, lat, lon), with channels only for a stack; reads go
 // through the service worker's store cache like every other fetch on the page.
-import { openImage, prod, RegionReader, TYPED, zarr, type Image, type Numbers, type TypedCtor } from "./ome";
+import { asReals, openImage, prod, RegionReader, TYPED, zarr, type Image, type Numbers, type Settable, type TypedCtor } from "./ome";
 import type { ViewAxis } from "./types";
 
 export interface SourceLevel { shape: number[]; voxel: number[]; origin: number[]; chunks: number[] }
@@ -118,9 +118,9 @@ async function xarraySource(url: string): Promise<Source> {
     axes: dims.map((name, a) => ({ name, unit: coords[a].unit })),
     levels: [{ shape: arr.shape, voxel, origin, chunks: arr.chunks }],
     read: async (li, _c, lo, hi) => {
-      const raw = (await reader.read(li, 0, lo, hi)).data;
-      if (!packed) return raw;
-      const out = new Float32Array(raw.length), m = missing == null ? NaN : num(missing);
+      const { data } = await reader.read(li, 0, lo, hi);
+      if (!packed) return data;
+      const raw = asReals(data), out = new Float32Array(raw.length), m = missing == null ? NaN : num(missing);
       for (let i = 0; i < raw.length; i++) out[i] = raw[i] === m ? NaN : raw[i] * scale + offset;
       return out;
     },
@@ -294,7 +294,7 @@ async function assemble(T: TypedCtor, block: number[], lo: number[], hi: number[
     for (let z = from[0]; z < to[0]; z++) for (let y = from[1]; y < to[1]; y++) {
       const src = ((z - start[0]) * bs[1] + (y - start[1])) * bs[2] - start[2];
       const dst = ((z - lo[0]) * shape[1] + (y - lo[1])) * shape[2] - lo[2];
-      out.set(data.subarray(src + from[2], src + to[2]) as ArrayLike<number>, dst + from[2]);
+      (out as unknown as Settable).set(data.subarray(src + from[2], src + to[2]), dst + from[2]);  // a block is of `T`
     }
   });
   return out;
@@ -318,7 +318,7 @@ function flip(inner: Source, axes: string[], url: string): Source {
         const sz = fz ? n[0] - 1 - z : z, sy = fy ? n[1] - 1 - y : y;
         const src = (sz * n[1] + sy) * n[2], dst = (z * n[1] + y) * n[2];
         if (fx) for (let x = 0; x < n[2]; x++) out[dst + x] = d[src + n[2] - 1 - x];
-        else out.set(d.subarray(src, src + n[2]) as ArrayLike<number>, dst);
+        else (out as unknown as Settable).set(d.subarray(src, src + n[2]), dst);  // `out` is of `d`'s kind
       }
       return out;
     },

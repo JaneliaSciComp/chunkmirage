@@ -2,7 +2,7 @@
 // the fixed image's grid through the affine and, for a solved view, the field), as
 // chunkmirage's scene:// resampler does on a server. The page hands it Neuroglancer's
 // chunk requests, relayed by the service worker, and passes the bytes back.
-import { fieldAt, openImage, RegionReader, type Image, type TypedCtor } from "./ome";
+import { asReals, fieldAt, openImage, RegionReader, type Image, type TypedCtor } from "./ome";
 import type { Affine, ControlGrid, FromWorker, Lattice, LevelGrid, ToWorker, ViewKind } from "./types";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
@@ -149,7 +149,7 @@ async function chunk({ reqId, id, level, channel, index }: { reqId: number; id: 
   }
   if (!any) return out.buffer;
   const rlo = lo.map((v) => Math.max(0, v)), rhi = hi.map((v, a) => Math.min(ml.shape[a], v + 1));
-  const { data: src, shape: rs } = await reader.read(li, channel, rlo, rhi);
+  const { data, shape: rs } = await reader.read(li, channel, rlo, rhi), src = asReals(data);
   const round = Typed !== Float32Array && Typed !== Float64Array;
   const [tz, ty, tx] = ml.shape.map((v) => v - 1), [lz, ly, lx] = rlo, [, ry, rx] = rs;
   p = 0;

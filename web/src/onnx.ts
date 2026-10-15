@@ -9,7 +9,7 @@
 // overlapping on WebGPU never resolve. ORT's WebAssembly runtime is fetched from `wasmPaths`,
 // ort/ beside the page by default, where the Vite plugin in web/vite-ort.ts serves it.
 import * as ort from "onnxruntime-web/webgpu";
-import type { Numbers } from "./asread";
+import { asReals, type Numbers } from "./asread.ts";  // with its extension: Node's runner (npm test) resolves no other
 import { prod, type Block, type Stage } from "./stages.ts";  // with its extension: Node's runner (npm test) resolves no other
 
 /** A model: its bytes when first needed (the page keeps them as it likes), under a key that
@@ -170,7 +170,7 @@ export function onnxStage(onnx: Onnx, model: OnnxModel, options: OnnxStageOption
     key: options.key ?? model.key, halo: options.halo, inputVoxelSize: options.inputVoxelSize, dtype, added,
     async produce(input: Block): Promise<Block> {
       const lead = prod(input.shape.slice(0, -3));
-      const data = input.data instanceof Float32Array ? input.data : Float32Array.from(input.data as ArrayLike<number>);
+      const data = input.data instanceof Float32Array ? input.data : Float32Array.from(asReals(input.data));  // a 64-bit integer block's bigints as numbers
       const out = await onnx.run(model, data, [1, lead, ...input.shape.slice(-3)]);
       if (out.type !== dtype) throw new Error(`${model.key} wrote ${out.type}, not the ${dtype} its stage declares`);
       let shape = out.dims;

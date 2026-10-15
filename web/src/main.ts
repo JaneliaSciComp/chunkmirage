@@ -7,7 +7,7 @@ import { Blocks, normalize } from "./blocks";
 import { Cancelled, Claim, queue } from "./demand";
 import type { RegisterParams } from "./generated/chunkmirage";
 import schema from "./generated/chunkmirage.schema.json";
-import { nearestLevel, openImage, percentiles, prod, readLevel, type Image, type Numbers } from "./ome";
+import { asReals, nearestLevel, openImage, percentiles, prod, readLevel, type Image, type Numbers } from "./ome";
 import { gpu, solve, type Settings } from "./solver";
 import type { Affine, ControlGrid, FromWorker, Later, Reply, StoreStats, ToWorker, ViewKind, Volume } from "./types";
 
@@ -590,8 +590,8 @@ async function run() {
     $("afterCaption").textContent = "After: solving…";
     $("fieldCaption").textContent = "Field: solving…";
 
-    const fr = percentiles(read[0][0].data, [0.5, 99.5]), mr = percentiles(read[0][1].data, [0.5, 99.5]);
-    const raw = ({ data: d, shape, voxel, origin }: typeof read[0][0]): Volume => ({ norm: Float32Array.from(d), shape, voxel, origin });
+    const fr = percentiles(asReals(read[0][0].data), [0.5, 99.5]), mr = percentiles(asReals(read[0][1].data), [0.5, 99.5]);
+    const raw = ({ data: d, shape, voxel, origin }: typeof read[0][0]): Volume => ({ norm: Float32Array.from(asReals(d)), shape, voxel, origin });
     const data: [Volume, Volume][] = read.map(([fl, ml]) => {
       let [f0, m0] = [raw(fl), raw(ml)];
       // a level too big for this GPU (the stored pyramid stops early): coarser copies of its own,

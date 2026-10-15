@@ -1,9 +1,12 @@
 // A view computed in stages on the page (src/stages.ts): the first stage's input box on its
 // grid (fused.input_box's rule), the level at a voxel size, a block padded past the array's
-// edge as the Python pipeline pads (edge or zero), and a stage's result fitted to its
-// output box, whole or shaved by its halo. Run by `npm test`.
+// edge as the Python pipeline pads (edge or zero), a stage's result fitted to its output
+// box, whole or shaved by its halo, and a 64-bit segmentation's labels (bigints) through all
+// of it and the stage cache whole. Run by `npm test`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { TYPED, wholeChunk } from "../src/asread.ts";
+import { Kept } from "../src/kept.ts";
 import { bytes, crop, fitted, inputBox, levelAt, padded } from "../src/stages.ts";
 
 test("the input box is the output box on the input's grid, grown by the halo, and must be whole", () => {
@@ -77,4 +80,53 @@ test("added axes come first and are cropped with the block", () => {
   assert.deepEqual([...crop(block, [0, 0, 1], [2, 1, 1, 2]).data], [2, 3, 6, 7]);
   const view = new Float32Array(block.data.buffer, 8, 2);  // a view on part of a buffer
   assert.deepEqual([...new Float32Array(bytes(view))], [3, 4]);
+});
+
+/** The labels of a (z, y, x) = (2, 2, 3) uint64 segmentation, as a stage returns them: a
+ * BigUint64Array, one label past 2^53 (numpy's uint64 goes there; a number would round it). */
+const BIG = 2n ** 63n + 5n;
+const labels = BigUint64Array.from([0n, 1n, 2n, 3n, BIG, 5n, 6n, 7n, 8n, 9n, 10n, 11n]);
+
+test("a 64-bit integer block is padded, fitted and cropped as any other, its bigints kept whole", () => {
+  const inside = padded(labels.buffer, "uint64", 1, [0, 0, 0], [2, 2, 3], [0, 0, 0], [2, 2, 3], "edge");
+  assert.ok(inside.data instanceof BigUint64Array);
+  assert.equal(inside.data.buffer, labels.buffer);  // all inside: as read
+  // the box one voxel wider on every side: past the edge, zeros (0n) or the outermost labels
+  const zero = padded(labels.buffer, "uint64", 1, [0, 0, 0], [2, 2, 3], [-1, -1, -1], [3, 3, 4], "zero");
+  assert.ok(zero.data instanceof BigUint64Array);
+  assert.deepEqual(zero.shape, [4, 4, 5]);
+  const at = (z: number, y: number, x: number) => zero.data[(z * 4 + y) * 5 + x];
+  assert.deepEqual([at(1, 1, 1), at(1, 2, 2), at(2, 2, 3)], [0n, BIG, 11n]);
+  assert.deepEqual([at(0, 0, 0), at(1, 1, 0), at(1, 1, 4), at(3, 3, 4)], [0n, 0n, 0n, 0n]);
+  const edge = padded(labels.buffer, "uint64", 1, [0, 0, 0], [2, 2, 3], [-1, -1, -1], [3, 3, 4], "edge");
+  const row = (z: number, y: number) => [...edge.data.subarray((z * 4 + y) * 5, (z * 4 + y) * 5 + 5)];
+  assert.deepEqual(row(1, 2), [3n, 3n, BIG, 5n, 5n]);  // a row inside: its ends filled with its outermost labels
+  assert.deepEqual(row(0, 0), [0n, 0n, 1n, 2n, 2n]);   // a row past the edge: the nearest row inside
+  assert.deepEqual(row(3, 3), [9n, 9n, 10n, 11n, 11n]);
+  // fitted: as the output's shape, or shaved by the halo (the padded block shaved by its padding is the labels again)
+  const shape = [2, 2, 3], grown = [4, 4, 5], halo = [1, 1, 1];
+  assert.deepEqual(fitted(labels, "uint64", shape, grown, halo), { data: labels, shape });
+  const shaved = fitted({ data: edge.data, shape: grown }, "uint64", shape, grown, halo);
+  assert.ok(shaved.data instanceof BigUint64Array);
+  assert.deepEqual([...shaved.data], [...labels]);
+  assert.throws(() => fitted(labels, "int64", shape, grown, halo), /returned a BigUint64Array, not the int64 it declares/);
+  assert.throws(() => fitted(Float64Array.from(labels, Number), "uint64", shape, grown, halo), /returned a Float64Array, not the uint64 it declares/);
+  // crop, with a leading axis, of the signed kind
+  const signed = { data: BigInt64Array.from([-1n, 2n, 3n, -4n, 5n, 6n, 7n, -(2n ** 62n)]), shape: [2, 1, 1, 4] };
+  const cropped = crop(signed, [0, 0, 1], [2, 1, 1, 2]);
+  assert.ok(cropped.data instanceof BigInt64Array);
+  assert.deepEqual([...cropped.data], [2n, 3n, 6n, 7n]);
+});
+
+test("a view declared uint64 keeps 0n and labels past 2^53 through the stage cache and into its chunk", () => {
+  // as Engine.stage keeps a stage's block (its bytes under the stage's key) and reads it back in the stage's dtype
+  const kept = new Kept(1 << 20);
+  kept.put("stage|from|edge|8.8.8|0.0.0|2.2.3", bytes(labels));
+  const back = new TYPED.uint64(kept.get("stage|from|edge|8.8.8|0.0.0|2.2.3")!);
+  assert.ok(back instanceof BigUint64Array);
+  assert.deepEqual([...back], [...labels]);
+  // and as stagedChunk lays the last stage's block out in a chunk the array ends short of: eight bytes a voxel
+  const chunk = new BigUint64Array(wholeChunk(bytes(back), "uint64", 1, [2, 2, 3], [2, 2, 4]));
+  assert.deepEqual([...chunk], [0n, 1n, 2n, 0n, 3n, BIG, 5n, 0n, 6n, 7n, 8n, 0n, 9n, 10n, 11n, 0n]);
+  assert.notEqual(BigInt(Number(BIG)), BIG);  // which a number could not have kept
 });
