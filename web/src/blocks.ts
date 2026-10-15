@@ -8,7 +8,7 @@
 // and latest requests first, a few at once, and dropped if every request for one gives up.
 import { halve } from "./affine";
 import { Claim, queue } from "./demand";
-import { fieldAt, nearestLevel, prod, RegionReader, type Image, type Numbers } from "./ome";
+import { asReals, fieldAt, nearestLevel, prod, RegionReader, type Image, type Reals } from "./ome";
 import { controlShape, sampled, solve, type Gpu, type Settings } from "./solver";
 import type { Affine, ControlGrid, Lattice, Volume } from "./types";
 
@@ -25,7 +25,7 @@ const readers = new WeakMap<Image, RegionReader>();
 const readerOf = (img: Image) => { let r = readers.get(img); if (!r) readers.set(img, (r = new RegionReader(img, READER_BYTES))); return r; };
 
 /** Intensities to [0, 1] between lo and hi, clipped, as registration.normalize. */
-export function normalize(d: Numbers, [lo, hi]: number[]): Float32Array {
+export function normalize(d: Reals, [lo, hi]: number[]): Float32Array {
   const o = new Float32Array(d.length), k = 1 / Math.max(hi - lo, 1e-12);
   for (let i = 0; i < d.length; i++) o[i] = Math.min(1, Math.max(0, (d[i] - lo) * k));
   return o;
@@ -148,8 +148,8 @@ export class Blocks {
     const m = await readerOf(moving).read(j, movingChannel, mlo, mhi);
     // coarse to fine within the block, while a copy is worth it: halved as stored pyramids
     // are (the voxels' means), then normalized, as register.py does
-    const fs: Volume[] = [{ norm: Float32Array.from(f.data), shape: f.shape, voxel: f.voxel, origin: f.origin }];
-    const ms: Volume[] = [{ norm: Float32Array.from(m.data), shape: m.shape, voxel: m.voxel, origin: m.origin }];
+    const fs: Volume[] = [{ norm: Float32Array.from(asReals(f.data)), shape: f.shape, voxel: f.voxel, origin: f.origin }];
+    const ms: Volume[] = [{ norm: Float32Array.from(asReals(m.data)), shape: m.shape, voxel: m.voxel, origin: m.origin }];
     for (let s = 0; s < this.stages; s++) {
       if (Math.min(...fs[0].shape) < 2 * Math.max(MIN_SIZE, st.window)) break;
       fs.unshift(halve(fs[0])); ms.unshift(halve(ms[0]));

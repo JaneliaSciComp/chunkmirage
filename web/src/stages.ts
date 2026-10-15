@@ -9,9 +9,11 @@
 // ones) over its box on that grid, grown by its halo and padded past the array's edge (the
 // view's `padding`, edge or zero, as the Python pipeline's); and a stage returns its block
 // whole or shaved by its halo, as an op may.
-import { TYPED, type Numbers } from "./asread.ts";  // with its extension: Node's runner (npm test) resolves no other
+import { TYPED, type Numbers, type Settable } from "./asread.ts";  // with its extension: Node's runner (npm test) resolves no other
 
-/** A block of voxels: `data` in C order over `shape`, any leading axes (channels) first. */
+/** A block of voxels: `data` in C order over `shape`, any leading axes (channels) first, the
+ * typed array of its dtype (asread.ts's table: a BigUint64Array for uint64, so a
+ * segmentation's labels past 2^53 pass through whole). */
 export interface Block { data: Numbers; shape: number[] }
 
 /** Where a stage computes: the view and level, the chunk's index, the stage's output box
@@ -44,7 +46,6 @@ export type Padding = "edge" | "zero";
 
 export const prod = (shape: number[]) => shape.reduce((a, b) => a * b, 1);
 const same = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => v === b[i]);
-type Settable = { set(values: ArrayLike<number>, at: number): void; fill(v: number, from: number, to: number): void };
 
 /** The bytes of `data` alone (a typed array may be a view on a larger buffer). */
 export function bytes(data: Numbers): ArrayBuffer {
@@ -71,12 +72,14 @@ export function levelAt(levels: { voxel: number[] }[], voxel: number[]): number 
 /** Box [lo, hi) of a level's voxels, `channels` of them one after another (as the reader
  * gives them), from `data`, what lies inside the array, read over [readLo, readHi) (the box
  * clipped to the level); past the array's edge the outermost voxels repeated (`edge`) or
- * zeros. A box wholly outside (no data) is zeros: nothing to repeat. */
+ * zeros. A box wholly outside (no data) is zeros: nothing to repeat. The block is of
+ * `dtype`'s typed array, the data as read; a 64-bit integer's voxels are bigints, repeated
+ * and zeroed (0n) as any. */
 export function padded(data: ArrayBuffer | null, dtype: string, channels: number, readLo: number[], readHi: number[], lo: number[], hi: number[], padding: Padding): Block {
   const Typed = TYPED[dtype] ?? Float32Array, d = hi.map((h, a) => h - lo[a]), rd = readHi.map((h, a) => h - readLo[a]);
   const shape = [...(channels > 1 ? [channels] : []), ...d], read = data ? new Typed(data) : null;
   if (read && same(rd, d)) return { data: read, shape };  // all inside: as read
-  const out = new Typed(channels * prod(d)), o = out as unknown as Settable;
+  const out = new Typed(channels * prod(d)), o = out as unknown as Settable;  // of `read`'s kind: its elements set and filled as they are
   if (!read) return { data: out, shape };
   const n = prod(rd), x0 = readLo[2] - lo[2], x1 = readHi[2] - lo[2];  // the inside part of a row
   for (let c = 0; c < channels; c++) for (let z = 0; z < d[0]; z++) for (let y = 0; y < d[1]; y++) {

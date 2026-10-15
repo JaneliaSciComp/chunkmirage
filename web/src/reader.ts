@@ -2,7 +2,7 @@
 // chunk is decoded once however many Pyodide workers compute from it (a sea-temperature tile
 // is 65 MB decoded; a copy in every worker would not fit). The page asks it for the region
 // a chunk needs, all channels, and hands that to a worker.
-import { percentiles, prod } from "./ome";
+import { asReals, percentiles, prod } from "./ome";
 import { openSource, type Source } from "./sources";
 import type { Answer, SourceInfo, ToReader } from "./types";
 
@@ -38,7 +38,7 @@ async function sample(id: string, ps: number[]) {
   const src = sources.get(id)!, s = src.levels[0].shape;
   const half = s.map((n, a) => Math.min(n, [32, 256, 256][a]) >> 1);
   const lo = s.map((n, a) => (n >> 1) - half[a]), hi = s.map((n, a) => (n >> 1) + half[a]);
-  return percentiles((await src.read(0, 0, lo, hi)).filter((v) => !Number.isNaN(v)), ps);
+  return percentiles(asReals(await src.read(0, 0, lo, hi)).filter((v) => !Number.isNaN(v)), ps);
 }
 
 ctx.onmessage = async ({ data: m }: MessageEvent<ToReader>) => {

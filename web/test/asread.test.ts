@@ -1,9 +1,10 @@
 // A view served as read (src/asread.ts): which views need the Pyodide workers, the plan
 // fused.plan gives a view with no ops (checked against Python's own `plan` in pyworker.ts),
-// and the chunk a worker makes of a region with no ops to run. Run by `npm test`.
+// the chunk a worker makes of a region with no ops to run, and the dtype table's 64-bit
+// integers, eight bytes a voxel. Run by `npm test`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { asRead, needsPython, wholeChunk } from "../src/asread.ts";
+import { asRead, asReals, needsPython, TYPED, wholeChunk } from "../src/asread.ts";
 import type { SourceInfo } from "../src/types.ts";
 
 const source: SourceInfo = {
@@ -40,4 +41,25 @@ test("the channels come first, each a whole chunk", () => {
   const read = new Float32Array([1, 2, 3, 4]);  // two channels of (1, 1, 2), one after the other
   const out = new Float32Array(wholeChunk(read.buffer, "float32", 2, [1, 1, 2], [1, 1, 3]));
   assert.deepEqual([...out], [1, 2, 0, 3, 4, 0]);
+});
+
+test("the 64-bit integers are in the table, eight bytes a voxel, and an edge chunk of them is laid out at that width", () => {
+  assert.equal(TYPED.uint64, BigUint64Array);
+  assert.equal(TYPED.int64, BigInt64Array);
+  assert.equal(TYPED.uint64.BYTES_PER_ELEMENT, 8);
+  const read = BigUint64Array.from([1n, 2n, 3n, 4n, 5n, 6n, 2n ** 53n + 1n, 8n]);  // (2, 2, 2): the array ends one voxel short of the chunk along x
+  assert.equal(wholeChunk(read.buffer, "uint64", 1, [2, 2, 2], [2, 2, 2]), read.buffer);
+  const edge = wholeChunk(read.buffer, "uint64", 1, [2, 2, 2], [2, 2, 3]);
+  assert.equal(edge.byteLength, 12 * 8);
+  assert.deepEqual([...new BigUint64Array(edge)], [1n, 2n, 0n, 3n, 4n, 0n, 5n, 6n, 0n, 2n ** 53n + 1n, 8n, 0n]);
+  const signed = new BigInt64Array(wholeChunk(BigInt64Array.from([-1n, -(2n ** 62n)]).buffer, "int64", 1, [1, 1, 2], [1, 1, 3]));
+  assert.deepEqual([...signed], [-1n, -(2n ** 62n), 0n]);
+});
+
+test("values as numbers: a 64-bit integer array's bigints converted, any other array itself", () => {
+  const ids = asReals(BigUint64Array.from([0n, 2n ** 53n]));
+  assert.ok(ids instanceof Float64Array);
+  assert.deepEqual([...ids], [0, 2 ** 53]);
+  const bytes = new Uint8Array([1, 2]);
+  assert.equal(asReals(bytes), bytes);
 });

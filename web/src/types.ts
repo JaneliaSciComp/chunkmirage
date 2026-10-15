@@ -55,9 +55,11 @@ export type FromWorker =
  * ones waiting on a fetch another request started), network fetches and their bytes. */
 export interface StoreStats { requests: number; hits: number; fetches: number; fetchedBytes: number }
 
-/** What the service worker asks a page for (relay.ts): a request's path and range header,
- * and, for a route that is more than a path, its method, headers and body. */
-export interface Ask { path: string; range: string | null; method: string; headers: [string, string][]; body: ArrayBuffer | null }
+/** What the service worker asks a page for (relay.ts): a request's path (the URL's pathname
+ * alone, what a route's prefix is matched against), its query string (`search`: the URL's,
+ * with its leading "?", or "" when it has none; a page's API reads its parameters from it),
+ * its range header, and, for a route that is more than a path, its method, headers and body. */
+export interface Ask { path: string; search: string; range: string | null; method: string; headers: [string, string][]; body: ArrayBuffer | null }
 /** The page's answer to a request the service worker relays, or null if it isn't the page's.
  * A chunk's answer comes in two parts: its head at once ({stream: true}), its body later as a
  * Later, so the service worker can stream it and tell the page ({cancel: true}) if the client

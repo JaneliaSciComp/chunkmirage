@@ -2,11 +2,11 @@
 // levels for the solve, and regions for resampling. zarrita.js reads zarr v2/v3,
 // sharded or not, with the usual codecs (zstd and blosc through numcodecs).
 import * as zarr from "zarrita";
-import { TYPED, type Numbers, type TypedCtor } from "./asread";
+import { asReals, TYPED, type Numbers, type Reals, type Settable, type TypedCtor } from "./asread";
 import type { ControlGrid } from "./types";
 
-export { zarr, TYPED };
-export type { Numbers, TypedCtor };
+export { asReals, zarr, TYPED };
+export type { Numbers, Reals, Settable, TypedCtor };
 
 export interface Axis {
   name: string;
@@ -130,7 +130,7 @@ export class RegionReader {
       for (let z = from[0]; z < to[0]; z++) for (let y = from[1]; y < to[1]; y++) {
         const src = ((z - start[0]) * bs[1] + (y - start[1])) * bs[2] - start[2];
         const dst = ((z - lo[0]) * shape[1] + (y - lo[1])) * shape[2] - lo[2];
-        out.set(data.subarray(src + from[2], src + to[2]) as ArrayLike<number>, dst + from[2]);
+        (out as unknown as Settable).set(data.subarray(src + from[2], src + to[2]), dst + from[2]);  // a piece is of the image's kind, as `out` is
       }
     });
     return { data: out, shape, voxel: lvl.voxel, origin: lvl.origin.map((o, a) => o + lo[a] * lvl.voxel[a]) };
