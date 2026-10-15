@@ -32,6 +32,21 @@ segment is one `ChunkedSource` stage whose `compute_chunk(index)`:
 Fusing uncached ops keeps the read footprint to a few upstream chunks per output chunk; see
 [Caching](caching.md#fusion-or-why-uncached-ops-are-cheap).
 
+### Ops on a coarser grid (strided outputs)
+
+An op may write coarser voxels than it reads: `downsample`, a model reading 8 nm and
+writing 16 nm, a block matcher writing one vector per lattice node every `stride` voxels.
+It says so in `output_info` (`info.rescaled(bigger voxels)`, the shape rounded up and each
+voxel's position the centre of the block it covers); it must be the first op of its stage,
+and its `apply` returns the output's voxels over the input block (shaved by its halo, as a
+model's output is, or whole). The framework maps an output chunk to its input region,
+`chunk × factor`, padded by the halo, on the input's grid. The output's chunks follow the
+grid: what `output_info` sets, if it changes them; else the input's chunk divided by the
+factor where that is whole (one vector per 24 voxels in chunks of 96 is 4 a chunk, each
+reading one input chunk), else the input's as it is. The two exceptions keep a pyramid's
+chunks the same at every level, as a stored one's are: an op at one resolution
+([below](#ops-at-one-resolution)) and the `downsample` levels made from it.
+
 Reading an arbitrary box from a stage gathers the covering chunks (cached or computed) and
 slices, so a halo read of stage *k-1* costs at most a few chunk lookups.
 

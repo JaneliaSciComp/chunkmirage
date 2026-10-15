@@ -1,5 +1,7 @@
 """warp:// sources: an image twisted by a procedural swirl, and the swirl itself as a layer."""
 
+from urllib.parse import quote
+
 import numpy as np
 import pytest
 import tensorstore as ts
@@ -206,3 +208,53 @@ def test_bad_urls_explain_themselves(zarr2_path):
         open_source(f"warp://{zarr2_path}?field=swirl&plane=y,q")
     with pytest.raises(ValueError, match="frames"):
         open_source(f"warp://{zarr2_path}?field=swirl&frames=0")
+
+
+# ------------------------------------------------ a field from any source, an affine, a target
+IMG = "synthetic://blobs?shape=32,48,48&chunk=16,16,16&levels=1&seed=2&voxel_size=1"
+
+
+def test_a_field_read_from_a_source_reproduces_the_procedural_warp():
+    swirl = f"warp://{IMG}?field=swirl&angle=40"
+    # the swirl's own displacement, read back as a stored field would be (its URL encoded)
+    field = quote(f"{swirl}&show=field", safe="")
+    sampled = open_source(f"warp://{IMG}?field={field}")
+    assert sampled.name.endswith("~warped") and sampled.levels[0].info.shape == (32, 48, 48)
+    box = Box((0, 0, 0), (32, 48, 48))
+    # exact at the field's voxel centres, so the mapping is the swirl's own
+    np.testing.assert_allclose(sampled.levels[0].read(box).astype(float), open_source(swirl).levels[0].read(box).astype(float), atol=1)
+    other = quote(f"warp://{IMG}?field=swirl&angle=41&show=field", safe="")
+    assert open_source(f"warp://{IMG}?field={other}").levels[0].cache_key() != sampled.levels[0].cache_key()
+
+
+def test_an_affine_after_the_field_moves_what_is_read():
+    img = "synthetic://blobs?shape=16,32,32&chunk=16,16,16&levels=1&seed=2&voxel_size=1"
+    # no displacement, then 8 units further along x: whole voxels, so the values are the image's
+    shifted = open_source(f"warp://{img}?field=swirl&angle=0&affine=1,0,0,0,0,1,0,0,0,0,1,8")
+    box = Box((0, 0, 0), (16, 32, 32))
+    raw, out = open_source(img).levels[0].read(box), shifted.levels[0].read(box)
+    np.testing.assert_array_equal(out[:, :, :24], raw[:, :, 8:])
+    assert (out[:, :, 24:] == 0).all()  # beyond the image
+
+
+def test_a_target_gives_the_output_grid_and_reads_the_level_that_suits_it():
+    img = "synthetic://noise?shape=64,64,64&chunk=32,32,32&levels=2&seed=2&voxel_size=8"
+    # another source on the grid of the image's own second level: 16 nm voxels over the same extent
+    coarse = "synthetic://noise?shape=32,32,32&chunk=8,8,8&levels=1&seed=7&voxel_size=16"
+    out = open_source(f"warp://{img}?field=swirl&angle=0&target={quote(coarse, safe='')}")
+    want = open_source(coarse).levels[0].info
+    got = out.levels[0].info
+    assert len(out.levels) == 1 and (got.shape, got.voxel_size, got.translation, got.chunk_shape) == (want.shape, want.voxel_size, want.translation, want.chunk_shape)
+    # with nothing displaced, the output's voxels are the image's second level's, read from it (not resampled from the first)
+    box = Box((0, 0, 0), (32, 32, 32))
+    np.testing.assert_array_equal(out.levels[0].read(box), open_source(img).levels[1].read(box))
+
+
+def test_bad_fields_explain_themselves():
+    img = "synthetic://blobs?shape=16,16,16&chunk=8,8,8&levels=1&voxel_size=1"
+    with pytest.raises(ValueError, match="components"):
+        open_source(f"warp://{img}?field={quote(img, safe='')}")  # a 3-D image is not a (c, z, y, x) field
+    with pytest.raises(ValueError, match="apply to field=swirl"):
+        open_source(f"warp://{img}?field={quote(img, safe='')}&frames=3")
+    with pytest.raises(ValueError, match="affine needs 12"):
+        open_source(f"warp://{img}?field=swirl&affine=1,2,3")

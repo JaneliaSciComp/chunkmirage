@@ -154,14 +154,19 @@ class ChunkedSource(Source):
 class MultiscaleSource:
     """An ordered list of ``Source`` levels, s0 = full resolution. ``shader`` is a
     Neuroglancer shader the viewer should show the data with (its channel axis then being
-    a shader channel), for sources whose channels mean something particular."""
+    a shader channel), for sources whose channels mean something particular. ``cached``
+    says the levels are cached stages already (another dataset's, ``dataset://``), so a
+    pipeline keeps no copy of their chunks in a stage of its own."""
 
-    def __init__(self, levels: Sequence[Source], name: str = "", shader: str | None = None):
+    def __init__(
+        self, levels: Sequence[Source], name: str = "", shader: str | None = None, cached: bool = False
+    ):
         if not levels:
             raise ValueError("need at least one level")
         self.levels = list(levels)
         self.name = name
         self.shader = shader
+        self.cached = cached
 
     def __len__(self) -> int:
         return len(self.levels)

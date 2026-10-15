@@ -44,6 +44,13 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
 
 ### Sources
 
+- `dataset://<name>`: another dataset of the server as a source, read in-process through
+  its stage cache; editing a dataset rebuilds what reads it, cycles are refused, and
+  `GET /api/datasets/{name}` lists a dataset's `upstream`.
+- `warp://` takes its field from any source (`field=<url>`: a `(c, z, y, x)` array of
+  displacements, another dataset's output among them), an `affine` after the displacement
+  and the output grid from `target=<source>`; the swirls stay as they were.
+
 - zarr v2/v3, N5, precomputed and HDF5 on file, S3, GCS and HTTP; xarray arrays with their
   coordinates and CF packing; cloud-optimized GeoTIFFs.
 - Computed sources: `synthetic://`, `scene://` (OME-Zarr 0.6 transformations), `warp://`,
@@ -58,6 +65,10 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
   `kind` says otherwise.
 
 ### Ops and pipelines
+
+- An op on a coarser grid (one vector per `stride` voxels) gets output chunks that follow
+  the grid: the input's chunk divided by the factor, or what its `output_info` sets; an op
+  at one resolution and the pyramid made from it keep their chunks, as a stored pyramid does.
 
 - Pointwise ops, filters, morphology, connected components, spots, contacts, differences,
   gradients, downsampling, normalized differences, slope and hillshade, with halos handled

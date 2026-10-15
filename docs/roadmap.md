@@ -44,10 +44,13 @@ describe shipped features as future work.
 4. **DAG pipelines, multi-source ops.** Named stages with fan-out (one model, many
    post-processors) and a `Combine` op taking another pipeline as input. Unlocks masking,
    the difference of any two sources (two models' outputs, two conditions), registration
-   overlays. (The two-input case has
-   shipped in its simplest form: `stack://` serves images on one grid as channels and an
-   op such as `contacts` consumes them; see
-   [formats](concepts/formats.md#stack-sources-several-images-as-one-arrays-channels).)
+   overlays. (Two pieces have shipped: `stack://` serves images on one grid as channels and
+   an op such as `contacts` consumes them, and `dataset://` reads another served dataset
+   in-process through its stage cache, an edit upstream rebuilding what reads it, so passes
+   of a computation chain without writing anything to disk between them; see
+   [formats](concepts/formats.md#stack-sources-several-images-as-one-arrays-channels) and
+   [dataset sources](concepts/formats.md#dataset-sources-another-dataset-of-the-server-in-process).
+   Named stages within one pipeline, fan-out and a `Combine` op remain.)
    With it, structured sources:
    a pipeline's source as a JSON object as well as a URL, such as
    `{"register": {"moving": ..., "fixed": ..., "affine": [...]}}`, typed by the same schema

@@ -129,7 +129,7 @@ def select_axes(source: MultiscaleSource, select: dict[str, int]) -> MultiscaleS
             raise ValueError(f"select {name}={index}: the {name} axis has {info.shape[a]} entries")
         pinned[a] = int(index)
     levels = [SelectSource(lvl, pinned) for lvl in source.levels]
-    return MultiscaleSource(levels, name=source.name)
+    return MultiscaleSource(levels, name=source.name, cached=source.cached)
 
 
 def _queue_for(ops: Sequence[Op]) -> demand.Queue | None:
@@ -143,6 +143,26 @@ def _queue_for(ops: Sequence[Op]) -> demand.Queue | None:
     return queue
 
 
+def _output_chunks(prev: ArrayInfo, out: ArrayInfo, scale: Sequence[float], keep: bool) -> tuple[int, ...]:
+    """The chunk shape of a stage's output along the axes its ops keep (the last
+    ``len(scale)``). ``keep``: the input's, as a stored pyramid level keeps its chunks
+    (the levels made by ``downsample`` from an op at one resolution). Else what the ops'
+    ``output_info`` set, if they changed it; else, on a coarser grid, the input's chunk
+    divided by the factor where that is whole (one vector per 24 voxels in chunks of 96:
+    4 a chunk, each reading one input chunk), the input's as it is otherwise."""
+    k = len(scale)
+    prev_c, out_c = prev.chunk_shape[-k:], out.chunk_shape[-k:]
+    if keep:
+        return prev_c
+    if out_c != prev_c:
+        return out_c
+    chunks = []
+    for c, f in zip(prev_c, scale):
+        d = c / f
+        chunks.append(int(round(d)) if f > 1 + 1e-9 and abs(d - round(d)) < 1e-9 and d >= 1 else c)
+    return tuple(chunks)
+
+
 def _fused_stage(
     prev: Source,
     ops: Sequence[Op],
@@ -150,6 +170,7 @@ def _fused_stage(
     key: str,
     level: int = 0,
     padding: str = "edge",
+    keep_chunks: bool = False,
 ) -> ChunkedSource:
     """One pipeline stage running ``ops`` back to back on a block padded by their total halo.
 
@@ -163,12 +184,13 @@ def _fused_stage(
     # An op may consume leading axes (the channels of a stack:// source, for `contacts`), or
     # add some (a model's channels): those are read, and chunked, whole; the halo pads the
     # axes the ops keep. The first op may change the grid (`downsample`, a model writing
-    # coarser voxels than it reads): its input is then read on the input's grid
-    # (chunkmirage.fused, which the browser engine runs too).
+    # coarser voxels than it reads, a block matcher writing one vector per lattice node):
+    # its input is then read on the input's grid (chunkmirage.fused, which the browser
+    # engine runs too), and the output's chunks follow the grid (`_output_chunks`).
     info, lead, total_halo = fused.plan(prev_info, ops)
     scale = fused.scale(prev_info, ops)
     kept = len(total_halo)
-    info = info.with_(chunk_shape=info.shape[: info.ndim - kept] + prev_info.chunk_shape[-kept:])
+    info = info.with_(chunk_shape=info.shape[: info.ndim - kept] + _output_chunks(prev_info, info, scale, keep_chunks))
     fused.input_box(prev_info, info.chunk_box((0,) * info.ndim), lead, total_halo, scale)  # whole voxels, or why not
 
     # An op with slots runs through its queue: read first, so a slot is only held computing,
@@ -276,6 +298,8 @@ class Pipeline:
         self.source = source
         self.ops: list[Op] = ops_from_specs(ops)
         self.cache = cache if cache is not None else LRUCache()
+        if source.cached:  # another dataset's stages: cached there already (dataset://)
+            cache_source = False
         self.spec = spec
         self.padding = padding
         self._options = {
@@ -312,8 +336,9 @@ class Pipeline:
         stage, h = self._raw(raw, at, chunk_shape, cache_source)
         stage, h = self._chain(stage, pre, self._padded(h), 0)
         h = _digest(h, op.digest())
-        # cached whatever the op says: every coarser level is made from it
-        finer: Source = _fused_stage(stage, [op], self.cache, f"{op.name}:{h}", 0, self.padding)
+        # cached whatever the op says: every coarser level is made from it, and its chunks
+        # (the pipeline's, in its own voxels) are the pyramid's, as a stored one's are
+        finer: Source = _fused_stage(stage, [op], self.cache, f"{op.name}:{h}", 0, self.padding, keep_chunks=True)
         self.levels.append(self._chain(finer, post, h, 0)[0])
         for k in range(at + 1, len(source.levels)):
             a, b = (source.levels[i].info.voxel_size[-len(want) :] for i in (k - 1, k))
@@ -322,7 +347,8 @@ class Pipeline:
                 break
             down = Downsample(factor=factor)
             h = _digest(h, down.digest())
-            finer = _fused_stage(finer, [down], self.cache, f"downsample:{h}", len(self.levels), self.padding)
+            # a pyramid level keeps its chunks, as a stored one does
+            finer = _fused_stage(finer, [down], self.cache, f"downsample:{h}", len(self.levels), self.padding, keep_chunks=True)
             self.levels.append(self._chain(finer, post, h, len(self.levels))[0])
 
     def _padded(self, h: str) -> str:
