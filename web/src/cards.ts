@@ -247,6 +247,16 @@ const OL_GREY = { color: ["interpolate", ["linear"], ["band", 1], 0, [0, 0, 0, 1
 
 export const CARDS: DemoCard[] = [
   {
+    // another project's page on the engine: cellmap-flow's browser mode (its server mode
+    // serves through chunkmirage's server); the link opens its example, a volume with a model on it
+    kind: "link", id: "flow", image: "cards/flow.jpg",
+    title: "cellmap-flow: a model's predictions over an electron-microscopy volume, browsed as it predicts",
+    blurb: "Another project's page, built on chunkmirage's browser engine. Open an OpenOrganelle volume, tick a model (an ONNX export of one of cellmap's networks, run on your GPU through WebGPU) and look at its predictions in Neuroglancer as you move: each chunk is predicted as it comes on screen, the level shown first, and kept while you change the postprocessing. cellmap-flow's server mode does the same from a cluster's GPUs, with PyTorch, TensorFlow, DaCapo, BioImage.io and Cellpose models, served through chunkmirage.",
+    data: "OpenOrganelle jrc_mus-liver (mouse liver, FIB-SEM) with the mitochondria model setup_53; any OME-Zarr volume served with CORS, or a folder on your machine",
+    href: "https://janelia-cellmap.github.io/cellmap-flow/app/?dataset=https://janelia-cosem-datasets.s3.amazonaws.com/jrc_mus-liver/jrc_mus-liver.zarr/recon-1/em/fibsem-uint8&model=setup_53",
+    command: "pixi run cellmap_flow view -d s3://janelia-cosem-datasets/jrc_mus-liver/jrc_mus-liver.zarr/recon-1/em/fibsem-uint8  # cellmap-flow's server mode: pick the models on its dashboard",
+  },
+  {
     kind: "link", id: "register-fly", image: "cards/register-fly.jpg",
     title: "Two fly brains registered on your GPU in seconds, served at every resolution",
     blurb: "Not just an affine: one is found from the images, then a deformable field is solved on top of it on this computer's GPU in seconds, and the moving brain is served through both at every resolution, chunk by chunk. Before (as stored), after, and the field (how far the deformable part moved each point) side by side.",

@@ -36,9 +36,11 @@ computation:
 | reconfiguration    | restart            | custom UI/API           | REST (and MCP) with cache-busting URLs        |
 | deployment         | Flask              | Flask + gunicorn        | ASGI (Starlette) library + CLI                |
 
-Projects like cellmap-flow are natural consumers (it could shrink to "a set of inference
-ops plus a UI" on top of chunkmirage), and serve as a realistic test of the design, but
-chunkmirage is not built around any one of them.
+cellmap-flow is the first consumer, and a realistic test of the design: its server mode
+serves a model's predictions through chunkmirage's server, and its browser mode is a page
+on the browser engine ([another page on the engine](#another-page-on-the-engine)), the
+first card in the [gallery](demos.md). But chunkmirage is not built around it or any one
+project.
 
 ### Where it does *not* add value
 

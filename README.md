@@ -21,15 +21,20 @@ nothing to install. Every chunk on screen is computed in the page by chunkmirage
 Python, from public data, as the viewer asks for it.
 
 <p>
-<a href="https://janeliascicomp.github.io/chunkmirage/browser/pipeline.html?card=fires"><img src="https://raw.githubusercontent.com/JaneliaSciComp/chunkmirage/main/web/public/cards/fires.jpg" alt="Los Angeles fires: burn severity, read by Neuroglancer, a web map or GDAL" title="Los Angeles fires: burn severity, read by Neuroglancer, a web map or GDAL" width="32%"></a>
-<a href="https://janeliascicomp.github.io/chunkmirage/browser/pipeline.html?card=mandelbulb"><img src="https://raw.githubusercontent.com/JaneliaSciComp/chunkmirage/main/web/public/cards/mandelbulb.jpg" alt="A 3-D fractal 2^28 voxels across" title="A 3-D fractal 2^28 voxels across" width="32%"></a>
-<a href="https://janeliascicomp.github.io/chunkmirage/browser/pipeline.html?card=fronts"><img src="https://raw.githubusercontent.com/JaneliaSciComp/chunkmirage/main/web/public/cards/fronts.jpg" alt="The Gulf Stream's fronts" title="The Gulf Stream's fronts" width="32%"></a>
+<a href="https://janelia-cellmap.github.io/cellmap-flow/app/?dataset=https://janelia-cosem-datasets.s3.amazonaws.com/jrc_mus-liver/jrc_mus-liver.zarr/recon-1/em/fibsem-uint8&model=setup_53"><img src="https://raw.githubusercontent.com/JaneliaSciComp/chunkmirage/main/web/public/cards/flow.jpg" alt="cellmap-flow: a model's predictions over an electron-microscopy volume, browsed as it predicts" title="cellmap-flow: a model's predictions over an electron-microscopy volume, browsed as it predicts" width="24%"></a>
+<a href="https://janeliascicomp.github.io/chunkmirage/browser/pipeline.html?card=fires"><img src="https://raw.githubusercontent.com/JaneliaSciComp/chunkmirage/main/web/public/cards/fires.jpg" alt="Los Angeles fires: burn severity, read by Neuroglancer, a web map or GDAL" title="Los Angeles fires: burn severity, read by Neuroglancer, a web map or GDAL" width="24%"></a>
+<a href="https://janeliascicomp.github.io/chunkmirage/browser/pipeline.html?card=mandelbulb"><img src="https://raw.githubusercontent.com/JaneliaSciComp/chunkmirage/main/web/public/cards/mandelbulb.jpg" alt="A 3-D fractal 2^28 voxels across" title="A 3-D fractal 2^28 voxels across" width="24%"></a>
+<a href="https://janeliascicomp.github.io/chunkmirage/browser/pipeline.html?card=fronts"><img src="https://raw.githubusercontent.com/JaneliaSciComp/chunkmirage/main/web/public/cards/fronts.jpg" alt="The Gulf Stream's fronts" title="The Gulf Stream's fronts" width="24%"></a>
 </p>
 
 They include burn severity of the Los Angeles fires, the Gulf Stream's fronts and
 hurricanes' cold wakes, landing slopes at the Moon's south pole, a 3-D fractal, microscope
 tiles stitched by RANSAC, two fly brains registered on your GPU, organelle contact sites,
-mRNA spots and nuclei tracked through a colony. Each shows the `chunkmirage serve` command
+mRNA spots and nuclei tracked through a colony. The first is another project's page:
+[cellmap-flow](https://github.com/janelia-cellmap/cellmap-flow) runs on chunkmirage in both
+its modes, serving a model's predictions over an electron-microscopy volume as you browse,
+from a cluster's GPUs or, in its browser mode, from your own on chunkmirage's browser
+engine. Each shows the `chunkmirage serve` command
 that serves the same from Python, and most take Python of your own, run on a layer's chunks
 in the page and edited live. The [demos page](https://janeliascicomp.github.io/chunkmirage/demos/) lists them all, with the
 Python examples.
