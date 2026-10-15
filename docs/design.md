@@ -454,6 +454,21 @@ as text). What such a page gets, in the order it uses it:
   v3 bytes, the engine queues, shares and drops the work as its own (finest level first,
   chunks no client waits for any more dropped unrun), keeps the chunks a while (256 MB)
   and serves them as OME-Zarr 0.5, zarr v2 and GeoZarr at `Engine.url(view)` and the rest.
+* `Engine.serveStages(view, info, chunk, from, stages, padding)` serves a view the page
+  computes in stages (`web/src/stages.ts`), the browser's side of the Python pipeline's
+  per-stage cache: each stage has a `key` (the page's hash of what it computes: a model's
+  weights and parameters), a `halo`, its output `dtype` and the leading axes it adds, and a
+  `produce(input, at)` that makes its output block from its input, the stage before's
+  output over the block grown by the halo. The first stage reads `from`, an opened view, at
+  the level its `inputVoxelSize` names (the model-at-one-resolution case,
+  `Op.input_voxel_size`: a model reads 8 nm voxels and writes 16 nm ones, the view declared
+  at 16 nm), the box on that grid grown by its halo, padded past the array's edge as the
+  pipeline pads (`padding`, edge or zero); a stage may return its block whole or shaved by
+  its halo, as an op may. Each stage's output is kept under the stage's key, not the view's
+  name (512 MB), so a view served again with its postprocessing changed finds the model's
+  output already made, and two views sharing a stage share its outputs; the last stage's
+  output is placed whole in the chunk, its added axes first, as the Pyodide workers lay a
+  chunk out. `serve` is the one-stage case with the page doing the reading.
 * `Engine.unserve(view)` stops serving a view: its infos, producer and kept chunks are
   forgotten and chunks of it waiting to be computed dropped, so a page that serves a model
   again under a new name (viewers cache by URL, so an edit is a new name) does not keep the

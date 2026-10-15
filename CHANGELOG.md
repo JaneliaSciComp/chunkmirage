@@ -70,4 +70,6 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
   needs it, a view with no ops served from the reader alone; `unserve()` forgets a view and
   its chunks, `stop()` the engine's workers; the service worker's relay and store cache as
   a module (`web/src/relay.ts`, with `route()` on the page) a page's own service worker
-  builds on, relaying any request and streaming an answer whole or in pieces.
+  builds on, relaying any request and streaming an answer whole or in pieces; `serveStages()`
+  for a view the page computes in stages, each stage's output kept under its own key as the
+  Python pipeline keeps each stage's chunks, the first stage read at its own voxel size.

@@ -11,11 +11,12 @@
 // (virtual/<page>/geo/<view>/<level>/<view>/...), the zarr-conventions multiscales, proj:
 // and spatial: attributes on the group. And zarr v2 with OME 0.4 (virtual/<page>/zarr2/<view>/),
 // for readers that predate zarr v3's final spec, such as GDAL 3.8.
-import { asRead, computedSource, needsPython, wholeChunk } from "./asread";
+import { asRead, computedSource, needsPython, TYPED, wholeChunk } from "./asread";
 import { Cancelled, Claim, Queue } from "./demand";
 import schema from "./generated/chunkmirage.schema.json";
 import { Kept } from "./kept";
 import { route } from "./routes";
+import { bytes, fitted, inputBox, levelAt, padded, prod, type Block, type Padding, type Stage, type StageAt } from "./stages";
 import type { Answer, Ask, Later, MeshCall, PipelineView, Plan, Printed, Reply, SourceInfo, ToPyWorker, ToReader, ViewAxis, ViewInfo } from "./types";
 
 export const TO_SECONDS: Record<string, number> = { s: 1, second: 1, millisecond: 1e-3, ms: 1e-3, minute: 60, hour: 3600, day: 86400 };
@@ -25,7 +26,8 @@ const CONVENTIONS = [
   { uuid: "f17cb550-5864-4468-aeb7-f3180cfb622f", name: "proj:" },
   { uuid: "689b58e2-cf7b-45e0-9fff-9cfc0883d6b4", name: "spatial:" },
 ];
-const KEPT_BYTES = 256 * 2 ** 20;  // computed chunks kept for clients that refetch
+const KEPT_BYTES = 256 * 2 ** 20;    // computed chunks kept for clients that refetch
+const STAGED_BYTES = 512 * 2 ** 20;  // the outputs of a staged view's stages (stages.ts), kept for the stages after them
 const V2_DTYPE: Record<string, string> = {
   uint8: "|u1", int8: "|i1", uint16: "<u2", int16: "<i2", uint32: "<u4", int32: "<i4", uint64: "<u8", int64: "<i8", float32: "<f4", float64: "<f8",
 };
@@ -105,6 +107,7 @@ export class Engine {
   private chunks: Queue<ArrayBuffer> | null = null;
   private inflight = new Map<string, Promise<ArrayBuffer>>();
   private kept = new Kept(KEPT_BYTES);
+  private staged = new Kept(STAGED_BYTES);  // by stage key, not view: shared by views, kept past an unserve
   private edits = 0;
   private producers = new Map<string, (level: number, index: number[]) => Promise<ArrayBuffer>>();
   private unroute: (() => void) | null = null;  // removes this page's /virtual/ route (routes.ts)
@@ -223,6 +226,59 @@ export class Engine {
     this.producers.set(view, produce);
   }
 
+  /** Serve a view the page computes in `stages` (stages.ts), the first of them from `from`,
+   * an opened view, read at the level its `inputVoxelSize` names (else the one at the view
+   * level's voxel size) and padded past the array's edge by `padding`, as the Python
+   * pipeline pads. Each stage's output is kept under the stage's key (512 MB, least
+   * recently used out), so a view served again with a later stage changed reuses the
+   * earlier ones' outputs; `unserve` leaves them, `stop` drops them. The view's dtype and
+   * channel axis are the last stage's; `serve` is the one-stage case with the page doing
+   * the reading. */
+  serveStages(view: string, info: ViewInfo, chunk: number[], from: string, stages: Stage[], padding: Padding = "edge") {
+    if (!stages.length) throw new Error(`${view}: a staged view needs at least one stage`);
+    if (!this.sources[from]) throw new Error(`${view}: ${from} is not an opened view to read from`);
+    const last = stages[stages.length - 1];
+    this.serve(view, { ...info, out: last.dtype, added: last.added ?? [] }, chunk, (level, index) => this.stagedChunk(view, from, stages, padding, level, index));
+  }
+
+  /** Chunk `index` of a staged view's level: the last stage's output over the chunk's box,
+   * placed whole in the chunk (asread.ts). */
+  private async stagedChunk(view: string, from: string, stages: Stage[], padding: Padding, level: number, index: number[]): Promise<ArrayBuffer> {
+    const v = this.infos[view], l = v.levels[level], C = this.views[view].chunk;
+    const lo = index.map((i, a) => i * C[a]), hi = lo.map((o, a) => Math.min(o + C[a], l.shape[a]));
+    const out = await this.stage(from, stages, padding, stages.length - 1, { view, level, index, lo, hi, voxel: l.voxel });
+    return wholeChunk(bytes(out.data), v.out, prod(out.shape.slice(0, -3)), hi.map((h, a) => h - lo[a]), C);
+  }
+
+  /** Stage `k`'s output over `at`'s box: kept under the stage's key if made before, else
+   * made by the stage from its input, the stage before's output over the box grown by this
+   * one's halo, or for the first stage the source read and padded. */
+  private async stage(from: string, stages: Stage[], padding: Padding, k: number, at: StageAt): Promise<Block> {
+    const st = stages[k], halo = st.halo ?? [0, 0, 0], key = `${st.key}/${at.level}/${at.lo.join(".")}/${at.hi.join(".")}`;
+    const shape = [...(st.added ?? []), ...at.hi.map((h, a) => h - at.lo[a])], Typed = TYPED[st.dtype] ?? Float32Array;
+    const made = this.staged.get(key);
+    if (made) return { data: new Typed(made), shape };
+    const grown = { ...at, lo: at.lo.map((o, a) => o - halo[a]), hi: at.hi.map((h, a) => h + halo[a]) };
+    const input = k ? await this.stage(from, stages, padding, k - 1, grown) : await this.input(from, st, padding, at);
+    const scaled = !k && !!st.inputVoxelSize;  // on another grid: the result is the output's shape, not shaved from the input's
+    const block = fitted(await st.produce(input, at), st.dtype, shape, input.shape, scaled ? null : halo);
+    this.staged.put(key, bytes(block.data));
+    return block;
+  }
+
+  /** The first stage's input: `from`'s level at the stage's voxel size (`inputVoxelSize`,
+   * else the view level's), over `at`'s box on that grid grown by the stage's halo, what
+   * lies inside the array read and the rest padded. */
+  private async input(from: string, st: Stage, padding: Padding, at: StageAt): Promise<Block> {
+    const s = this.sources[from], want = st.inputVoxelSize ?? at.voxel, level = levelAt(s.levels, want);
+    if (level < 0) throw new Error(`${at.view}: no level of ${from} is at voxel size ${want.join("×")}`);
+    const sl = s.levels[level], r = at.voxel.map((v, a) => v / sl.voxel[a]);  // input voxels to each output voxel
+    const { lo, hi } = inputBox(at.lo, at.hi, r, st.halo ?? [0, 0, 0]);
+    const readLo = lo.map((o) => Math.max(o, 0)), readHi = hi.map((h, a) => Math.min(h, sl.shape[a]));
+    const data = readHi.every((h, a) => h > readLo[a]) ? await this.read(from, level, readLo, readHi) : null;
+    return padded(data, s.dtype, s.channels, readLo, readHi, lo, hi, padding);
+  }
+
   /** Stop serving a view: its infos, producer and kept chunks are forgotten, chunks of it
    * waiting to be computed are dropped (one being computed finishes, and is not kept), and
    * requests for it answer 404 from now on. For a `serve()` view that is all of it; a view
@@ -252,6 +308,7 @@ export class Engine {
     this.producers.clear();
     this.octrees.clear();
     this.kept.clear();
+    this.staged.clear();
     this.infos = {}; this.sources = {}; this.views = {};
     this.ready = Promise.resolve();
     this.unroute?.();

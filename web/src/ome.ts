@@ -2,12 +2,11 @@
 // levels for the solve, and regions for resampling. zarrita.js reads zarr v2/v3,
 // sharded or not, with the usual codecs (zstd and blosc through numcodecs).
 import * as zarr from "zarrita";
+import { TYPED, type Numbers, type TypedCtor } from "./asread";
 import type { ControlGrid } from "./types";
 
-export { zarr };
-
-export type Numbers =
-  | Uint8Array | Uint16Array | Uint32Array | Int8Array | Int16Array | Int32Array | Float32Array | Float64Array;
+export { zarr, TYPED };
+export type { Numbers, TypedCtor };
 
 export interface Axis {
   name: string;
@@ -79,11 +78,6 @@ export async function readLevel(img: Image, i: number, channel: number) {
   return { data: r.data as Numbers, shape: lvl.shape, voxel: lvl.voxel, origin: lvl.origin };
 }
 
-export type TypedCtor = { new (n: number): Numbers & { buffer: ArrayBuffer }; BYTES_PER_ELEMENT: number };
-export const TYPED: Record<string, TypedCtor> = {
-  uint8: Uint8Array, uint16: Uint16Array, uint32: Uint32Array, int8: Int8Array, int16: Int16Array, int32: Int32Array,
-  float32: Float32Array, float64: Float64Array,
-};
 interface Piece { data: Numbers; shape: number[] }
 
 /** Regions of an image's levels, one channel at a time, assembled from pieces aligned to the
