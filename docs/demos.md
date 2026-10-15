@@ -74,7 +74,7 @@ from OpenOrganelle's predictions rather than its published segmentations, which 
 in 512³ blocks (268 MB decoded) at full resolution; `examples/contact_sites.py
 --segmentations` uses those from Python, next to OpenOrganelle's published contact sites.
 
-## From Python
+## From Python, Fiji and napari
 
 | script | shows | needs |
 | ------ | ----- | ----- |
@@ -89,5 +89,7 @@ in 512³ blocks (268 MB decoded) at full resolution; `examples/contact_sites.py
 | `examples/swirl_demo.py` | a procedural deformation and its field, animated on a time axis | `uv sync --extra all` |
 | `examples/demo.py` | one small volume served in every format at once, with a shared cache | `uv sync --extra ops` |
 | `examples/quickstart.py` | the library in thirty lines: a cached blur, a threshold, a server | `uv sync --extra ops` |
+| `examples/fiji_follow.groovy` | Fiji following a server: its datasets in one BigDataViewer, their chunks fetched again on every edit of a pipeline (the server's event stream, listened to from Fiji's script editor; [how](concepts/interactivity.md#making-the-viewer-refetch)); asks for the server's link and the datasets to open, the only things that change between servers | Fiji with the N5 Viewer plugin; paste into the script editor (`[`), *Language > Groovy* |
+| `examples/napari_follow.py` | napari following a server the same way: its datasets as layers, refreshed on every edit; the link and the datasets on the command line | `uv run --with "napari[all]" --with napari-ome-zarr examples/napari_follow.py <link> raw processed` |
 
 Each prints a viewer link; see [Getting started](getting-started.md) for the basics.
