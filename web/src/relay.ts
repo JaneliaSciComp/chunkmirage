@@ -4,8 +4,9 @@
 //
 // `relay`: a viewer (Neuroglancer, in an iframe on this origin) asks for .../virtual/... as
 // if a server held the volume; the request is passed to the page that serves it over a
-// MessageChannel, and the page computes the answer in its workers and replies (the page's
-// end is routes.ts); a chunk's body is streamed once computed, and a client that gives up
+// MessageChannel (its path, query string, range, method, headers and body), and the page
+// computes the answer in its workers and replies (the page's end is routes.ts); a chunk's
+// body is streamed once computed, and a client that gives up
 // cancels the stream, which the page is told of, so it can drop the work. A browser tab
 // cannot answer HTTP requests itself; a service worker on the same origin can, which is
 // why the viewer is hosted here, not on appspot. Any request can be relayed the same way
@@ -85,10 +86,12 @@ function evict() {
 export interface Relay { pick?: (pages: WindowClient[]) => WindowClient[]; timeout?: number }
 
 /** The response to `req` from the page that answers its path: 503 if no open page does.
- * The request's path, range, method, headers and body (if any) are what the page is asked. */
+ * The request's path, query string, range, method, headers and body (if any) are what the
+ * page is asked; the path is the pathname alone, so a route's prefix matches it whatever
+ * the query. */
 export async function relay(req: Request, { pick = (pages) => pages, timeout = 120_000 }: Relay = {}): Promise<Response> {
   const url = new URL(req.url), body = req.method === "GET" || req.method === "HEAD" ? null : await req.arrayBuffer();
-  const what: Ask = { path: url.pathname, range: req.headers.get("range"), method: req.method, headers: [...req.headers], body };
+  const what: Ask = { path: url.pathname, search: url.search, range: req.headers.get("range"), method: req.method, headers: [...req.headers], body };
   // every page picked is asked at once: the one whose route this is answers, the rest (the
   // viewer's frame, other tabs) decline
   const pages = pick([...await sw.clients.matchAll({ type: "window", includeUncontrolled: true })]);

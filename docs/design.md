@@ -510,10 +510,13 @@ as text). What such a page gets, in the order it uses it:
   with routes of its own (an API its page answers, files picked on the machine) bundles its
   own service worker from `web/src/relay.ts`, as `web/src/sw.ts` is: `relay(request,
   {pick, timeout})` asks the open pages (all of them, or those `pick` chooses) for the
-  request, its path, range, method, headers and body, and streams the answer, a chunk's
-  body once computed or an event stream's pieces as they come, telling the page when the
-  client gives up; `fromStore(request)` is the store cache, with its `stats`. On the page,
-  `route(prefix, handler)` (`web/src/routes.ts`) answers the asks whose path holds a prefix:
+  request (an `Ask`, `web/src/types.ts`: its `path`, the URL's pathname alone; its `search`,
+  the query string with its `?` or empty, where a page's API reads `?offset=12`; its range,
+  method, headers and body), and streams the answer, a chunk's body once computed or an
+  event stream's pieces as they come, telling the page when the client gives up;
+  `fromStore(request)` is the store cache, with its `stats`. On the page, `route(prefix,
+  handler)` (`web/src/routes.ts`) answers the asks whose path holds a prefix (the path, not
+  the query, so a route matches whatever a request's parameters):
   the engine routes its share of `/virtual/` there, a page adds its own beside it, and a
   page with no route for a path declines it at once, so the worker never waits on a page
   that has nothing for it. One listener for the page rather than one per route, since the
