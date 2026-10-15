@@ -4,6 +4,6 @@
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "types": ["@webgpu/types", "vite/client"]
   },
-  "include": ["src", "vite.config.ts"],
+  "include": ["src", "vite.config.ts", "vite-ort.ts"],
   "exclude": ["src/sw.ts", "src/relay.ts", "src/chunks.ts", "src/pyworker.ts", "src/reader.ts"]
 }

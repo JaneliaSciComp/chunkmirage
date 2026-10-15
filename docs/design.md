@@ -469,6 +469,24 @@ as text). What such a page gets, in the order it uses it:
   output already made, and two views sharing a stage share its outputs; the last stage's
   output is placed whole in the chunk, its added axes first, as the Pyodide workers lay a
   chunk out. `serve` is the one-stage case with the page doing the reading.
+* An `onnx` stage (`web/src/onnx.ts`): a model's forward pass as a stage of such a view,
+  ONNX Runtime Web on the GPU through its WebGPU execution provider, on WebAssembly (the
+  CPU) when the browser has none. `new Onnx({wasmPaths, log})` holds the sessions, one per
+  model (`OnnxModel`: a key that is its identity, its bytes when first needed, the tensors
+  to feed and read, the session's first by default), shared by the views that use it
+  (`retain`, `release`; `reset` drops them all, for a session in a bad state), each running
+  one forward pass at a time, since two overlapping on WebGPU never resolve; `limits()`
+  gives the GPU's `maxBufferSize` and whether it has `shader-f16`, for a page choosing
+  among a model's sizes. `onnxStage(onnx, model, {halo, inputVoxelSize, added})` feeds
+  each input block as a float32 tensor `[1, C, z, y, x]` and returns the tensor the model
+  wrote as the stage's block. Nothing of a model's meaning is in it: what its input is
+  normalized to and what its output means are stages of the page's own, before and after,
+  and whatever describes its models stays with the page. ORT's WebAssembly runtime (27 MB)
+  is served beside the page by the Vite plugin in `web/vite-ort.ts` (`plugins:
+  [ortRuntime()]` in the page's Vite config), from the installed package in development
+  and copied into the build, so the page loads nothing from a CDN. The demos do not use it
+  yet; `onnxruntime-web` is a dependency of `web/` all the same, so the stage is typed and
+  checked with the rest.
 * `Engine.unserve(view)` stops serving a view: its infos, producer and kept chunks are
   forgotten and chunks of it waiting to be computed dropped, so a page that serves a model
   again under a new name (viewers cache by URL, so an edit is a new name) does not keep the

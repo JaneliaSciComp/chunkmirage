@@ -104,7 +104,11 @@ describe shipped features as future work.
       Runtime and ONNX Runtime Web). (The CPU tier has shipped: the
       [`python` op](reference/ops.md#your-own-python-the-python-op) runs in the page
       through Pyodide and natively in Python, where a server takes it through the REST
-      API only with `--allow-code`; the demos' chat asks a model for it.)
+      API only with `--allow-code`; the demos' chat asks a model for it. In the browser,
+      an ONNX Runtime Web stage runs a model on WebGPU as one stage of a view a page
+      computes in stages, with the model's output kept while its postprocessing changes;
+      see the [design notes](design.md#another-page-on-the-engine). Python's ONNX Runtime
+      op is still to do.)
     * A CI job that runs the page headless and diffs its chunks against Python's, so the
       engines cannot drift. Whether the page's WebGPU shaders can also serve Python
       (wgpu-py), as one implementation of the solver for both, is still to be measured
