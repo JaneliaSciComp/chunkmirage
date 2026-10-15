@@ -71,7 +71,13 @@ browser, and two more for what a page computes itself:
 * **Fetched source bytes**, in its service worker (512 MB, still compressed): every read of
   the images' stores, by the page, its chunk workers and the viewer alike, goes through it,
   and requests for a chunk already on its way wait for that fetch instead of starting
-  another. At most 24 fetches run at once; with more pending, Chrome refuses some.
+  another. At most 24 fetches run at once; with more pending, Chrome refuses some. A
+  store's metadata (`.zattrs`, `.zarray`, `.zgroup`, `zarr.json`, `attributes.json`, a
+  precomputed `info`) is not fetched there but by whoever asked: Chrome refuses a service
+  worker's fetch from a host on a private network (a `10.x` address, from a public site)
+  unless the visitor has already allowed the page to reach it, and only the page's own
+  request asks them, so a volume's first read must be the page's. Its chunks then go
+  through the cache.
 * **Decoded pieces**, aligned to the store's own chunks, in each context that reads (the
   page for its block fits, each chunk worker for resampling; 128 to 192 MB each), so a store
   chunk is decoded once per context however many regions overlap it.

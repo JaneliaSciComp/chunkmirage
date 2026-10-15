@@ -613,6 +613,14 @@ to one index each, `{"c": 1, "t": 0}` (`--select c=1,t=0`), so the ops see one c
 one time point as a `z, y, x` volume; only that channel is read. HDF5 uses `file.h5::/dataset` and needs
 the `hdf5` extra.
 
+The browser engine reads the same stored formats in TypeScript (`web/src/sources.ts`), all
+but HDF5, and places them as above: OME-Zarr v2/v3, N5 (gzip or raw), xarray-style zarr
+arrays, and Neuroglancer precomputed volumes, each scale a level, unsharded or sharded
+(`neuroglancer_uint64_sharded_v1` with the `identity` hash), encoded `raw`, `jpeg` (a
+chunk's z planes one tall image, decoded by the browser) or `compressed_segmentation`. A
+precomputed URL may keep Neuroglancer's `precomputed://`, and `gs://` and `s3://` URLs are
+read through their buckets' public `https` ones.
+
 ### Your own schemes (sources from other packages)
 
 A package adds a URL scheme of its own the way it adds an op: an opener that takes the URL

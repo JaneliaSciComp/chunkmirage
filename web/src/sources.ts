@@ -1,9 +1,10 @@
 // The images a pipeline reads, in the browser, as chunkmirage's sources read them in Python:
-// OME-Zarr (v2 or v3) and N5 groups, xarray-style zarr arrays (geo and climate data), and the
-// stack://, flip:// and select wrappers. Each is a pyramid of three-axis levels (z, y, x, or
+// OME-Zarr (v2 or v3) and N5 groups, Neuroglancer precomputed volumes, xarray-style zarr
+// arrays (geo and climate data), and the stack://, flip:// and select wrappers. Each is a pyramid of three-axis levels (z, y, x, or
 // an xarray array's own, such as time, lat, lon), with channels only for a stack; reads go
 // through the service worker's store cache like every other fetch on the page.
 import { asReals, openImage, prod, RegionReader, TYPED, zarr, type Image, type Numbers, type Settable, type TypedCtor } from "./ome";
+import { chunkName, compressedMorton, compressedSegmentation, Shards, type Fetch, type PrecomputedInfo } from "./precomputed";
 import type { ViewAxis } from "./types";
 
 export interface SourceLevel { shape: number[]; voxel: number[]; origin: number[]; chunks: number[] }
@@ -26,8 +27,10 @@ export interface Source {
 
 const READ_BYTES = 384 * 2 ** 20;  // decoded pieces kept per image (the page's reader holds them all)
 
-/** Any source URL: stack://a|b, flip://image?axes=y, an OME-Zarr or N5 group, or an
- * xarray-style zarr array. `select` pins non-spatial axes, as a spec's select does ({c: 1, t: 0}). */
+/** Any source URL: stack://a|b, flip://image?axes=y, an OME-Zarr or N5 group, a precomputed
+ * volume (precomputed://, as Neuroglancer writes it, or found by its info), or an
+ * xarray-style zarr array; gs:// and s3:// as their buckets' https URLs. `select` pins
+ * non-spatial axes, as a spec's select does ({c: 1, t: 0}). */
 export async function openSource(url: string, select: Record<string, number> = {}): Promise<Source> {
   if (url.startsWith("stack://")) {
     const parts = url.slice("stack://".length).split("|").filter(Boolean);
@@ -40,14 +43,22 @@ export async function openSource(url: string, select: Record<string, number> = {
     if (q < 0 || !axes) throw new Error("flip:// needs the axes to mirror: flip://<image>?axes=y");
     return flip(await openSource(rest.slice(0, q), select), axes.split(",").map((a) => a.trim()), url);
   }
+  if (url.startsWith("precomputed://")) return precomputedSource(https(url.slice("precomputed://".length)));
+  url = https(url);
   if (/\.tiff?$/i.test(url.split("?")[0])) return geotiffSource(url);
   try {
     return await zarrSource(url, select);
   } catch (zarrError) {
     try { return await xarraySource(url); } catch { /* not one either */ }
-    try { return await n5Source(url); } catch { throw zarrError; }
+    try { return await n5Source(url); } catch { /* nor this */ }
+    try { return await precomputedSource(url); } catch { throw zarrError; }
   }
 }
+
+/** gs://bucket/path and s3://bucket/path as the https URLs a browser fetches them by. */
+const https = (url: string) => url
+  .replace(/^gs:\/\/([^/]+)/, "https://storage.googleapis.com/$1")
+  .replace(/^s3:\/\/([^/]+)/, "https://$1.s3.amazonaws.com");
 
 async function zarrSource(url: string, select: Record<string, number>): Promise<Source> {
   const img = await openImage(url);
@@ -297,6 +308,82 @@ async function assemble(T: TypedCtor, block: number[], lo: number[], hi: number[
       (out as unknown as Settable).set(data.subarray(src + from[2], src + to[2]), dst + from[2]);  // a block is of `T`
     }
   });
+  return out;
+}
+
+// ------------------------------------------------ Neuroglancer precomputed
+/** A precomputed volume (chunkmirage.sources.tensorstore_source): its scales the levels,
+ * x-first lists reversed to C order, voxel 0's centre half a voxel past `voxel_offset`'s
+ * corner, in nanometers; channels first. Chunks unsharded (<key>/x0-x1_y0-y1_z0-z1) or
+ * sharded (neuroglancer_uint64_sharded_v1, identity hash), encoded raw, as JPEG (a chunk's
+ * z planes one tall image, decoded by the browser) or compressed_segmentation. A chunk not
+ * stored is zeros. */
+async function precomputedSource(url: string): Promise<Source> {
+  const base = url.replace(/\/+$/, "");
+  const info = await json<PrecomputedInfo>(`${base}/info`);
+  if (!info?.scales?.length || (info["@type"] ?? "neuroglancer_multiscale_volume") !== "neuroglancer_multiscale_volume") {
+    throw new Error(`${url}: not a precomputed volume`);
+  }
+  const dtype = info.data_type, T = TYPED[dtype], channels = info.num_channels ?? 1;
+  if (!T) throw new Error(`${url}: data type ${dtype} is not read here`);
+  const scales = info.scales.map((s) => {
+    const encoding = s.encoding ?? "raw";
+    if (!["raw", "jpeg", "compressed_segmentation"].includes(encoding)) throw new Error(`${base}/${s.key}: ${encoding} encoding is not read here`);
+    const chunk = s.chunk_sizes[0], off = s.voxel_offset ?? [0, 0, 0];
+    const dir = `${base}/${s.key.replace(/^\/+|\/+$/g, "")}`;
+    return { s, encoding, chunk, off, dir, shards: s.sharding ? new Shards(dir, s.sharding, bytesAt) : null };
+  });
+  const levels = scales.map(({ s, chunk, off }) => ({
+    shape: [...s.size].reverse(), voxel: [...s.resolution].reverse(),
+    origin: off.map((o, a) => (o + 0.5) * s.resolution[a]).reverse(), chunks: [...chunk].reverse(),
+  }));
+  /** Chunk `b` (z, y, x in the grid) of scale `li`, all its channels (c, z, y, x). */
+  const chunkAt = async (li: number, b: number[]): Promise<{ data: Numbers; shape: number[] }> => {
+    const { s, encoding, chunk, off, dir, shards } = scales[li];
+    const g = [...b].reverse(), lo = g.map((v, a) => v * chunk[a]), hi = lo.map((v, a) => Math.min(v + chunk[a], s.size[a]));
+    const size = hi.map((v, a) => v - lo[a]), n = prod(size), shape = [...size].reverse();
+    const bytes = shards
+      ? await shards.chunk(compressedMorton(g, s.size.map((v, a) => Math.ceil(v / chunk[a]))))
+      : await bytesAt(`${dir}/${chunkName(lo.map((v, a) => v + off[a]), hi.map((v, a) => v + off[a]))}`);
+    if (!bytes) return { data: new T(n * channels), shape };
+    if (encoding === "jpeg") return { data: await jpeg(bytes, size[0], size[1] * size[2], channels), shape };
+    if (encoding === "compressed_segmentation") {
+      if (dtype !== "uint32" && dtype !== "uint64") throw new Error(`${dir}: compressed_segmentation of ${dtype}`);
+      return { data: compressedSegmentation(bytes, size, channels, s.compressed_segmentation_block_size ?? [8, 8, 8], dtype === "uint64"), shape };
+    }
+    if (bytes.byteLength !== n * channels * T.BYTES_PER_ELEMENT) throw new Error(`${dir}: a raw chunk of ${bytes.byteLength} bytes, not ${shape}`);
+    return { data: new T(bytes), shape };
+  };
+  const cache = new Blocks(READ_BYTES);
+  return {
+    url, dtype, channels, levels,
+    axes: ["z", "y", "x"].map((name) => ({ name, unit: "nanometer" })),
+    read: (li, c, lo, hi) => assemble(T, levels[li].chunks, lo, hi, async (b) => {
+      const { data, shape } = await cache.get(`${li}/${b.join(",")}`, () => chunkAt(li, b)), n = prod(shape);
+      return { data: data.subarray(c * n, (c + 1) * n), shape };
+    }),
+  };
+}
+
+/** Bytes [start, end) of `url`, or all of it; null if it is not there. A server that
+ * ignores the range sends all of it, and the range is cut from that. */
+const bytesAt: Fetch = async (url, range) => {
+  const r = await fetch(url, range ? { headers: { range: `bytes=${range[0]}-${range[1] - 1}` } } : {});
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`${url}: ${r.status}`);
+  const buf = await r.arrayBuffer();
+  return range && r.status === 200 ? buf.slice(range[0], range[1]) : buf;
+};
+
+/** A JPEG `width` × `height` pixels (a chunk's x by its y × z) as `channels` planes of uint8
+ * (one: gray; three: red, green, blue), decoded by the browser without colour management. */
+async function jpeg(bytes: ArrayBuffer, width: number, height: number, channels: number): Promise<Uint8Array> {
+  const image = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }), { colorSpaceConversion: "none", premultiplyAlpha: "none" });
+  if (image.width !== width || image.height !== height) throw new Error(`a JPEG chunk ${image.width} × ${image.height}, not ${width} × ${height}`);
+  const g = new OffscreenCanvas(width, height).getContext("2d", { willReadFrequently: true })!;
+  g.drawImage(image, 0, 0); image.close();
+  const rgba = g.getImageData(0, 0, width, height).data, n = width * height, out = new Uint8Array(n * channels);
+  for (let c = 0; c < channels; c++) for (let i = 0; i < n; i++) out[c * n + i] = rgba[4 * i + c];
   return out;
 }
 
