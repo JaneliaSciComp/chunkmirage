@@ -62,7 +62,8 @@ zarr3://http://localhost:8000/thr/@75f296149b33/zarr3
 ```
 
 A changed pipeline is a changed URL, and a changed URL is a cache miss. Three ways to get
-the new URL into the viewer, from least to most convenient:
+the new URL into the viewer, from least to most convenient, then the way for viewers that
+keep the old one:
 
 1. **Paste it.** `PUT` responses and `/api/events` carry the new `sources`. Paste into the
    layer's source field. Camera preserved; manual.
@@ -94,6 +95,29 @@ axis, such as `time, y, x` frames of the sun, scroll through that axis as z). `V
    link. `Viewer.hosted_link()` gives the
    current state as an appspot link: a snapshot that does not follow later edits but
    needs no python server.
+4. **Let Fiji or napari follow.** They open the address without a digest
+   (`/processed/zarr`), which always means the pipeline as it is now, and keep what they
+   have fetched: new regions come out new, what is on screen stays as it was. Neither can
+   be told from outside, but both are scriptable, and the server announces every edit on
+   `GET /api/events`. Two scripts in `examples/` listen to it and make the viewer fetch
+   again: `fiji_follow.groovy` (pasted into Fiji's script editor, language Groovy) opens
+   the datasets in one BigDataViewer through the N5 Viewer plugin and, on each event,
+   empties the chunk caches BigDataViewer keeps for them and repaints, keeping view and
+   brightness; `napari_follow.py` opens them as napari layers (through napari-ome-zarr) and,
+   on each event, empties napari's cache of slices and refreshes the layers. Between edits
+   both cache as they always do, and the server answers a refetch from its own caches but
+   for the stage that changed. Both take two things, the only ones that change from one
+   server to the next: the control UI link the server printed (its port, and the token a
+   server with one needs for the event stream; a restart means a new token, so a new link),
+   and the names of the datasets to open, one source or layer each (`raw,processed` for a
+   plain `chunkmirage serve`, the `--name` given in place of `processed`, no `raw` with
+   `--no-raw`, every name wanted from a server with more). Nothing in them is about the
+   pipeline: the same script follows any server, any ops, any Python. In Fiji the script
+   goes into the script editor (`[`), with *Language > Groovy* picked in the menu bar, and
+   asks for the two in a dialog; napari's takes them on the command line:
+   `uv run --with "napari[all]" --with napari-ome-zarr examples/napari_follow.py <link> raw
+   processed`. Nothing in HTTP, zarr or N5 can do this for them: a server can only
+   announce, and each viewer has to listen.
 
 **Animating: a time axis, not new URLs.** A new URL is a cache miss for everything that
 layer has on screen, so it goes blank until the new chunks arrive; stepping a parameter

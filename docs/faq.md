@@ -21,7 +21,10 @@ Caveats:
 * **Refetching after an edit**: Neuroglancer caches by URL, so chunkmirage puts the pipeline
   digest in the URL. The control page can push the new state to an appspot window (camera
   resets), or `--python-viewer --ng-client appspot` runs the appspot client build with
-  state sync so only the edited layer refetches. See [Interactivity](concepts/interactivity.md).
+  state sync so only the edited layer refetches. Fiji and napari keep the old address and
+  what they fetched through it; `examples/fiji_follow.groovy` and `examples/napari_follow.py`
+  listen to the server's events and make them fetch again on each edit. See
+  [Interactivity](concepts/interactivity.md#making-the-viewer-refetch).
 
 **Fully in-browser compute with appspot: impossible.** The client-side idea is to run ops
 on your laptop GPU with no server. But Neuroglancer only knows how to *fetch chunks from a
