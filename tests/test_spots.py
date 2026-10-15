@@ -76,7 +76,7 @@ def test_spots_finds_the_spots_and_tiles_seamlessly(fish):
     ids = out[out > 0]
     assert len(np.unique(ids)) == len(ids)
     # chunk by chunk equals one block computed at once
-    from chunkmirage.ops import Spots
+    from chunkmirage_contrib.ops import Spots
 
     op = Spots(threshold=20, radius=0)
     src = select_axes(open_source(path), {"c": 1}).levels[0]

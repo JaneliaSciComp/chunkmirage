@@ -95,7 +95,8 @@ More in [getting started](https://janeliascicomp.github.io/chunkmirage/getting-s
 
 ```python
 from chunkmirage import Pipeline, open_source, create_app
-from chunkmirage.ops import Op, Threshold
+from chunkmirage.ops import Op
+from chunkmirage_contrib.ops import Threshold
 
 class MyModel(Op):
     name = "my_model"

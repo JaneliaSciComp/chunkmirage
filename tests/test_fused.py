@@ -45,7 +45,7 @@ def test_diff_reads_back_along_its_axis_only(tmp_path):
     import tensorstore as ts
 
     from chunkmirage.core import Box
-    from chunkmirage.ops import Diff
+    from chunkmirage_contrib.ops import Diff
 
     vol = np.random.default_rng(0).normal(size=(12, 8, 9)).astype(np.float32)
     spec = {"driver": "zarr", "kvstore": {"driver": "file", "path": str(tmp_path / "v")}}

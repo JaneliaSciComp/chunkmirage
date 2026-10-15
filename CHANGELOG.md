@@ -8,6 +8,18 @@ and a release that breaks it says so here.
 
 The first release, an alpha: the plugin API can still change before 0.1.0.
 
+### Core and contrib
+
+- The core composes, it does not compute: everything with an algorithm in it moved to
+  `chunkmirage_contrib`, a second package in the same wheel (every op but `downsample` and
+  `python`; `synthetic://`, `register://`, `stitch://` and GeoTIFF reading; registration,
+  stitching and tracking; the browser's register, stitch and track pages, under
+  `web/src/contrib/`). It reaches the core only through entry points, two of them new:
+  `chunkmirage.source_matchers` for files told apart by their path, and `chunkmirage.models`
+  for parameter models in `chunkmirage schema`. Imports change with it:
+  `from chunkmirage_contrib.ops import Threshold`, `chunkmirage_contrib.registration`
+  ([design](docs/design.md#what-stays-in-the-core)).
+
 ### Serving
 
 - Pipelines served as N5, Zarr v2 (OME-NGFF 0.4), Zarr v3 (OME-NGFF 0.5) and Neuroglancer

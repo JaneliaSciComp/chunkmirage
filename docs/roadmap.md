@@ -114,12 +114,6 @@ describe shipped features as future work.
       (wgpu-py), as one implementation of the solver for both, is still to be measured
       against PyTorch.
 
-10. **Domain ops and sources as plugin packages.** A proposal, not a decision: the geo
-    and microscopy demos' ops and sources move to `chunkmirage-geo` and
-    `chunkmirage-microscopy`, registered through the entry points any plugin uses, so the
-    core stays general and the plugin API is exercised by real use
-    ([design](design.md#what-stays-in-the-core-a-proposal)).
-
 ## Untapped potential
 
 * **Every zarr reader is a client.** dask, xarray, tensorstore, napari, Fiji and

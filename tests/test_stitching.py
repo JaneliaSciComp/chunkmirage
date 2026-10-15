@@ -6,8 +6,8 @@ import json
 import numpy as np
 import pytest
 
-from chunkmirage import stitching as S
 from chunkmirage.core import Box
+from chunkmirage_contrib import stitching as S
 
 SHIFT = np.array([0.0, 0.0, 6.0])  # tile 1's stage position is this far off, in voxels (x)
 

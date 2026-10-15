@@ -4,7 +4,7 @@ each frame kept around it."""
 
 import numpy as np
 
-from chunkmirage import tracking
+from chunkmirage_contrib import tracking
 
 
 def frames(n=16, shape=(16, 48, 64), seed=0):

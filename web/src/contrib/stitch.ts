@@ -1,13 +1,13 @@
 // The stitch page: the tiles of a BigStitcher project stitched by interest points and RANSAC,
-// every step chunkmirage.stitching's Python run by the engine's Pyodide workers (engine.ts):
+// every step chunkmirage_contrib.stitching's Python run by the engine's Pyodide workers (engine.ts):
 // interest points in each overlap, matches, RANSAC and the global fit, then the fused volume,
 // which the engine serves chunk by chunk as Neuroglancer asks for it. Settings rerun what they
 // change: the detection's rerun everything, the matching's and RANSAC's only the fit (the
 // points are kept). Defaults and the "same in Python" command come from StitchParams.
-import { Engine } from "./engine";
-import type { StitchParams } from "./generated/chunkmirage";
-import schema from "./generated/chunkmirage.schema.json";
-import type { ViewInfo } from "./types";
+import { Engine } from "../engine";
+import type { StitchParams } from "../generated/chunkmirage";
+import schema from "../generated/chunkmirage.schema.json";
+import type { ViewInfo } from "../types";
 
 const XML = "https://janelia-bigstitcher-spark.s3.amazonaws.com/Stitching/dataset.xml";
 const TILE_CHUNK = [64, 128, 128];  // the tiles as served, as stored

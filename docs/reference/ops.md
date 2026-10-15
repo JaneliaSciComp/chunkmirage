@@ -3,6 +3,11 @@
 Run `chunkmirage ops` or `GET /api/ops` for the live list with JSON schemas. This page must
 list every registered op; `tests/test_docs.py` enforces it.
 
+Every op but `downsample` (the pipeline's own, for the pyramid of an op bound to one
+resolution) and `python` lives in `chunkmirage_contrib`, shipped in the same wheel and found
+through the `chunkmirage.ops` entry point like any other package's: in Python,
+`from chunkmirage_contrib.ops import Threshold` ([why](../design.md#what-stays-in-the-core)).
+
 Ops that make masks (`threshold`, `morphology`, `contacts`) and labels (`label`, `spots`)
 say so (`output_kind`, or the `kind` their `output_info` sets), and viewers show what they
 make as segmentations.

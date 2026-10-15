@@ -9,7 +9,7 @@ import uvicorn
 
 from chunkmirage import Pipeline, create_app, open_source
 from chunkmirage.neuroglancer import source_url, viewer_link
-from chunkmirage.ops import Threshold
+from chunkmirage_contrib.ops import Threshold
 
 # 1. Make some data (any zarr/n5/precomputed/hdf5 path or URL works here).
 path = "/tmp/chunkmirage-demo.zarr/s0"

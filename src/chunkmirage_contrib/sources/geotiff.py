@@ -32,6 +32,11 @@ def is_geotiff(path: str) -> bool:
     return path.split("?")[0].lower().endswith((".tif", ".tiff"))
 
 
+def match(path: str):
+    """``open_geotiff`` for a ``.tif``/``.tiff`` path, else None (the ``chunkmirage.source_matchers`` entry point)."""
+    return open_geotiff if is_geotiff(path) else None
+
+
 class _Ranges(io.RawIOBase):
     """A file of ``size`` bytes read through a tensorstore kvstore in 256 KB blocks, each
     fetched once: the header and page directories tifffile reads are many small reads."""

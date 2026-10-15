@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 from chunkmirage.cli import app
 from chunkmirage.ops.base import list_ops
 from chunkmirage.schema import dumps, spec_schema
-from chunkmirage.sources.register import RegisterParams
+from chunkmirage_contrib.sources.register import RegisterParams
 
 WEB_COPY = Path(__file__).parents[1] / "web" / "src" / "generated" / "chunkmirage.schema.json"
 

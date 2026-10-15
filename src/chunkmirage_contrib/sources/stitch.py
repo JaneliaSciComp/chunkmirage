@@ -23,9 +23,9 @@ from urllib.parse import parse_qs
 
 import numpy as np
 
-from chunkmirage import stitching as S
 from chunkmirage.core import ArrayInfo, Box
 from chunkmirage.sources.base import MultiscaleSource, Source
+from chunkmirage_contrib import stitching as S
 
 log = logging.getLogger("chunkmirage")
 CHUNK = (64, 128, 128)

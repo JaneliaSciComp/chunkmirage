@@ -101,7 +101,7 @@ def test_the_mandelbulb_is_inside_at_its_centre_and_reaches_deep_levels():
     """synthetic://mandelbulb: 255 (inside) at the centre, a small escape time at the
     corners, 4 x 256 voxels per level down to its finest, and float64 coordinates, so a
     level of an array 2^40 voxels across still computes."""
-    from chunkmirage.sources.synthetic import _mandelbulb
+    from chunkmirage_contrib.sources.synthetic import _mandelbulb
 
     full = (256, 256, 256)
     assert _mandelbulb((128, 128, 128), (129, 129, 129), 1, full).item() == 255

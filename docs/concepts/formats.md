@@ -522,7 +522,7 @@ cosine over `blend` at the tiles' edges in y and x, so the seams do not show. Th
 images must be OME-Zarr (BigStitcher-Spark's `bdv.multimg.zarr` loader); a tile's stage
 position is its view transforms but the outermost ones named "Stitching Transform" (a
 stitching done before), and the log says how far the result lies from that one. The steps
-are functions of arrays in `chunkmirage.stitching` (numpy and scipy, so the `ops` extra), the
+are functions of arrays in `chunkmirage_contrib.stitching` (numpy and scipy, so the `ops` extra), the
 same code the browser's stitch page runs in Pyodide.
 
 ```bash
@@ -630,11 +630,20 @@ name. `open_source` and so `chunkmirage serve` then open `myscheme://...` like t
 schemes, and pipelines, caching and every frontend work on it unchanged. An opener is passed
 `cache_bytes` (tensorstore's pool) and `cache` (the pipeline's chunk cache) if it takes
 them. `chunkmirage.sources.register_source(scheme, opener)` does the same in a running
-process, and `schemes()` lists what is known. The built-in schemes cannot be replaced.
+process, and `schemes()` lists what is known. The built-in schemes cannot be replaced. A
+format told apart by its path rather than a scheme (a GeoTIFF by its `.tif`) lists a
+*matcher* instead, `path -> opener or None`, under `chunkmirage.source_matchers` (or
+`register_matcher`); `open_source` asks each in turn for a path with no known scheme before
+trying tensorstore. The sources shipped with chunkmirage that compute (`synthetic://`,
+`register://`, `stitch://`, GeoTIFFs) are registered this way too, from `chunkmirage_contrib`
+([what stays in the core](../design.md#what-stays-in-the-core)).
 
 ```toml
 [project.entry-points."chunkmirage.sources"]
 myscheme = "mypackage.sources:open_myscheme"
+
+[project.entry-points."chunkmirage.source_matchers"]
+myformat = "mypackage.sources:match"   # def match(path) -> opener | None
 ```
 
 A source suits work that reads the data itself rather than a padded block: a model wrapper
