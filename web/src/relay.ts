@@ -20,6 +20,7 @@
 // keeping its own copy fetched the same chunks 13 times over. Chunks only: a store's
 // `metadata` is the page's to fetch (see it).
 import type { Ask, Later, Reply, StoreStats } from "./types";
+import { isMetadata } from "./urls";
 
 export type { Ask, Later, Reply, StoreStats } from "./types";
 
@@ -60,16 +61,14 @@ export async function fromStore(req: Request): Promise<Response> {
   return s ? new Response(s.body, { status: s.status, headers: s.headers }) : fetch(req);  // not kept: as it is
 }
 
-const METADATA = new Set([".zattrs", ".zarray", ".zgroup", ".zmetadata", "zarr.json", "attributes.json", "info"]);
-
-/** Whether `url` is a store's metadata (zarr's, N5's, a precomputed volume's info), which a
- * service worker leaves to the page or worker that asked rather than answering it
- * `fromStore`. Chrome refuses a service worker's fetch from a host on a private network
+/** Whether `url` is a store's metadata (zarr's, N5's, a precomputed volume's info;
+ * `isMetadata`, urls.ts), which a service worker leaves to the page or worker that asked
+ * rather than answering it `fromStore`. Chrome refuses a service worker's fetch from a host on a private network
  * (10.x, say) outright, a bare "Failed to fetch", unless the visitor has already let the
  * page reach it (Local Network Access), and only the page's own request asks them; a
  * volume's metadata is what it reads first, so the question comes up, and its chunks then
  * go through the cache. */
-export const metadata = (url: URL) => METADATA.has(url.pathname.slice(url.pathname.lastIndexOf("/") + 1));
+export const metadata = (url: URL) => isMetadata(url);
 
 /** A network fetch, at most MAX_FETCHES at once. */
 async function upstream(req: Request): Promise<Response> {

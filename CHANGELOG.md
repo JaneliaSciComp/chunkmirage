@@ -95,8 +95,10 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
   or empty), beside `path`, which stays the pathname alone that routes match.
 - Neuroglancer precomputed volumes read in the browser (`precomputed://`, or found by their
   `info`): unsharded or sharded (`neuroglancer_uint64_sharded_v1`, identity hash), `raw`,
-  `jpeg` or `compressed_segmentation`; `gs://` and `s3://` sources read through their
-  buckets' https URLs.
+  `jpeg` or `compressed_segmentation`; `gs://` and `s3://` sources fetched as Neuroglancer
+  fetches them, `gs://` through the Cloud Storage JSON API (a bucket's own URL serves a page
+  no CORS headers unless its owner set them) and `s3://` at the bucket's https URL
+  (`web/src/urls.ts`, which the service worker shares).
 - The service worker leaves a store's metadata to the page (`metadata(url)` in
   `web/src/relay.ts`) and caches only chunks, so Chrome can ask the visitor about a volume
   on a private-network host instead of refusing the worker's fetch.

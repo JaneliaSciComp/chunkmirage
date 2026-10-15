@@ -4,6 +4,7 @@
 import * as zarr from "zarrita";
 import { asReals, TYPED, type Numbers, type Reals, type Settable, type TypedCtor } from "./asread";
 import type { ControlGrid } from "./types";
+import { fetchUrl } from "./urls";
 
 export { asReals, zarr, TYPED };
 export type { Numbers, Reals, Settable, TypedCtor };
@@ -38,9 +39,16 @@ interface Multiscale {
   datasets: { path: string; coordinateTransformations?: { type: string; scale?: number[]; translation?: number[] }[] }[];
 }
 
+/** A zarr store at `url` (https://, gs:// or s3://), each key fetched at the URL a browser
+ * reads it from (urls.ts): the store joins key to base as a path, gs://b/x + /.zattrs →
+ * gs://b/x/.zattrs, and that is turned into the JSON API's one-segment form on the way out. */
+export function fetchStore(url: string): zarr.FetchStore {
+  return new zarr.FetchStore(url, { fetch: (req) => fetch(fetchUrl(req.url), { method: req.method, headers: req.headers, signal: req.signal }) });
+}
+
 /** Multiscale metadata of the image at `url`, and its levels' arrays. */
 export async function openImage(url: string): Promise<Image> {
-  const store = new zarr.FetchStore(url.replace(/\/+$/, ""));
+  const store = fetchStore(url.replace(/\/+$/, ""));
   const root = zarr.root(store);
   const group = await zarr.open(root, { kind: "group" });
   const attrs = group.attrs as { ome?: { multiscales?: Multiscale[] }; multiscales?: Multiscale[] };
