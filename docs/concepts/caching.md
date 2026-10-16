@@ -212,8 +212,8 @@ The browser page has one class of work more: chunks it computes for itself, in t
 background, to write a region of a view into a store (`Engine.materialize`; see
 [formats](formats.md#a-region-written-to-a-store-browser-engine)). They go through the same
 queue as the viewer's chunks, so a chunk the viewer has computed is taken from the kept
-chunks, one on its way for the viewer is shared, and one written is kept for the viewer
-after. Three rules keep browsing usable while a region is written:
+chunks and one on its way for the viewer is shared. Three rules keep browsing usable while
+a region is written:
 
 * A background claim is never released because a client gave up, so nothing materialize
   asked for is dropped as abandoned; only its own abort gives its waiting chunks up (and
@@ -228,8 +228,11 @@ A viewer asking for a chunk that waits in the background brings it forward, and 
 back if the viewer gives up on it. Materialize asks for a few chunks at once (as many as
 the queue has slots, by default: the next one is waiting while one is written), not the
 whole region, so the queue holds a few of its chunks at a time however large the region.
-Its chunks are kept as the viewer's are (256 MB, least recently used out), as are a staged
-view's stage outputs, so writing a large region cycles through both.
+A chunk only materialize asked for is not kept once written (the kept chunks are for
+clients that fetch a chunk again), so a large region does not push what the viewer is
+looking at out of the 256 MB; one a client asked for too, while it was on its way, is kept
+as any other. A staged view's stage outputs are kept as usual (512 MB), so writing a large
+region does cycle through those.
 
 ## What has been computed
 

@@ -106,6 +106,9 @@ export class Engine {
   private chunks: Queue<ArrayBuffer> | null = null;
   private inflight = new Map<string, Promise<ArrayBuffer>>();
   private kept = new Kept(KEPT_BYTES);
+  /** The keys of chunks on their way that a client asked for (`chunk` without `background`):
+   * only those are kept once computed. */
+  private clientWanted = new Set<string>();
   private staged = new Kept(STAGED_BYTES);  // by stage key, not view: shared by views, kept past an unserve
   private edits = 0;
   private producers = new Map<string, (level: number, index: number[]) => Promise<ArrayBuffer>>();
@@ -470,15 +473,23 @@ export class Engine {
     const key = `${view}/${mesh ? `mesh${level}` : level}/${index.join(".")}`, done = this.kept.get(key);
     if (done) return { status: 200, body: done.slice(0), type: "application/octet-stream" };
     const chunks = this.chunks!, claim = new Claim();
+    if (!background) this.clientWanted.add(key);
     let pending = this.inflight.get(key);
     if (pending) chunks.claim(key, background);  // another request waits for it too
     else {
       pending = chunks.submit(key, level, () => this.compute(view, level, index, mesh), () => { this.counts.dropped++; }, background)
-        .then((b) => { this.counts.computed++; if (this.views[view]) this.kept.put(key, b); return b; }, (e) => {  // kept unless unserved meanwhile
+        .then((b) => {
+          // Kept for a client that fetches it again, unless the view was unserved meanwhile or
+          // only materialize asked for it: a region written chunk by chunk would otherwise push
+          // what the viewer is looking at out of the 256 MB, for chunks no client may ask for.
+          this.counts.computed++;
+          if (this.views[view] && this.clientWanted.has(key)) this.kept.put(key, b);
+          return b;
+        }, (e) => {
           if (!(e instanceof Cancelled)) { this.counts.failed++; this.failure = { view, message: String((e as Error).message ?? e) }; console.error(`chunk ${key}: ${String((e as Error).message ?? e).trim().split("\n").slice(-3).join(" / ")}`); }
           throw e;
         })
-        .finally(() => { this.inflight.delete(key); this.onChange(); });
+        .finally(() => { this.inflight.delete(key); this.clientWanted.delete(key); this.onChange(); });
       this.inflight.set(key, pending);
     }
     claim.onCancel(() => chunks.release(key, background));
