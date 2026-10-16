@@ -240,20 +240,35 @@ The cache key of each level folds in the whole transformation chain, so editing 
 scene's metadata and re-`PUT`ting the dataset gives new URLs. A field rewritten in place
 under the same path keeps its key; restart or clear the cache after doing that.
 
-### Warp sources (procedural deformations)
+### Warp sources (an image through a displacement field)
 
 ```
+warp://<image>?field=<source>&affine=<12 numbers>&target=<source>
 warp://<image>?field=swirl&angle=90&radius=200&centre=z,y,x&plane=y,x
 warp://<image>?field=swirls&count=8&seed=0&angle=90&radius=200
 ```
 
-serves `<image>` (anything above or below, including `synthetic://` URLs) twisted on its
-own grid by swirls computed from coordinates, and with `&show=field` the displacement
-itself: a `(c, z, y, x)` float32 volume whose three components are the z, y and x
-displacement in the image's units. Nothing is stored, not even the field, so any
-parameter can change at any time: `PUT` a new URL and the viewer refetches what is on
-screen. The resampling is the same as for scene sources, and each chunk reads only the
-compact region its rotated voxels come from, however large the displacement.
+serves `<image>` (anything above or below, including `synthetic://` URLs) resampled
+through a displacement field. The field is **any source**: a `(c, z, y, x)` array whose
+three components are the z, y and x displacement, in the image's units, at each voxel of
+the field's own grid, in the output's space. Another dataset of this server
+([`dataset://<name>`](#dataset-sources-another-dataset-of-the-server-in-process): a block
+matcher's lattice, a model's predicted deformation), a stored zarr, or a warp's own
+`show=field`. A point `x` of the output is read from the image at `A(x + d(x))`, `A` the
+`affine` (identity by default), the convention `register://` uses. The output is on the
+image's own grid, or on `target`'s (any source: its levels are the output's, each reading
+the image level that suits it through the mapping), so a pass fitted on a fixed image's
+grid is applied there: `warp://moving?field=dataset://pass1&target=dataset://fixed`. The
+field's keys are part of the output's, so an edit upstream of the field reaches it. A
+field or target URL with a query of its own is percent-encoded
+(`urllib.parse.quote(url, safe="")`); `dataset://` names need none.
+
+Or the field is `swirl` or `swirls`, deformations computed from coordinates: the image
+twisted on its own grid, nothing stored, not even the field, so any parameter can change
+at any time: `PUT` a new URL and the viewer refetches what is on screen. With
+`&show=field` either kind serves the displacement itself, a `(c, z, y, x)` float32 volume.
+The resampling is the same as for scene sources, and each chunk reads only the compact
+region its displaced voxels come from, however large the displacement.
 
 `swirl` is one twist about an axis along a spatial axis (z for the default `plane=y,x`),
 fading with distance from that axis, so it is a column through the volume. `swirls`
@@ -270,7 +285,9 @@ the field side by side and plays the frames.
 
 | parameter | default | meaning |
 | --------- | ------- | ------- |
-| `field` | (required) | `swirl` or `swirls` |
+| `field` | (required) | a source URL (displacements sampled from it, at the field level nearest each output level's voxel size), `swirl` or `swirls` |
+| `affine` | identity | applied after the displacement: 12 numbers, 3 rows of 4 in C order (z, y, x), or 16 with the last row `0 0 0 1`; 6 or 9 for a 2-D image |
+| `target` | the image's grid | the source whose grid (levels, shape, voxel size, position) the output takes |
 | `angle` | `90` | twist on the axis, degrees; it fades as `exp(-(r/radius)²)` with distance `r` from the axis (`swirl`) or the centre (`swirls`). Each of the `swirls` turns by ½ to 1 × `angle`, either way |
 | `radius` | `swirl`: a quarter of the smaller in-plane extent; `swirls`: a fifth of the smallest extent | fall-off distance, image units; each of the `swirls` gets ½ to 1 × `radius` |
 | `centre` | the volume centre | image units, C order: a point on the axis (`swirl`), the middle of the box the centres fall in (`swirls`) |
@@ -279,8 +296,8 @@ the field side by side and plays the frames.
 | `seed` | `0` | `swirls`: random seed for their centres, axes, radii and angles |
 | `spread` | half the volume | `swirls`: half-size of the box around `centre` their centres fall in; one value or `z,y,x` |
 | `show` | `image` | `field` serves the displacement instead |
-| `frames` | none | frames on a leading `t` axis; frame `i` twists by `angle·i/(frames−1)`. An image's own `t` axis must hold one time point, which the frames replace |
-| `chunk` | the image's | output chunk shape of the spatial axes, C order; thin chunks such as `8,128,128` compute less for a view of one plane |
+| `frames` | none | the swirls only: frames on a leading `t` axis; frame `i` twists by `angle·i/(frames−1)`. An image's own `t` axis must hold one time point, which the frames replace |
+| `chunk` | the grid's | output chunk shape of the spatial axes, C order; thin chunks such as `8,128,128` compute less for a view of one plane |
 | `interpolation` | `linear`; `nearest` for uint32/uint64 | as for scene sources |
 
 The parameters follow the last `?`, so the image URL may carry its own query. To show the
@@ -288,6 +305,30 @@ field as RGB, its components must be a Neuroglancer shader channel dimension (`c
 with `getDataValue(0..2)`). The precomputed frontend makes them one, but holds only
 `(c, z, y, x)`; with frames, serve zarr and rename the channel dimension `c'` to `c^`
 (`Viewer.rename_dimensions`, as the demo does).
+
+### Dataset sources (another dataset of the server, in-process)
+
+```
+dataset://<name>
+```
+
+reads another dataset this server serves, by name, as a source: its levels are that
+dataset's own output stages, so a chunk comes through its stage cache, never over HTTP and
+never computed twice, and every stage key downstream holds its keys. A chain of such
+datasets is how passes of a computation are stacked without writing anything to disk
+between them (each stage still cached): a field fitted by one pass, the moving image
+warped by it, the next pass fitted on that
+(`stack://dataset://fixed|dataset://corrected`), its field, the image warped again. Each
+stage of the chain is cached once, and a change to one pass's parameters recomputes only
+that pass and what follows it on screen.
+
+Editing a dataset (`PUT`) rebuilds the datasets that read it, transitively, so their
+digests, links and `change` events follow the edit; `GET /api/datasets/{name}` lists what a
+dataset reads under `upstream`. A dataset may not read itself by any chain: a cycle is
+refused when it is added (400). Removing a dataset leaves those reading it serving what
+they last read of it, until they are edited. A `dataset://` URL resolves against the
+registry building the dataset that holds it, so it is opened through the server (the REST
+API, `create_app`'s datasets, a `DatasetRegistry`), not by `open_source` on its own.
 
 ### Register sources (deformable registration on a GPU)
 

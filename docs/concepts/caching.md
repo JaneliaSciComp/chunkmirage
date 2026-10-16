@@ -18,7 +18,9 @@ request hits the cache. `tests/test_pipeline.py::test_stage_cache_keys_isolate_d
 asserts exactly this.
 
 Set `cache_source=False` in the spec to disable raw caching (for example when the source is
-a fast local NVMe and memory is scarce).
+a fast local NVMe and memory is scarce). A [`dataset://`](formats.md#dataset-sources-another-dataset-of-the-server-in-process)
+source is another dataset's stages, cached there as that dataset says, so a pipeline
+reading one keeps no copy of its chunks: stage 0 is uncached for it whatever the spec says.
 
 ## Fusion, or why uncached ops are cheap
 

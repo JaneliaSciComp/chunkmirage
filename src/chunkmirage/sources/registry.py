@@ -21,6 +21,7 @@ _BUILTIN = {
     "warp": "chunkmirage.sources.warp:open_warp",
     "stack": "chunkmirage.sources.stack:open_stack",
     "flip": "chunkmirage.sources.flip:open_flip",
+    "dataset": "chunkmirage.sources.dataset:open_dataset",
 }
 _SCHEMES: dict[str, str | Opener] = dict(_BUILTIN)
 # Files told apart by their path rather than a scheme (a GeoTIFF by its extension): a
@@ -110,7 +111,9 @@ def open_source(
     twists an image through a procedural deformation (see ``sources.warp``); ``stack://a|b``
     serves images on one grid as the channels of one array, for ops over several images
     (see ``sources.stack``); ``flip://image?axes=y`` mirrors an image stored the other way
-    round (see ``sources.flip``). The computed sources shipped in ``chunkmirage_contrib``
+    round (see ``sources.flip``); ``dataset://name`` reads another dataset of the server
+    in-process, through its stage cache (see ``sources.dataset``). The computed sources
+    shipped in ``chunkmirage_contrib``
     come through the entry points like any other package's: ``synthetic://kind?shape=...``
     generates data procedurally; ``register://moving?fixed=...`` registers one image onto
     another, solving the deformation on a GPU when opened; ``stitch://project.xml``
@@ -129,7 +132,10 @@ def open_source(
     source = _open(path, cache_bytes=cache_bytes, cache=cache, **kw)
     if kind is not None and kind != source.levels[0].info.kind:
         source = MultiscaleSource(
-            [KindSource(lvl, kind) for lvl in source.levels], name=source.name, shader=source.shader
+            [KindSource(lvl, kind) for lvl in source.levels],
+            name=source.name,
+            shader=source.shader,
+            cached=source.cached,
         )
     return source
 

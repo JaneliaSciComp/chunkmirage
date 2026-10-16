@@ -53,6 +53,7 @@ from chunkmirage.neuroglancer import source_url, viewer_link, viewer_state
 from chunkmirage.ops.base import list_ops
 from chunkmirage.ops.code import PythonOp
 from chunkmirage.pipeline import Pipeline, PipelineSpec
+from chunkmirage.sources.dataset import building
 
 log = logging.getLogger("chunkmirage")
 
@@ -70,6 +71,13 @@ class DatasetRegistry:
     ``resolver``, if given, is asked for a name requested but not registered (``resolve``):
     what it returns is built and registered under that name, once however many requests
     ask at the same time, and served from then on like any other dataset.
+
+    A dataset built from a spec may read others of this registry (``dataset://<name>``
+    sources, ``chunkmirage.sources.dataset``); ``upstreams`` names them. Adding a dataset
+    rebuilds the ones that read it (``dependents``), transitively, so their stage keys,
+    links and ``change`` events follow the edit; a cycle is refused when the dataset is
+    built. Removing a dataset leaves its dependents serving what they last read of it,
+    until they are edited.
     """
 
     def __init__(
@@ -83,6 +91,7 @@ class DatasetRegistry:
         self.source_cache_bytes = source_cache_bytes
         self.resolver = resolver
         self._pipelines: dict[str, Pipeline] = {}
+        self._upstreams: dict[str, set[str]] = {}  # name -> the datasets it reads
         self._lock = threading.RLock()
         self._resolving: dict[str, threading.Lock] = {}
         self._callbacks: list[ChangeCallback] = []
@@ -91,15 +100,50 @@ class DatasetRegistry:
         self.viewer_url: str | None = None
 
     def add(self, name: str, pipeline: Pipeline | PipelineSpec | dict) -> Pipeline:
+        upstreams: set[str] = set()
         if not isinstance(pipeline, Pipeline):
-            pipeline = Pipeline.from_spec(
-                pipeline, cache=self.cache, source_cache_bytes=self.source_cache_bytes
-            )
+            with building(self, name) as upstreams:
+                pipeline = Pipeline.from_spec(
+                    pipeline, cache=self.cache, source_cache_bytes=self.source_cache_bytes
+                )
         with self._lock:
             self._pipelines[name] = pipeline
+            self._upstreams[name] = set(upstreams)
             self.version += 1
         self._notify(name, pipeline)
+        self._rebuild_dependents(name)
         return pipeline
+
+    def upstreams(self, name: str, transitive: bool = True) -> set[str]:
+        """The datasets ``name`` reads through ``dataset://`` sources: directly, or through
+        them in turn."""
+        with self._lock:
+            seen: set[str] = set()
+            todo = [name]
+            while todo:
+                for up in self._upstreams.get(todo.pop(), ()):
+                    if up not in seen:
+                        seen.add(up)
+                        if transitive:
+                            todo.append(up)
+            return seen
+
+    def dependents(self, name: str) -> list[str]:
+        """The datasets that read ``name`` directly, in name order."""
+        with self._lock:
+            return sorted(n for n, ups in self._upstreams.items() if name in ups)
+
+    def _rebuild_dependents(self, name: str) -> list[str]:
+        """Build the datasets that read ``name`` again, on what it is now (and theirs in
+        turn, through ``add``); the names rebuilt."""
+        rebuilt = []
+        for d in self.dependents(name):
+            old = self.get(d)
+            if old is None or old.spec is None:
+                continue  # a pipeline given built has no spec to build again
+            self.add(d, old.spec)
+            rebuilt.append(d)
+        return rebuilt
 
     def get(self, name: str) -> Pipeline | None:
         with self._lock:
@@ -147,11 +191,13 @@ class DatasetRegistry:
                 self.version += 1
             self._notify(n, new)
             changed.append(n)
+            changed.extend(self._rebuild_dependents(n))
         return changed
 
     def remove(self, name: str) -> bool:
         with self._lock:
             removed = self._pipelines.pop(name, None) is not None
+            self._upstreams.pop(name, None)
             if removed:
                 self.version += 1
         if removed:
@@ -329,6 +375,7 @@ def create_app(
             ],
             "levels": _level_info(p),
             "reads": p.input_read,
+            "upstream": sorted(registry.upstreams(name, transitive=False)),
             "sources": links(request, name, p),
         }
 

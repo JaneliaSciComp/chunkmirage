@@ -285,8 +285,9 @@ workers take contrib's Python by a glob of its files, so a module added there ne
 listing.
 
 Two exceptions, each to avoid moving code twice: `warp://`'s procedural swirl fields stay in
-the core until `warp://` takes a field from any source, when they become a contrib field
-source; and `meshes.py` keeps its `terrain` kind, a few lines of a frontend option.
+the core until they are a field source of their own (`warp://` takes a field from any
+source now, so that is the next step, and the demos' `field=swirl` with it); and
+`meshes.py` keeps its `terrain` kind, a few lines of a frontend option.
 
 It is one wheel: `pip install chunkmirage` installs both, and the heavy dependencies stay
 extras (`torch` for `register://`, `tifffile` for GeoTIFFs). One bucket, not several: a split

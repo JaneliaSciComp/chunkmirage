@@ -23,7 +23,7 @@ are refused with 403 unless the app was made with `create_app(..., allow_code=Tr
 | `GET`    | `/api/datasets`                        | dataset names |
 | `POST`   | `/api/datasets`                        | create (201): body `{"name": ..., "spec": PipelineSpec}` (or the spec with a `name` field); the name is a path segment of the served URLs: letters, digits, `.`, `_` and `-`, else 400 |
 | `GET`    | `/api/datasets/{name}`                 | spec, digest, per-level shape/chunks/dtype/voxel size, source URLs; 404 for a name not served |
-| `PUT`    | `/api/datasets/{name}`                 | replace the pipeline live; body is a `PipelineSpec`; returns new digest and URLs |
+| `PUT`    | `/api/datasets/{name}`                 | replace the pipeline live; body is a `PipelineSpec`; returns new digest and URLs. Datasets that read it ([`dataset://`](../concepts/formats.md#dataset-sources-another-dataset-of-the-server-in-process)) are rebuilt too, each with its own `change` event; a spec that would read itself by any chain is refused (400) |
 | `DELETE` | `/api/datasets/{name}`                 | remove; 404 for a name not served |
 | `POST`   | `/api/datasets/{name}/refresh`         | rebuild the pipeline so its ops' `cache_token` is read again (weights or files they depend on changed); `{"changed", "digest", "sources"}`, and a `change` event if the digest moved ([caching](../concepts/caching.md#state-outside-the-parameters)) |
 | `GET`    | `/api/datasets/{name}/neuroglancer`    | `?format=n5|zarr|zarr3|precomputed|mesh&viewer=...` → `{"source", "url"}`; 400 for another format |
@@ -58,7 +58,7 @@ are refused with 403 unless the app was made with `create_app(..., allow_code=Tr
 ```
 
 Responses to `POST`, `PUT` and `GET /api/datasets/{name}` include `digest`, `source_dtype`,
-per-level `levels` (shape, chunks, dtype, voxel size, units, axes, and `kind`: `image`, `label`, `mask` or `null`), `ops_info` (per op: name, per-axis halo, whether it is `cached`, docstring, and for a `python` op its `controls`: each `#uicontrol` line's name, type, min, max, step and default), `reads` (for an op at one voxel size, what it reads: `level`, `voxel_size`, `resampled`; else `null`), and `sources`, a map
+per-level `levels` (shape, chunks, dtype, voxel size, units, axes, and `kind`: `image`, `label`, `mask` or `null`), `ops_info` (per op: name, per-axis halo, whether it is `cached`, docstring, and for a `python` op its `controls`: each `#uicontrol` line's name, type, min, max, step and default), `reads` (for an op at one voxel size, what it reads: `level`, `voxel_size`, `resampled`; else `null`), `upstream` (the names of the datasets it reads through `dataset://` sources), and `sources`, a map
 from format to Neuroglancer source URL carrying the new digest.
 
 ## Datasets resolved by name
