@@ -73,6 +73,50 @@ view as zarr v2 with OME-Zarr 0.4 (`virtual/<page>/zarr2/<view>/`), the same chu
 readers that predate zarr v3's final spec: GDAL 3.8, as the fires demo runs it in the page
 (gdal3.js), opens a level as a zarr array and translates it to a GeoTIFF.
 
+## A region written to a store (browser engine)
+
+The browser engine also writes a view, or a box of it, into a store as files
+(`Engine.materialize`; see [the design notes](../design.md#another-page-on-the-engine)): a
+folder the visitor picks, the origin's private file system or memory. What it writes is
+the layout it serves for the view, one level of it, so the result opens wherever the view
+did and lands in the same place: the group lists the level written as its one dataset,
+`0`, with that level's scale and translation; the level's array has the level's whole
+shape (a box keeps its place in it), the chunk shape and dtype served, and chunks
+compressed with gzip unless asked not to be; and the chunks of the box, rounded out to
+whole chunks. A chunk of nothing but zeros is left out (zarr reads a missing chunk as the
+fill value, 0), unless asked to be written. A channel axis the view's ops add is the
+first axis and one chunk, as served. As zarr v2 with OME-Zarr 0.4 (the default, which
+more tools read):
+
+```text
+.zgroup        {"zarr_format": 2}
+.zattrs        {...extra attributes, "multiscales": [{"name": <view>, "axes": [...],
+                "datasets": [{"path": "0", "coordinateTransformations": [scale, translation]}],
+                "version": "0.4"}]}
+0/.zarray      {"zarr_format": 2, "shape": <the level's>, "chunks": <as served>, "dtype": "<u2",
+                "compressor": {"id": "gzip", "level": 6}, "fill_value": 0, "order": "C",
+                "filters": null, "dimension_separator": "/"}
+0/.zattrs      {"_ARRAY_DIMENSIONS": ["z", "y", "x"]}
+0/<i>/<j>/<k>  each chunk, gzipped
+```
+
+As zarr v3 with OME-Zarr 0.5:
+
+```text
+zarr.json        {"zarr_format": 3, "node_type": "group", "attributes": {...extra attributes,
+                  "ome": {"version": "0.5", "multiscales": [{... "datasets": [{"path": "0", ...}]}]}}}
+0/zarr.json      the level's array as served, its codecs [{"name": "bytes", ...},
+                  {"name": "gzip", "configuration": {"level": 6}}]
+0/c/<i>/<j>/<k>  each chunk, gzipped
+```
+
+The metadata is written first, so a store whose writing was stopped part way is still a
+valid OME-Zarr, zero where no chunk was written. Extra attributes (a consumer's
+provenance) sit beside the OME ones in the group's attributes, which they cannot replace.
+gzip is what a browser compresses with on its own (`CompressionStream`; level 6 is the
+level it writes at, which no reader needs); the Python server's default, blosc, would need
+an encoder of its own in the page.
+
 ## Meshes, computed when fetched
 
 The `mesh` frontend serves a dataset's surface in Neuroglancer's precomputed mesh formats,

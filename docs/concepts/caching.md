@@ -208,6 +208,32 @@ one thread, so the first view of a deep chain used one core. The
 browser page keeps the same rules (`web/src/demand.ts`); it learns of a given-up request
 from its streamed reply being cancelled, a service worker being told of nothing else.
 
+The browser page has one class of work more: chunks it computes for itself, in the
+background, to write a region of a view into a store (`Engine.materialize`; see
+[formats](formats.md#a-region-written-to-a-store-browser-engine)). They go through the same
+queue as the viewer's chunks, so a chunk the viewer has computed is taken from the kept
+chunks and one on its way for the viewer is shared. Three rules keep browsing usable while
+a region is written:
+
+* A background claim is never released because a client gave up, so nothing materialize
+  asked for is dropped as abandoned; only its own abort gives its waiting chunks up (and
+  they are dropped if no client wants them either).
+* A job only background claims hold waits behind every job a client waits for, whatever
+  their levels; among themselves, background jobs keep the usual order.
+* Background jobs run in all the queue's slots but one (in the one, when there is only
+  one), so a viewer's request finds a slot free, or the next one to free, rather than
+  waiting for the region's chunks in line before it.
+
+A viewer asking for a chunk that waits in the background brings it forward, and it goes
+back if the viewer gives up on it. Materialize asks for a few chunks at once (as many as
+the queue has slots, by default: the next one is waiting while one is written), not the
+whole region, so the queue holds a few of its chunks at a time however large the region.
+A chunk only materialize asked for is not kept once written (the kept chunks are for
+clients that fetch a chunk again), so a large region does not push what the viewer is
+looking at out of the 256 MB; one a client asked for too, while it was on its way, is kept
+as any other. A staged view's stage outputs are kept as usual (512 MB), so writing a large
+region does cycle through those.
+
 ## What has been computed
 
 Zoomed out, a dataset shows its ops run on the coarse level, not a downsample of the
