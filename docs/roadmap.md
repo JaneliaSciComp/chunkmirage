@@ -36,7 +36,12 @@ describe shipped features as future work.
    viewer becomes the job scheduler. (Ordering the work by what clients ask for, and
    dropping what they stop waiting for, has shipped; see
    [caching](concepts/caching.md#order-of-work-and-requests-given-up-on). Inference ops
-   would join its queues.)
+   would join its queues. A first piece has shipped in the browser engine: an explicit
+   write of a box of a view into a store, a folder the visitor picks or memory, as an
+   OME-Zarr, its chunks computed in the background behind the viewer's
+   ([formats](concepts/formats.md#a-region-written-to-a-store-browser-engine)). The cache on
+   disk itself, in either engine, its sharing across workers and the filler that grows it
+   from what is browsed are still to do.)
 3. **Lazy-compute story for non-viewer clients.** Demonstrate dask/tensorstore reading a
    served pipeline and running downstream analysis with no intermediate written. (The
    read itself is shown in [getting started](getting-started.md#read-the-result-from-python-instead-of-a-viewer);

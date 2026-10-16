@@ -146,3 +146,14 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
   every session in one WebAssembly instance that its WebGPU build suspends while it waits.
   Two models' passes, or a second model built while the first computed, could hang the page
   and crash the tab. A page's own passes on the same ORT take the turn through `exclusive`.
+- `Engine.materialize(view, store, options)` writes a box of a served view (or a whole
+  level) into a store as an OME-Zarr of its own, zarr v2 with OME 0.4 or zarr v3 with OME
+  0.5, gzipped, its empty chunks left out, the metadata the engine serves for the view
+  (`web/src/layout.ts`, shared with the routes) with the one level as its one dataset;
+  `directoryStore()` writes into a folder picked with the File System Access API (or the
+  origin's private file system), `memoryStore()` into memory
+  ([formats](docs/concepts/formats.md#a-region-written-to-a-store-browser-engine)). Its
+  chunks share the queue and the kept chunks with the viewer's but run in the background:
+  behind every chunk a client waits for, in all the queue's slots but one, and never dropped
+  as abandoned (`submit`, `claim` and `release` take `background`;
+  [caching](docs/concepts/caching.md#order-of-work-and-requests-given-up-on)).

@@ -10,17 +10,20 @@
 // Neuroglancer (virtual/<page>/<view>/...) and GeoZarr for map clients such as OpenLayers
 // (virtual/<page>/geo/<view>/<level>/<view>/...), the zarr-conventions multiscales, proj:
 // and spatial: attributes on the group. And zarr v2 with OME 0.4 (virtual/<page>/zarr2/<view>/),
-// for readers that predate zarr v3's final spec, such as GDAL 3.8.
+// for readers that predate zarr v3's final spec, such as GDAL 3.8. A region of a view is
+// written into a store as the same OME-Zarr by `materialize` (materialize.ts).
 import { asRead, computedSource, needsPython, TYPED, wholeChunk } from "./asread";
 import { Cancelled, Claim, Queue } from "./demand";
 import schema from "./generated/chunkmirage.schema.json";
 import { Kept } from "./kept";
+import { array2, array3, attrs2, dimensionNames, group3 } from "./layout";
+import { region, writeChunks, type MaterializeOptions, type Materialized, type WritableStore } from "./materialize";
 import { route } from "./routes";
 import { bytes, fitted, inputBox, levelAt, padded, prod, type Block, type Padding, type Stage, type StageAt } from "./stages";
-import type { Answer, Ask, Later, MeshCall, PipelineView, Plan, Printed, Reply, SourceInfo, ToPyWorker, ToReader, ViewAxis, ViewInfo } from "./types";
+import type { Answer, Ask, Later, MeshCall, PipelineView, Plan, Printed, Reply, SourceInfo, ToPyWorker, ToReader, ViewInfo } from "./types";
 
-export const TO_SECONDS: Record<string, number> = { s: 1, second: 1, millisecond: 1e-3, ms: 1e-3, minute: 60, hour: 3600, day: 86400 };
-const OME_UNIT: Record<string, string> = { nm: "nanometer", um: "micrometer", m: "meter", s: "second" };
+export { isTime, TO_SECONDS } from "./layout";
+export { directoryStore, memoryStore, type MaterializeOptions, type Materialized, type MaterializeProgress, type WritableStore } from "./materialize";
 const CONVENTIONS = [
   { uuid: "d35379db-88df-4056-af3a-620245f8e347", name: "multiscales" },
   { uuid: "f17cb550-5864-4468-aeb7-f3180cfb622f", name: "proj:" },
@@ -28,9 +31,6 @@ const CONVENTIONS = [
 ];
 const KEPT_BYTES = 256 * 2 ** 20;    // computed chunks kept for clients that refetch
 const STAGED_BYTES = 512 * 2 ** 20;  // the outputs of a staged view's stages (stages.ts), kept for the stages after them
-const V2_DTYPE: Record<string, string> = {
-  uint8: "|u1", int8: "|i1", uint16: "<u2", int16: "<i2", uint32: "<u4", int32: "<i4", uint64: "<u8", int64: "<i8", float32: "<f4", float64: "<f8",
-};
 /** The Pyodide packages each op imports beyond numpy, by op name (chunkmirage's schema). */
 const OP_PACKAGES: Record<string, string[]> = Object.fromEntries(Object.values(schema.$defs as Record<string, { properties?: { op?: { const?: string } }; "x-packages"?: string[] }>)
   .flatMap((d) => (d.properties?.op?.const && d["x-packages"] ? [[d.properties.op.const, d["x-packages"]]] : [])));
@@ -77,7 +77,6 @@ class Rpc<Req extends { reqId: number }> {
 
 const asJson = (o: unknown) => ({ status: 200, body: JSON.stringify(o), type: "application/json" });
 const notFound = { status: 404, body: "", type: "text/plain" };
-export const isTime = (a: ViewAxis) => a.unit in TO_SECONDS;
 
 /** `Engine.start`'s options. `packages`: what Python loads beyond numpy and the ops' own
  * imports (each op's schema says those). `python`: when the Pyodide workers start; "auto"
@@ -389,20 +388,8 @@ export class Engine {
   get running(): number { return this.chunks?.running ?? 0; }
   get waiting(): number { return this.chunks ? [...this.chunks.byLevel().waiting.values()].reduce((a, b) => a + b, 0) : 0; }
 
-  private omeGroup(view: string) {
-    const v = this.infos[view], added = (v.added ?? []).map(() => 0);  // channel axes the ops add
-    return {
-      zarr_format: 3, node_type: "group",
-      attributes: { ome: { version: "0.5", multiscales: [{
-        name: view,
-        axes: [...added.map(() => ({ name: "c", type: "channel" })),
-          ...v.axes.map((a) => ({ name: a.name, type: isTime(a) ? "time" : "space", unit: OME_UNIT[a.unit] ?? (a.unit || undefined) }))],
-        datasets: v.levels.map((l, i) => ({ path: String(i), coordinateTransformations: [
-          { type: "scale", scale: [...added.map(() => 1), ...l.voxel] }, { type: "translation", translation: [...added, ...l.origin] },
-        ] })),
-      }] } },
-    };
-  }
+  /** A view's levels, each a dataset of its group at its own index. */
+  private datasets(view: string) { return this.infos[view].levels.map((_, level) => ({ path: String(level), level })); }
 
   /** The GeoZarr group of a view: the conventions, its levels as the multiscales layout, its
    * projection (the source's own, which the client must know by `proj`) and bounding box. */
@@ -416,20 +403,6 @@ export class Engine {
         multiscales: { layout: v.levels.map((l, i) => ({ asset: String(i), "spatial:shape": l.shape.slice(-2) })) },
         "proj:code": proj, "spatial:dimensions": ["y", "x"], "spatial:bbox": bbox, "spatial:shape": v.levels[0].shape.slice(-2),
       },
-    };
-  }
-
-  /** A level's array; in the GeoZarr layout (`map`) as the map's y, x band, the view's one
-   * plane along z (a map client reads 2-D bands: with a third axis it would need the
-   * group's consolidated metadata to know to select it). */
-  private array(view: string, level: number, map = false) {
-    const v = this.infos[view], keep = map ? -2 : 0, added = map ? [] : v.added ?? [];  // channels: chunked whole
-    return {
-      zarr_format: 3, node_type: "array", shape: [...added, ...v.levels[level].shape.slice(keep)], data_type: v.out, fill_value: 0,
-      chunk_grid: { name: "regular", configuration: { chunk_shape: [...added, ...this.views[view].chunk.slice(keep)] } },
-      chunk_key_encoding: { name: "default", configuration: { separator: "/" } },
-      codecs: [{ name: "bytes", configuration: { endian: "little" } }],
-      dimension_names: [...added.map(() => "c"), ...v.axes.map((a) => a.name).slice(keep)], attributes: {},
     };
   }
 
@@ -490,14 +463,17 @@ export class Engine {
     }, [block.buffer]);
   }
 
-  private chunk(view: string, level: number, index: number[], mesh?: MeshCall): Answered {
+  /** Chunk `index` of a view's level (or with `mesh`, its mesh): kept, or on its way for
+   * another request, or queued. `background`: for `materialize`, not a client, so it waits
+   * behind the clients' work and no client giving up drops it (demand.ts). */
+  private chunk(view: string, level: number, index: number[], mesh?: MeshCall, background = false): Answered {
     const key = `${view}/${mesh ? `mesh${level}` : level}/${index.join(".")}`, done = this.kept.get(key);
     if (done) return { status: 200, body: done.slice(0), type: "application/octet-stream" };
     const chunks = this.chunks!, claim = new Claim();
     let pending = this.inflight.get(key);
-    if (pending) chunks.claim(key);  // another request waits for it too
+    if (pending) chunks.claim(key, background);  // another request waits for it too
     else {
-      pending = chunks.submit(key, level, () => this.compute(view, level, index, mesh), () => { this.counts.dropped++; })
+      pending = chunks.submit(key, level, () => this.compute(view, level, index, mesh), () => { this.counts.dropped++; }, background)
         .then((b) => { this.counts.computed++; if (this.views[view]) this.kept.put(key, b); return b; }, (e) => {  // kept unless unserved meanwhile
           if (!(e instanceof Cancelled)) { this.counts.failed++; this.failure = { view, message: String((e as Error).message ?? e) }; console.error(`chunk ${key}: ${String((e as Error).message ?? e).trim().split("\n").slice(-3).join(" / ")}`); }
           throw e;
@@ -505,11 +481,46 @@ export class Engine {
         .finally(() => { this.inflight.delete(key); this.onChange(); });
       this.inflight.set(key, pending);
     }
-    claim.onCancel(() => chunks.release(key));
+    claim.onCancel(() => chunks.release(key, background));
     const mine = pending.then((b) => b.slice(0));  // each request its own copy: replies transfer it
     mine.catch(() => {});
     this.onChange();
     return { status: 200, type: "application/octet-stream", pending: mine, claim };
+  }
+
+  /** Write a region of `view` into `store` as an OME-Zarr of its own (materialize.ts): one
+   * level of the view (`options.level`, the finest by default) over a box of its voxels
+   * (`lo`, `hi`, rounded out to whole chunks; the whole level by default), as zarr v2 with
+   * OME-Zarr 0.4 or zarr v3 with OME-Zarr 0.5, gzipped, its chunks of nothing but zeros left
+   * out. The group and the array are written first, so the store reads as the view from the
+   * start, zero where no chunk is yet; then the chunks, each computed as a client's request
+   * for it is (kept, or shared with one on its way, and kept after) but in the background:
+   * behind every chunk a client waits for, in all the queue's slots but one, and never
+   * dropped because a client gave up on it (demand.ts). `concurrency` chunks are asked for
+   * at once, as many as the queue has slots by default. Resolves with what was written, or
+   * on `signal`'s abort with `aborted` (chunks waiting for their turn are dropped, the ones
+   * written stay); rejects naming the chunk that failed to compute or be written, once the
+   * writes under way have ended. */
+  async materialize(view: string, store: WritableStore, options: MaterializeOptions = {}): Promise<Materialized> {
+    if (!this.chunks) throw new Error(this.stopped ? "the engine was stopped" : "the engine has not started");
+    if (!this.infos[view] && this.sources[view]) await this.ready;  // its ops are being planned
+    const v = this.infos[view];
+    if (!v) throw new Error(`${view} is not served`);
+    const r = region(view, v, this.views[view].chunk, options);
+    return writeChunks(store, r, (index, signal) => this.backgroundChunk(view, r.level, index, signal), { ...options, concurrency: options.concurrency ?? this.chunks?.slots ?? 1 });
+  }
+
+  /** Chunk `index` of a view's level for `materialize`: its whole bytes, as a client's request
+   * gets them; `signal`'s abort gives it up (dropped unrun if no client wants it either). */
+  private async backgroundChunk(view: string, level: number, index: number[], signal: AbortSignal): Promise<ArrayBuffer> {
+    if (!this.chunks) throw new Error("the engine was stopped");
+    if (!this.infos[view]) throw new Error(`${view} is no longer served`);
+    signal.throwIfAborted();
+    const a = this.chunk(view, level, index, undefined, true)!;
+    if (!("pending" in a)) return a.body as ArrayBuffer;  // kept
+    const cancel = () => a.claim.cancel();
+    signal.addEventListener("abort", cancel, { once: true });
+    try { return await a.pending; } finally { signal.removeEventListener("abort", cancel); }  // done: no claim left to give up
   }
 
   /** Projection codes of the GeoZarr groups, by view (set by the map page). */
@@ -539,12 +550,12 @@ export class Engine {
       view = rest[0];
       rest = rest.slice(1);
       if (!this.infos[view]) return notFound;
-      if (rest.length === 1 && rest[0] === "zarr.json") return asJson(this.omeGroup(view));
+      if (rest.length === 1 && rest[0] === "zarr.json") return asJson(group3(view, this.infos[view], this.datasets(view)));
       if (rest[0] === "mesh" && this.views[view].mesh) return this.mesh(view, rest.slice(1).join("/"), range);
     }
     const level = Number(rest[0]);
     if (!this.infos[view].levels[level]) return notFound;
-    if (rest.length === 2 && rest[1] === "zarr.json") return asJson(this.array(view, level, map));
+    if (rest.length === 2 && rest[1] === "zarr.json") return asJson(array3(this.infos[view], this.views[view].chunk, level, { map }));
     const added = map ? 0 : this.infos[view].added?.length ?? 0, key = rest.slice(2).map(Number);
     if (rest[1] !== "c" || key.length !== added + this.infos[view].levels[level].shape.length || key.slice(0, added).some((i) => i !== 0)) return notFound;
     return this.chunk(view, level, key.slice(added));  // a channel axis is one chunk: the volume's index
@@ -555,21 +566,13 @@ export class Engine {
   private zarr2(view: string, rest: string[]): Answered {
     const v = this.infos[view];
     if (!v) return notFound;
-    const added = v.added ?? [], names = [...added.map(() => "c"), ...v.axes.map((a) => a.name)];
+    const added = v.added ?? [];
     if (rest.length === 1 && rest[0] === ".zgroup") return asJson({ zarr_format: 2 });
-    if (rest.length === 1 && rest[0] === ".zattrs") {
-      const g = this.omeGroup(view).attributes.ome.multiscales[0];
-      return asJson({ multiscales: [{ ...g, version: "0.4" }] });
-    }
+    if (rest.length === 1 && rest[0] === ".zattrs") return asJson(attrs2(view, v, this.datasets(view)));
     const level = Number(rest[0]), l = v.levels[level];
     if (!l) return notFound;
-    if (rest.length === 2 && rest[1] === ".zattrs") return asJson({ _ARRAY_DIMENSIONS: names });
-    if (rest.length === 2 && rest[1] === ".zarray") {
-      return asJson({
-        zarr_format: 2, shape: [...added, ...l.shape], chunks: [...added, ...this.views[view].chunk], dtype: V2_DTYPE[v.out] ?? v.out,
-        compressor: null, fill_value: 0, order: "C", filters: null, dimension_separator: "/",
-      });
-    }
+    if (rest.length === 2 && rest[1] === ".zattrs") return asJson({ _ARRAY_DIMENSIONS: dimensionNames(v) });
+    if (rest.length === 2 && rest[1] === ".zarray") return asJson(array2(v, this.views[view].chunk, level));
     const key = rest.slice(1).map(Number);
     if (key.length !== added.length + l.shape.length || key.some((i) => !Number.isInteger(i)) || key.slice(0, added.length).some((i) => i !== 0)) return notFound;
     return this.chunk(view, level, key.slice(added.length));

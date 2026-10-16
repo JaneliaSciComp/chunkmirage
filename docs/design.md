@@ -516,6 +516,39 @@ as text). What such a page gets, in the order it uses it:
   so the stage is typed with the rest and run in `npm test` through the WebAssembly backend,
   which runs in Node as in a browser without WebGPU, on two models of a hundred bytes
   (`web/test/onnx.test.ts`, the models written by `web/test/fixtures/make_onnx.py`).
+* `Engine.materialize(view, store, options)` writes a region of a served view into a store
+  as an OME-Zarr of its own (`web/src/materialize.ts`), to open again later or copy where
+  other tools read it: a model's output over a box, computed once in the page and kept.
+  The store is anything with `put(path, bytes)`; `directoryStore(dir, root)` makes one of
+  a `FileSystemDirectoryHandle` (a folder the visitor picks with
+  `showDirectoryPicker({mode: "readwrite"})`, in Chrome and Edge, or the origin's private
+  file system, `navigator.storage.getDirectory()`), its subdirectories made as needed and
+  each file written whole through `createWritable()`, and `memoryStore()` one of a `Map`,
+  for tests and for zipping a small result. The options: the view's `level` (the finest by
+  default), a voxel box `lo`, `hi` on it (the whole level by default; rounded out to whole
+  chunks and clipped to the level), `format` (`"zarr2"`, OME-Zarr 0.4, the default, since
+  more tools read it; or `"zarr3"`, OME-Zarr 0.5), `compression` (`"gzip"`, the default, or
+  `null`), `skipEmpty` (a chunk of nothing but zeros left out, by default), `concurrency`,
+  `signal` (an `AbortSignal`), `onProgress` (`done`, `total`, `written`, `bytes`) and
+  `attributes` (the consumer's provenance, beside the OME metadata). It resolves with
+  `{chunks, written, skipped, bytes, aborted}`. The layout is the one the engine serves for
+  the view, from one module (`web/src/layout.ts`) for both, with the one level written as
+  the group's one dataset at `0` with its own scale and translation, so it lands where the
+  view does ([formats](concepts/formats.md#a-region-written-to-a-store-browser-engine)). A
+  single level rather than the pyramid: the engine downsamples nothing itself, and every
+  level would be the model run again on its own grid. The metadata is written first, so a
+  store whose writing stopped is still an OME-Zarr, zero where no chunk was written. The
+  chunks come from the same producer the routes use, through the same queue, but in the
+  background: they wait behind the viewer's, in all its slots but one, and are never dropped
+  as abandoned ([caching](concepts/caching.md#order-of-work-and-requests-given-up-on)), so
+  browsing goes on while a region is written. An abort starts no more chunks, gives up
+  those waiting for their turn, lets the writes under way end and resolves at once with
+  `aborted`; a chunk that fails to compute or be written rejects it with the chunk's key
+  and why, once the writes under way have ended. This is a first piece of
+  [roadmap](roadmap.md) item 2: an explicit write of a box, asked for by the page, not yet
+  the cache on disk that browsing fills. The parts that need no engine (the chunks of a
+  box, the files, gzip, the loop over any producer, the stores) run in `npm test`, the
+  result read back by zarrita (`web/test/materialize.test.ts`).
 * `Engine.unserve(view)` stops serving a view: its infos, producer and kept chunks are
   forgotten and chunks of it waiting to be computed dropped, so a page that serves a model
   again under a new name (viewers cache by URL, so an edit is a new name) does not keep the
