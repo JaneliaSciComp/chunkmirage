@@ -145,7 +145,17 @@ zero takes no memory. So a 512 × 2048 × 2048 box of 64³ chunks off the chunk 
 everywhere (8 × 32 × 32 chunks) holds 32 × 8 + 8 + 1 = 265 chunks, which for 3-channel
 float32 chunks (3 MiB) is about 800 MiB; with `lo` on a chunk edge along z, 32 + 1. No
 order of the axes holds fewer; putting `lo` on the chunk edges along an axis is what
-shrinks it further.
+shrinks it further. These counts are exact where the box has three chunks or more along each
+split axis, and the most it can hold otherwise. `Engine.materializePlan(view, options)`
+gives the exact count for a box before anything is computed (`plan(region(...))` in
+`web/src/materialize.ts`): `peakChunks`, and `peakBytes`, those chunks' bytes (`chunkBytes`
+each), besides the `concurrency` served chunks on their way, with the array's `shape` and
+`chunk`, its chunks (`total`), the served chunks it computes (`needed`), the axes it splits
+and the walk's order. A page can warn, or offer to put `lo` on the chunk grid along an axis,
+before it starts. Should a smaller peak ever matter, the way to get one is to compute the
+plane of served chunks that two slabs of the box share twice, along the outermost split
+axis, so each slab is finished before the next is begun, rather than compressing chunks
+while they wait or refusing the box.
 
 A chunk of nothing but zeros is left out (zarr reads a missing chunk as the fill value,
 0), unless asked to be written. A channel axis the view's ops add is the first axis and
