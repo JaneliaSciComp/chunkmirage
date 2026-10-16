@@ -22,6 +22,7 @@ _BUILTIN = {
     "stack": "chunkmirage.sources.stack:open_stack",
     "flip": "chunkmirage.sources.flip:open_flip",
     "dataset": "chunkmirage.sources.dataset:open_dataset",
+    "coverage": "chunkmirage.sources.dataset:open_coverage",
 }
 _SCHEMES: dict[str, str | Opener] = dict(_BUILTIN)
 # Files told apart by their path rather than a scheme (a GeoTIFF by its extension): a

@@ -32,12 +32,19 @@ class Op(BaseModel):
       modification time, weights replaced in place); part of the op's identity.
     * ``slots``: at most this many ``apply`` calls of this op at once, process-wide (a GPU,
       a memory-hungry step), queued finest level first; ``None`` (the default): no limit.
+    * ``overlap``: output voxels beyond its chunk that each block of this op also computes
+      (int or per-axis tuple), for ops whose blocks computed on their own disagree where
+      they meet (a fit per block, a model's tiles). The blocks, chunk plus overlap, are
+      cached as a stage of their own, and a served chunk is the weighted mean of every block
+      reaching it (``fused.tent``): smooth across chunk edges, and the same whatever order
+      the blocks are computed in. The op runs as a stage of its own.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     name: ClassVar[str] = ""
     halo: ClassVar[int | tuple[int, ...]] = 0
+    overlap: ClassVar[int | tuple[int, ...]] = 0
     cache: ClassVar[bool] = False
     # packages its apply imports beyond numpy (the browser engine loads them up front)
     packages: ClassVar[tuple[str, ...]] = ()
@@ -53,6 +60,11 @@ class Op(BaseModel):
     def halo_for(self, ndim: int) -> tuple[int, ...]:
         h = self.halo
         return tuple(h) if isinstance(h, (tuple, list)) else (int(h),) * ndim
+
+    def overlap_for(self, ndim: int) -> tuple[int, ...]:
+        """The overlap per axis, from ``overlap``, along the last ``ndim`` axes."""
+        o = self.overlap
+        return tuple(o) if isinstance(o, (tuple, list)) else (int(o),) * ndim
 
     def output_dtype(self, in_dtype: np.dtype) -> np.dtype:
         return np.dtype(in_dtype)
@@ -146,6 +158,7 @@ def list_ops() -> dict[str, dict]:
     return {
         name: {
             "halo": "dynamic" if isinstance(cls.halo, property) else cls.halo,
+            "overlap": "dynamic" if isinstance(cls.overlap, property) else cls.overlap,
             "cache": cls.cache,
             "slots": cls.slots,
             "doc": (cls.__doc__ or "").strip(),

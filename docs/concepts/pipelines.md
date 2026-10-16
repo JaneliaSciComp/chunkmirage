@@ -50,6 +50,26 @@ chunks the same at every level, as a stored one's are: an op at one resolution
 Reading an arbitrary box from a stage gathers the covering chunks (cached or computed) and
 slices, so a halo read of stage *k-1* costs at most a few chunk lookups.
 
+### Overlapping blocks, blended where they meet
+
+An op whose blocks are computed on their own may disagree where they meet: a fit per block
+(a block matcher's translations, bigstream's per-block affines), a model's tiles. Cropped
+to its chunk, each block's result then steps at the chunk's edge. Such an op declares
+`overlap`, output voxels beyond its chunk that each block also computes (an int, a
+per-axis tuple, or a property, as `halo` is). Its blocks, chunk plus overlap on every
+side, are each computed from their inputs alone (the input read is the block times the
+voxel ratio, padded by the halo) and cached as a stage of their own, keyed `blocks:` before
+the op's key, whether or not the op's own output is cached; the served chunk is the
+weighted mean of every block that reaches it, each weighted 1 over its own chunk and
+falling linearly to `1 / (overlap + 1)` at the edge of its overlap (`chunkmirage.fused.tent`),
+so two neighbours cross in the middle of their overlap and the result changes no faster
+across a chunk's edge than inside one. Since no block depends on another, the result is the
+same whatever order chunks are asked for. An op with an overlap is a stage of its own (the
+ops before and after it are not fused with it); `GET /api/datasets/{name}` reports each
+op's `overlap` beside its halo. An integer output is rounded after the mean, so labels,
+which do not blend, should have no overlap. `register://`'s refined blocks blend with the
+same weights. The browser engine computes a chunk alone, cropped, without blending.
+
 ## Ops
 
 An op is a pydantic model. Its fields are its parameters, which gives every op a JSON
@@ -59,6 +79,7 @@ schema for free (`GET /api/ops`).
 | ---------------------- | ----------------------------------------------------------------------- |
 | `name`                 | identifier used in specs and the CLI (`--op name:key=val`)              |
 | `halo`                 | voxels of context needed on every side; int, per-axis tuple, or a property computed from parameters (e.g. `Gaussian` uses `ceil(sigma * truncate)`) |
+| `overlap`              | output voxels beyond its chunk that each block also computes, for ops whose blocks computed alone disagree where they meet; the blocks are cached as a stage of their own and blended into the served chunks; see [overlapping blocks](#overlapping-blocks-blended-where-they-meet). Default 0 |
 | `cache`                | whether this stage's output chunks are memoized; see [Caching](caching.md) |
 | `slots`                | at most this many `apply` calls of the op at once, across the process (one per GPU, say, or a memory-hungry step); waiting chunks are queued finest level first and dropped when no request wants them any more ([order of work](caching.md#order-of-work-and-requests-given-up-on)). The op runs as a stage of its own, so reading its input holds no slot. Default `None`: as many as the server computes at once |
 | `packages`             | packages `apply` imports beyond numpy, e.g. `("scipy",)`; the schema carries them (`x-packages`) so the browser engine loads them with Python, only for pages whose ops need them |

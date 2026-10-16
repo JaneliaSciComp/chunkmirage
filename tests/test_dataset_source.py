@@ -64,6 +64,43 @@ def test_cycles_and_unknown_names_are_refused():
         open_source("dataset://a")  # on its own there is no registry to resolve against
 
 
+def test_coverage_shows_what_the_cache_holds_of_a_dataset():
+    reg = DatasetRegistry()
+    a = reg.add("a", {"source": SRC, "ops": [{"op": "gaussian", "sigma": 1, "cache": True}]})
+    cov = reg.add("cov", {"source": "coverage://a"})
+    assert reg.upstreams("cov") == {"a"} and cov.source.cached
+    # a voxel per chunk of a's gaussian stage, the chunk's size, at its centre
+    assert cov.num_levels == 2 and cov.info(0).shape == (2, 2, 2) and cov.info(1).shape == (1, 1, 1)
+    assert cov.info(0).voxel_size == tuple(16 * v for v in a.info(0).voxel_size) and cov.info(0).kind == "label"
+    assert cov.info(0).translation == tuple(t + 7.5 * v for t, v in zip(a.info(0).translation, a.info(0).voxel_size))
+
+    def whole(i: int) -> np.ndarray:
+        return cov.read(i, Box((0, 0, 0), cov.info(i).shape))
+
+    assert not whole(0).any() and not whole(1).any()
+    a.chunk(0, (0, 0, 0))
+    assert whole(0)[0, 0, 0] == 3 and whole(0).sum() == 3, "computed, and the finest level is itself"
+    assert whole(1)[0, 0, 0] == 0
+    a.chunk(1, (0, 0, 0))
+    assert whole(1)[0, 0, 0] == 1, "a preview: the coarse chunk computed, the fine ones under it not all"
+    a.read(0, WHOLE)
+    assert whole(1)[0, 0, 0] == 3 and (whole(0) == 3).all()
+    with pytest.raises(ValueError, match="nothing of 'b' is cached"):
+        reg.add("b", {"source": SRC, "cache_source": False})
+        reg.add("covb", {"source": "coverage://b"})
+
+
+def test_the_api_reports_coverage():
+    app = create_app({"a": {"source": SRC, "ops": [{"op": "gaussian", "sigma": 1, "cache": True}]}})
+    c = TestClient(app)
+    r = c.get("/api/datasets/a/coverage").json()
+    assert r == {"stage": "gaussian", "levels": [{"chunks": [2, 2, 2], "computed": 0, "complete": 0}, {"chunks": [1, 1, 1], "computed": 0, "complete": 0}]}
+    assert c.get("/a/zarr3/s0/c/0/0/0").status_code == 200
+    assert c.get("/api/datasets/a/coverage").json()["levels"][0] == {"chunks": [2, 2, 2], "computed": 1, "complete": 1}
+    assert c.get("/api/datasets/a").json()["ops_info"][0]["overlap"] == [0, 0, 0]
+    assert c.get("/api/datasets/nothing/coverage").status_code == 404
+
+
 def test_the_api_shows_what_a_dataset_reads_and_rebuilds_it_on_an_edit():
     app = create_app({"a": {"source": SRC, "ops": [{"op": "threshold", "low": 100}]}, "b": {"source": "dataset://a"}})
     c = TestClient(app)

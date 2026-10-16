@@ -47,6 +47,11 @@ class LRUCache(Generic[T]):
             self.hits += 1
             return value
 
+    def __contains__(self, key: Hashable) -> bool:
+        """Whether ``key`` is held, without counting a hit or making it recently used."""
+        with self._lock:
+            return key in self._data
+
     def put(self, key: Hashable, value: T) -> None:
         size = _nbytes(value)
         if size > self.max_bytes:

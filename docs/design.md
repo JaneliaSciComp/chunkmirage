@@ -169,7 +169,10 @@ does, with weights that are 1 over a block's own points and fall off linearly in
 context; the field then changes no faster across block edges than inside them. Blending
 the fits, rather than fitting each block against its neighbours' results, keeps every
 block's fit a function of the solved field and the images alone, so the result is the
-same whatever order a client's requests fit blocks in. Nothing of this is viewer-specific: any client reading chunks
+same whatever order a client's requests fit blocks in. The same treatment is the engine's
+for any op whose blocks disagree where they meet (`Op.overlap`: its blocks cached as a
+stage of their own and blended into its chunks with the same weights; see
+[pipelines](concepts/pipelines.md#overlapping-blocks-blended-where-they-meet)). Nothing of this is viewer-specific: any client reading chunks
 drives it. Measured on two rounds of a public EASI-FISH fly brain, the blocks raise the
 correlation of full-resolution chunks well above the coarse field's, the more the wider
 their window (see [register sources](concepts/formats.md#register-sources-deformable-registration-on-a-gpu)).

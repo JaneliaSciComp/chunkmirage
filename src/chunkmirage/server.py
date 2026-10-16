@@ -53,7 +53,7 @@ from chunkmirage.neuroglancer import source_url, viewer_link, viewer_state
 from chunkmirage.ops.base import list_ops
 from chunkmirage.ops.code import PythonOp
 from chunkmirage.pipeline import Pipeline, PipelineSpec
-from chunkmirage.sources.dataset import building
+from chunkmirage.sources.dataset import building, coverage_report
 
 log = logging.getLogger("chunkmirage")
 
@@ -367,6 +367,7 @@ def create_app(
                 {
                     "op": op.name,
                     "halo": list(op.for_level(p.info(0)).halo_for(p.info(0).ndim)),  # an op in physical units: this level's
+                    "overlap": list(op.for_level(p.info(0)).overlap_for(p.info(0).ndim)),
                     "cached": op.cached,
                     "doc": (op.__doc__ or "").strip(),
                     **({"controls": [c.model_dump() for c in op.directives.controls]} if isinstance(op, PythonOp) else {}),
@@ -483,6 +484,18 @@ def create_app(
             return JSONResponse({"error": "not found"}, 404)
         p = registry.get(name)
         return JSONResponse({"changed": bool(changed), "digest": p.digest(), "sources": links(request, name, p)})
+
+    async def dataset_coverage(request: Request):
+        name = request.path_params["name"]
+        p = await lookup(name)
+        if isinstance(p, Response):
+            return p
+        if p is None:
+            return JSONResponse({"error": "not found"}, 404)
+        try:
+            return JSONResponse(await run_in_threadpool(coverage_report, p, repr(name)))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
 
     async def neuroglancer_one(request: Request):
         name = request.path_params["name"]
@@ -610,6 +623,7 @@ def create_app(
         Route("/api/datasets/{name}", put_dataset, methods=["PUT"]),
         Route("/api/datasets/{name}", delete_dataset, methods=["DELETE"]),
         Route("/api/datasets/{name}/refresh", refresh_dataset, methods=["POST"]),
+        Route("/api/datasets/{name}/coverage", dataset_coverage),
         Route("/api/datasets/{name}/neuroglancer", neuroglancer_one),
         Route("/api/neuroglancer", neuroglancer_all),
         Route("/api/events", events),

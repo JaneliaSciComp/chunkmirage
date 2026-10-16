@@ -8,6 +8,7 @@ import numpy as np
 
 from chunkmirage.cache import LRUCache
 from chunkmirage.core import KINDS, ArrayInfo, Box
+from chunkmirage.fused import tent
 
 
 class Source(ABC):
@@ -82,6 +83,8 @@ class ChunkedSource(Source):
         self._compute = compute_chunk
         self._cache = cache
         self._key = key
+        #: the overlapping blocks this stage is blended from, if any (an op with ``overlap``)
+        self.blocks: BlockSource | None = None
         # In-flight computations keyed by chunk index: concurrent requests for the same chunk
         # (a viewer retrying, or two clients) wait for one computation instead of duplicating it.
         self._inflight: dict[tuple[int, ...], threading.Event] = {}
@@ -94,8 +97,21 @@ class ChunkedSource(Source):
     def cache_key(self) -> str:
         return self._key
 
+    @property
+    def cached(self) -> bool:
+        """Whether this stage memoizes its chunks."""
+        return self._cache is not None
+
+    def in_cache(self, index: Sequence[int]) -> bool:
+        """Whether chunk ``index`` is held in the cache now (computed, and not evicted)."""
+        return self._cache is not None and (self._key, tuple(int(i) for i in index)) in self._cache
+
+    def chunk_box(self, index: Sequence[int]) -> Box:
+        """What chunk ``index`` covers: ``compute_chunk`` returns an array of its shape."""
+        return self._info.chunk_box(index)
+
     def chunk(self, index: Sequence[int]) -> np.ndarray:
-        """Full (edge-clipped) chunk ``index`` as an array of shape ``info.chunk_box(index).shape``."""
+        """Chunk ``index`` as an array of shape ``chunk_box(index).shape`` (edge-clipped)."""
         index = tuple(int(i) for i in index)
         if self._cache is None:
             return self._compute_checked(index)
@@ -124,7 +140,7 @@ class ChunkedSource(Source):
 
     def _compute_checked(self, index: tuple[int, ...]) -> np.ndarray:
         data = np.ascontiguousarray(self._compute(index))
-        expected = self._info.chunk_box(index).shape
+        expected = self.chunk_box(index).shape
         if data.shape != expected:
             raise ValueError(
                 f"{self._key}: compute_chunk{index} returned shape {data.shape}, expected {expected}"
@@ -151,12 +167,78 @@ class ChunkedSource(Source):
         return out
 
 
+class BlockSource(ChunkedSource):
+    """Chunks that overlap: block ``index`` is chunk ``index`` of ``info`` and ``overlap``
+    voxels around it along the last axes (past the array's edge too, so every block has the
+    one shape), each computed from its inputs alone and memoized as a chunk is. ``read``
+    blends them: a voxel is the mean of every block reaching it, each weighted 1 over its
+    own chunk and less the further into its overlap (``fused.tent``), so the result turns
+    smoothly from one block's values to the next's instead of stepping at a chunk's edge,
+    and is the same whatever order the blocks are computed in. An integer output is
+    rounded after the mean. The blocks of an op with ``overlap``; the leading axes (before
+    the last ``len(overlap)``) are read whole."""
+
+    def __init__(
+        self,
+        info: ArrayInfo,
+        overlap: Sequence[int],
+        compute_block: Callable[[tuple[int, ...]], np.ndarray],
+        cache: LRUCache | None,
+        key: str,
+    ):
+        super().__init__(info, compute_block, cache, key)
+        self.overlap = tuple(int(o) for o in overlap)
+
+    def chunk_box(self, index: Sequence[int]) -> Box:
+        """Block ``index``'s extent: chunk ``index``, not clipped to the array along the
+        last axes, padded by the overlap."""
+        info, k = self._info, len(self.overlap)
+        lead = info.ndim - k
+        whole = info.chunk_box(index)
+        core = Box.from_chunk(index, info.chunk_shape)
+        return Box(
+            whole.start[:lead] + tuple(a - o for a, o in zip(core.start[lead:], self.overlap)),
+            whole.stop[:lead] + tuple(b + o for b, o in zip(core.stop[lead:], self.overlap)),
+        )
+
+    def read(self, box: Box) -> np.ndarray:
+        info, k = self._info, len(self.overlap)
+        lead = info.ndim - k
+        chunks, grid = info.chunk_shape[lead:], info.chunk_grid[lead:]
+        acc = np.zeros(box.shape, np.float64)
+        total = np.zeros(box.shape[lead:], np.float64)
+        # the blocks whose extent reaches the box
+        first = [max((a - o) // c, 0) for a, o, c in zip(box.start[lead:], self.overlap, chunks)]
+        last = [min((b - 1 + o) // c, g - 1) for b, o, c, g in zip(box.stop[lead:], self.overlap, chunks, grid)]
+        ahead = tuple(a // c for a, c in zip(box.start[:lead], info.chunk_shape[:lead]))
+        for rel in np.ndindex(*[hi - lo + 1 for lo, hi in zip(first, last)]):
+            index = ahead + tuple(int(lo + r) for lo, r in zip(first, rel))
+            extent = self.chunk_box(index)
+            inter = Box(
+                tuple(max(a, b) for a, b in zip(box.start, extent.start)),
+                tuple(min(a, b) for a, b in zip(box.stop, extent.stop)),
+            )
+            if inter.empty:
+                continue
+            core = Box.from_chunk(index[lead:], chunks)
+            weight = tent(inter.start[lead:], inter.stop[lead:], core.start, core.stop, self.overlap)
+            data = self.chunk(index)[inter.relative_to(extent).slices()]
+            dst = inter.relative_to(box).slices()
+            acc[dst] += weight * data
+            total[dst[lead:]] += weight
+        out = acc / total
+        if info.dtype.kind in "iub":
+            out = np.rint(out)
+        return out.astype(info.dtype)
+
+
 class MultiscaleSource:
     """An ordered list of ``Source`` levels, s0 = full resolution. ``shader`` is a
     Neuroglancer shader the viewer should show the data with (its channel axis then being
     a shader channel), for sources whose channels mean something particular. ``cached``
-    says the levels are cached stages already (another dataset's, ``dataset://``), so a
-    pipeline keeps no copy of their chunks in a stage of its own."""
+    says a pipeline should keep no copy of the levels' chunks in a stage of its own: they
+    are cached stages already (another dataset's, ``dataset://``), or must be read afresh
+    each time (``coverage://``)."""
 
     def __init__(
         self, levels: Sequence[Source], name: str = "", shader: str | None = None, cached: bool = False

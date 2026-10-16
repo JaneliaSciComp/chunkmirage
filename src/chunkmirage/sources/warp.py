@@ -358,14 +358,18 @@ def open_warp(url: str, *, cache_bytes: int = 0, cache=None) -> MultiscaleSource
             ident = f"warp|field|{field.key}|{grid_key}|{i}"
             return FieldLevelSource(field, to_space, finfo, "warp:" + hashlib.sha1(ident.encode()).hexdigest()[:12])
 
-        def mapping_for(j: int):
+        def mapping_for(j: int, displaced: bool = True):
             # grid index -> space -> displaced -> affine -> index of image level j
             to_index = Affine.scale_translation(img_vox[j], src.levels[j].info.translation[n_lead:]).inverse()
-            return simplify(Sequence([to_space, Displacements(field), affine, to_index]))
+            steps = [to_space, Displacements(field), affine, to_index] if displaced else [to_space, affine, to_index]
+            return simplify(Sequence(steps))
 
         # on its own grid the image's level i is read; on a target's, the image level
-        # whose voxels suit the output's through the mapping (a coarse view reads a coarse level)
-        j = i if target is None else _pick_level(grid.shape, mapping_for(0), img_vox)
+        # whose voxels suit the output's through the mapping (a coarse view reads a coarse
+        # level). A sampled field is left out of that choice: sampling it would compute
+        # the dataset it comes from before anything is viewed (so register:// chooses
+        # through its solved field, never a refined one); a swirl costs nothing.
+        j = i if target is None else _pick_level(grid.shape, mapping_for(0, displaced=procedural), img_vox)
         lvl = src.levels[j]
         li = lvl.info
         info = ArrayInfo(

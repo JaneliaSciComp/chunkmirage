@@ -1,9 +1,10 @@
 """Passes of a computation chained through dataset:// and warp://, the acceptance scenario
-registration-station asked for (its chaining half): a toy block matcher, an op whose output
-is one vector per lattice node (a coarser grid than its input), undoes a known rotation in
-two passes, the second fitted on the image the first corrected. Editing the second pass's
-parameter rebuilds only it and what follows, the first pass's chunks staying cached; and
-the result does not depend on the order chunks are asked for."""
+registration-station asked for: a toy block matcher, an op whose output is one vector per
+lattice node (a coarser grid than its input) and whose blocks overlap by a node, blended
+where they meet, undoes a known rotation in two passes, the second fitted on the image the
+first corrected. Editing the second pass's parameter rebuilds only it and what follows, the
+first pass's chunks staying cached; the result does not depend on the order chunks are
+asked for; and the coverage layer marks exactly the blocks fitted."""
 
 from typing import ClassVar
 
@@ -23,6 +24,7 @@ class BlockMatch(Op):
     difference), as a displacement in the data's units, the three components first."""
 
     name: ClassVar[str] = "block_match_test"
+    overlap: ClassVar[int] = 1  # a node beyond each chunk, so neighbouring chunks' fits blend
     stride: int = Field(8, description="voxels per lattice node along each axis")
     radius: int = Field(4, description="largest shift tried, in voxels")
     calls: ClassVar[int] = 0
@@ -69,7 +71,7 @@ def registered(monkeypatch):
     monkeypatch.setitem(base._REGISTRY, BlockMatch.name, BlockMatch)
 
 
-FIXED = "synthetic://blobs+noise?shape=64,64,64&chunk=32,32,32&levels=1&seed=5"
+FIXED = "synthetic://blobs+noise?shape=64,64,64&chunk=16,16,16&levels=1&seed=5"
 MOVING = f"warp://{FIXED}?field=swirl&angle=5&radius=1000"  # turned 5 degrees about z: up to 4 voxels at the corners
 WHOLE = Box((0, 0, 0), (64, 64, 64))
 
@@ -99,7 +101,8 @@ def test_two_passes_undo_a_rotation_and_only_the_edited_pass_recomputes():
     build(reg)
     pass1 = reg.get("pass1")
     assert pass1.info(0).shape == (3, 8, 8, 8) and pass1.info(0).voxel_size == (1.0, 64.0, 64.0, 64.0)  # a node every 8 voxels of 8 nm
-    assert pass1.info(0).chunk_shape == (3, 4, 4, 4), "a lattice's chunks follow its grid: the input's 32 voxels are 4 nodes"
+    assert pass1.info(0).chunk_shape == (3, 2, 2, 2), "a lattice's chunks follow its grid: the input's 16 voxels are 2 nodes"
+    assert pass1.levels[0].blocks.chunk_box((0, 1, 1, 1)) == Box((0, 1, 1, 1), (3, 5, 5, 5)), "a block is its chunk and a node around it"
     assert reg.upstreams("final") == {"fixed", "moving", "pass1", "corrected1", "pass2"}
 
     fixed = read(reg, "fixed")
@@ -120,8 +123,27 @@ def test_two_passes_undo_a_rotation_and_only_the_edited_pass_recomputes():
     assert reg.get("pass1") is pass1 and reg.get("corrected1") is corrected1
     assert reg.get("final") is not final and reg.get("final").digest() != final.digest()
     read(reg, "final")
-    assert BlockMatch.calls - calls == np.prod(reg.get("pass2").levels[0].info.chunk_grid), "only the second pass ran"
+    assert BlockMatch.calls - calls == np.prod(reg.get("pass2").levels[0].info.chunk_grid), "only the second pass ran, each block once"
     assert {k for k in reg.cache._data if k[0] == key1} == kept
+
+
+def test_the_coverage_layer_marks_exactly_the_blocks_fitted():
+    reg = DatasetRegistry()
+    build(reg)
+    cov = reg.add("where", {"source": "coverage://pass1"})
+    whole = Box((0, 0, 0, 0), cov.info(0).shape)
+    assert cov.info(0).shape == (1, 4, 4, 4) and cov.info(0).voxel_size[1:] == (128.0,) * 3  # a voxel per chunk of 2 nodes of 64 nm
+    assert not cov.read(0, whole).any()
+    calls = BlockMatch.calls
+    reg.get("pass1").chunk(0, (0, 0, 0, 0))  # one chunk of the lattice
+    fitted = np.zeros((4, 4, 4), bool)
+    fitted[:2, :2, :2] = True  # its own block and the neighbours whose overlap reaches it
+    marked = cov.read(0, whole)[0]
+    np.testing.assert_array_equal(marked == 3, fitted)
+    assert set(np.unique(marked)) <= {0, 3} and BlockMatch.calls - calls == fitted.sum()
+    pass1 = reg.get("pass1")
+    pass1.read(0, Box((0, 0, 0, 0), pass1.info(0).shape))
+    assert (cov.read(0, whole) == 3).all()
 
 
 def test_the_result_does_not_depend_on_the_order_chunks_are_asked_in():

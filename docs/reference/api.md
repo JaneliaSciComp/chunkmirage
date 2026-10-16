@@ -19,13 +19,14 @@ are refused with 403 unless the app was made with `create_app(..., allow_code=Tr
 | method   | path                                   | purpose |
 | -------- | -------------------------------------- | ------- |
 | `GET`    | `/`                                    | index: datasets, their specs, source URLs per format, the `formats` served, the registry `version`, `viewer_url` of an attached python viewer (or null), cache stats |
-| `GET`    | `/api/ops`                             | registered ops with halo, cache flag, `slots`, docstring and JSON schema |
+| `GET`    | `/api/ops`                             | registered ops with halo, `overlap`, cache flag, `slots`, docstring and JSON schema |
 | `GET`    | `/api/datasets`                        | dataset names |
 | `POST`   | `/api/datasets`                        | create (201): body `{"name": ..., "spec": PipelineSpec}` (or the spec with a `name` field); the name is a path segment of the served URLs: letters, digits, `.`, `_` and `-`, else 400 |
 | `GET`    | `/api/datasets/{name}`                 | spec, digest, per-level shape/chunks/dtype/voxel size, source URLs; 404 for a name not served |
 | `PUT`    | `/api/datasets/{name}`                 | replace the pipeline live; body is a `PipelineSpec`; returns new digest and URLs. Datasets that read it ([`dataset://`](../concepts/formats.md#dataset-sources-another-dataset-of-the-server-in-process)) are rebuilt too, each with its own `change` event; a spec that would read itself by any chain is refused (400) |
 | `DELETE` | `/api/datasets/{name}`                 | remove; 404 for a name not served |
 | `POST`   | `/api/datasets/{name}/refresh`         | rebuild the pipeline so its ops' `cache_token` is read again (weights or files they depend on changed); `{"changed", "digest", "sources"}`, and a `change` event if the digest moved ([caching](../concepts/caching.md#state-outside-the-parameters)) |
+| `GET`    | `/api/datasets/{name}/coverage`        | what the cache holds of the dataset's last cached stage, per level: `{"stage", "levels": [{"chunks", "computed", "complete"}, ...]}`, the chunk grid, how many chunks are in the cache and how many have every finest-level chunk under them in it; 400 for a dataset with no cached stage ([coverage sources](../concepts/formats.md#coverage-sources-what-the-cache-holds-of-a-dataset)) |
 | `GET`    | `/api/datasets/{name}/neuroglancer`    | `?format=n5|zarr|zarr3|precomputed|mesh&viewer=...` → `{"source", "url"}`; 400 for another format |
 | `GET`    | `/api/neuroglancer`                    | same query; one viewer state with a layer per dataset → `{"state", "url", "sources"}` |
 | `GET`    | `/api/events`                          | Server-Sent Events; `change` event on start and after every edit, with digests and source URLs |
@@ -58,7 +59,7 @@ are refused with 403 unless the app was made with `create_app(..., allow_code=Tr
 ```
 
 Responses to `POST`, `PUT` and `GET /api/datasets/{name}` include `digest`, `source_dtype`,
-per-level `levels` (shape, chunks, dtype, voxel size, units, axes, and `kind`: `image`, `label`, `mask` or `null`), `ops_info` (per op: name, per-axis halo, whether it is `cached`, docstring, and for a `python` op its `controls`: each `#uicontrol` line's name, type, min, max, step and default), `reads` (for an op at one voxel size, what it reads: `level`, `voxel_size`, `resampled`; else `null`), `upstream` (the names of the datasets it reads through `dataset://` sources), and `sources`, a map
+per-level `levels` (shape, chunks, dtype, voxel size, units, axes, and `kind`: `image`, `label`, `mask` or `null`), `ops_info` (per op: name, per-axis `halo` and `overlap`, whether it is `cached`, docstring, and for a `python` op its `controls`: each `#uicontrol` line's name, type, min, max, step and default), `reads` (for an op at one voxel size, what it reads: `level`, `voxel_size`, `resampled`; else `null`), `upstream` (the names of the datasets it reads through `dataset://` and `coverage://` sources), and `sources`, a map
 from format to Neuroglancer source URL carrying the new digest.
 
 ## Datasets resolved by name
