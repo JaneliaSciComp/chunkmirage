@@ -66,7 +66,7 @@ batch's progress on stderr.
 | `--op`, `-o` | none | op spec, as for `serve` (repeatable) |
 | `--format` | `zarr3` | `zarr3` (OME-Zarr 0.5), `zarr` (zarr v2, OME-Zarr 0.4, consolidated) or `n5` |
 | `--level`, `-l` | every level | a level whose chunks to write (repeatable); every level's metadata is written |
-| `--box` | all of it | level 0's voxels along the last axes, `lo:hi` each comma separated in C order; every level writes the same region, rounded out to whole chunks |
+| `--box` | all of it | level 0's voxels along the last axes, `lo:hi` each comma separated in C order; every level writes the same region, rounded out to whole chunks, in an array of the level's whole shape (the browser engine's exact box, `extent: "box"`, is not supported here yet) |
 | `--chunk`, `--select` | as for `serve` | output chunk shape; non-spatial axes pinned |
 | `--compressor` | blosc (zarr), gzip (n5) | as the format takes it |
 | `--keep-empty` | off | also write chunks of nothing but zeros (left out otherwise: a reader takes a missing chunk as the fill value) |

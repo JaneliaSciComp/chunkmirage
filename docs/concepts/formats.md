@@ -90,7 +90,9 @@ part way is still the dataset, zero where no chunk was written yet; then the chu
 levels asked for (all by default), several at once, each of nothing but zeros left out
 (`--keep-empty` writes them). `--box` takes level 0's voxels along the last axes, `lo:hi`
 each comma separated in C order (`0,0,0:64,512,512`), and every level writes the same
-region on its own voxels, rounded out to whole chunks. From Python,
+region on its own voxels, rounded out to whole chunks, in an array of the level's whole
+shape: what the browser engine writes with `extent: "level"`. Writing exactly the box
+(the browser engine's default, `extent: "box"`) is not supported here yet. From Python,
 `chunkmirage.materialize(pipeline, where, format=, levels=, box=, compressor=,
 skip_empty=, progress=)` does the same for any pipeline, another dataset's chain read
 through `dataset://` among them (`registry.get(name)`), and returns the counts
@@ -105,20 +107,50 @@ The browser engine also writes a view, or a box of it, into a store as files
 folder the visitor picks, the origin's private file system or memory. What it writes is
 the layout it serves for the view, one level of it, so the result opens wherever the view
 did and lands in the same place: the group lists the level written as its one dataset,
-`0`, with that level's scale and translation; the level's array has the level's whole
-shape (a box keeps its place in it), the chunk shape and dtype served, and chunks
-compressed with gzip unless asked not to be; and the chunks of the box, rounded out to
-whole chunks. A chunk of nothing but zeros is left out (zarr reads a missing chunk as the
-fill value, 0), unless asked to be written. A channel axis the view's ops add is the
-first axis and one chunk, as served. As zarr v2 with OME-Zarr 0.4 (the default, which
-more tools read):
+`0`, with that level's scale; the array has the chunk shape and dtype served, and chunks
+compressed with gzip unless asked not to be. What the array covers is the `extent`:
+
+* `"box"` (the default): exactly the box, `hi − lo` voxels (clipped to the level, rounded
+  out to whole voxels, not to chunks), with the level's translation moved by `lo` voxels
+  (the translation is where voxel 0's centre is, so it lands where the view's voxel `lo`
+  does). Its chunks have the served chunk shape, counted from `lo`. The chunks at the box's
+  far edge overhang it and are stored whole, zero (the fill value) past the box, as zarr
+  stores a chunk at an array's edge (zarr v3's regular grid: border chunks have the full
+  chunk size, the fill value recommended outside the array; zarr v2: every chunk has the
+  same shape).
+* `"level"`: the level's whole shape, with the level's translation, so a box keeps its
+  place in it, as several boxes written into one store need; the chunks of the box are
+  written, rounded out to whole chunks, each the chunk the engine serves.
+
+A box of the whole level is the same store either way, byte for byte. Where a box's `lo` is
+off the served chunks' edges along an axis, the box splits the served chunks there: each of
+its chunks is stitched from the served chunks it overlaps, up to two along each such axis,
+and each served chunk is computed once. The served chunks are walked axis by axis, the axes
+the box does not split outermost, then the split ones, the one with the most of the box's
+chunks first, and each is copied into the box's chunks it overlaps, a box chunk written
+once the last of them is in. Only the box's chunks begun and not yet complete are held: a
+slab of them across the split axes but the outermost, a row and one more. With the box's
+chunks n₁ ≥ n₂ ≥ n₃ along three split axes that is n₂ × n₃ + n₃ + 1; along two, n₂ + 1;
+along one, 1; none where `lo` is on the chunk edges on every axis, the box's chunks then
+the served chunks as they are. A box chunk none of whose served chunks holds a value but
+zero takes no memory. So a 512 × 2048 × 2048 box of 64³ chunks off the chunk edges
+everywhere (8 × 32 × 32 chunks) holds 32 × 8 + 8 + 1 = 265 chunks, which for 3-channel
+float32 chunks (3 MiB) is about 800 MiB; with `lo` on a chunk edge along z, 32 + 1. No
+order of the axes holds fewer; putting `lo` on the chunk edges along an axis is what
+shrinks it further.
+
+A chunk of nothing but zeros is left out (zarr reads a missing chunk as the fill value,
+0), unless asked to be written. A channel axis the view's ops add is the first axis and
+one chunk, as served, whole whatever the extent. Progress counts the array's chunks done
+(written or skipped) of its total, and the served chunks computed of those the box needs;
+each only grows. As zarr v2 with OME-Zarr 0.4 (the default, which more tools read):
 
 ```text
 .zgroup        {"zarr_format": 2}
 .zattrs        {...extra attributes, "multiscales": [{"name": <view>, "axes": [...],
                 "datasets": [{"path": "0", "coordinateTransformations": [scale, translation]}],
                 "version": "0.4"}]}
-0/.zarray      {"zarr_format": 2, "shape": <the level's>, "chunks": <as served>, "dtype": "<u2",
+0/.zarray      {"zarr_format": 2, "shape": <the level's, or the box's>, "chunks": <as served>, "dtype": "<u2",
                 "compressor": {"id": "gzip", "level": 6}, "fill_value": 0, "order": "C",
                 "filters": null, "dimension_separator": "/"}
 0/.zattrs      {"_ARRAY_DIMENSIONS": ["z", "y", "x"]}
@@ -130,8 +162,8 @@ As zarr v3 with OME-Zarr 0.5:
 ```text
 zarr.json        {"zarr_format": 3, "node_type": "group", "attributes": {...extra attributes,
                   "ome": {"version": "0.5", "multiscales": [{... "datasets": [{"path": "0", ...}]}]}}}
-0/zarr.json      the level's array as served, its codecs [{"name": "bytes", ...},
-                  {"name": "gzip", "configuration": {"level": 6}}]
+0/zarr.json      the level's array as served (the box's shape, with the box's extent),
+                  its codecs [{"name": "bytes", ...}, {"name": "gzip", "configuration": {"level": 6}}]
 0/c/<i>/<j>/<k>  each chunk, gzipped
 ```
 
