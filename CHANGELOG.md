@@ -124,3 +124,8 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
 - The service worker leaves a store's metadata to the page (`metadata(url)` in
   `web/src/relay.ts`) and caches only chunks, so Chrome can ask the visitor about a volume
   on a private-network host instead of refusing the worker's fetch.
+- ONNX calls take one turn on the page whatever their session (`exclusive` in
+  `web/src/onnx.ts`): forward passes, and sessions built and released, since ORT Web runs
+  every session in one WebAssembly instance that its WebGPU build suspends while it waits.
+  Two models' passes, or a second model built while the first computed, could hang the page
+  and crash the tab. A page's own passes on the same ORT take the turn through `exclusive`.

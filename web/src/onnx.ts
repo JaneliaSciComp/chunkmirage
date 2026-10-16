@@ -4,9 +4,10 @@
 // model's meaning is here, neither what its input is normalized to nor what its output
 // means: a page puts those in stages of its own before and after this one, and whatever
 // describes its models (a manifest, a catalog) stays with the page. Sessions are built once
-// per model and shared by the views that use it (`retain` and `release`), and one forward
-// pass runs at a time on the page, whatever its session (`exclusive`). ORT's WebAssembly runtime is fetched from `wasmPaths`,
-// ort/ beside the page by default, where the Vite plugin in web/vite-ort.ts serves it.
+// per model and shared by the views that use it (`retain` and `release`), and one call into
+// ORT runs at a time on the page, whatever its session: a forward pass, a session built or
+// released (`exclusive`). ORT's WebAssembly runtime is fetched from `wasmPaths`, ort/ beside
+// the page by default, where the Vite plugin in web/vite-ort.ts serves it.
 import * as ort from "onnxruntime-web/webgpu";
 import { asReals, type Numbers } from "./asread.ts";  // with its extension: Node's runner (npm test) resolves no other
 import { prod, type Block, type Stage } from "./stages.ts";  // with its extension: Node's runner (npm test) resolves no other
@@ -23,16 +24,22 @@ export interface Output { data: Numbers; dims: number[]; type: string; ms: numbe
 
 interface Session { session: ort.InferenceSession; provider: Provider; input: string; output: string }
 
-let turn: Promise<unknown> = Promise.resolve();  // the last pass started on this page's ORT
+let turn: Promise<unknown> = Promise.resolve();  // the last call started on this page's ORT
 
-/** `pass` run after every pass started before it on this page's ORT, whatever its session or
+/** `pass` run after every call started before it on this page's ORT, whatever its session or
  * Onnx; its result. ORT Web runs all its sessions in one WebAssembly instance, and its WebGPU
  * build waits on the GPU with Emscripten's Asyncify, which allows one suspended call per
- * instance: a run started while another waits breaks both. Two runs of one session never
- * resolved, and a page serving a model beside its finetuned copy, their runs free to overlap,
- * hung and then crashed while both computed. So the passes take turns, and anything else running a session
- * on the same ORT (a page's own training passes, say) takes its turn here too. On WASM alone
- * the runs are synchronous and never overlap anyway, so the turn costs nothing there. */
+ * instance: a call started while another waits breaks both. Two runs of one session never
+ * resolved, and a page serving a model beside its finetuned copy, their runs free to
+ * overlap, hung and then crashed while both computed. So forward passes take turns, and so
+ * do sessions being built and released, which call into the same instance (a page's second
+ * model is built while its first one's passes run); anything else calling the same ORT (a
+ * page's own training passes, say) takes its turn here too, imported from this module, not
+ * a copy of it, since the turn is this module's. Never call it from inside a call it runs:
+ * that one waits on itself. On WASM alone the calls are synchronous and never overlap
+ * anyway, so the turn costs nothing there. A call that never ends holds the turn for ever,
+ * every model's passes waiting behind it; it has left the instance suspended, which breaks
+ * whatever runs next anyway, so only a reload recovers (`Onnx.reset` does not). */
 export function exclusive<T>(pass: () => Promise<T>): Promise<T> {
   const mine = turn.then(pass);
   turn = mine.catch(() => {});  // the next pass waits for this one, however it ends
@@ -86,10 +93,11 @@ export class Onnx {
     const bytes = new Uint8Array(await model.bytes());
     let session: ort.InferenceSession | null = null, provider: Provider = "wasm";
     if (navigator.gpu) {
-      try { session = await ort.InferenceSession.create(bytes, { executionProviders: ["webgpu"] }); provider = "webgpu"; }
+      // in the turn (not the download above): building calls into the instance a pass may be suspended in
+      try { session = await exclusive(() => ort.InferenceSession.create(bytes, { executionProviders: ["webgpu"] })); provider = "webgpu"; }
       catch (e) { this.log(`${model.key}: no WebGPU session (${(e as Error).message ?? e}); on WASM (the CPU) instead`); }
     } else this.log("navigator.gpu is unavailable: the model runs on WASM (the CPU), which is slow");
-    session ??= await ort.InferenceSession.create(bytes, { executionProviders: ["wasm"] });
+    session ??= await exclusive(() => ort.InferenceSession.create(bytes, { executionProviders: ["wasm"] }));
     this.provider ??= provider;
     const input = model.input ?? session.inputNames[0], output = model.output ?? session.outputNames[0];
     if (!session.inputNames.includes(input)) throw new Error(`${model.key} has no input ${input} (it has ${session.inputNames.join(", ")})`);
@@ -130,7 +138,8 @@ export class Onnx {
   /** Every session released and forgotten; the next block builds its session again. The
    * WebGPU device is ORT's: it makes the one its backend uses when the first session is
    * built and no other if that one is destroyed, so this recovers from a session in a bad
-   * state, while a pass that hangs the GPU's queue needs the page reloaded. */
+   * state (its passes failing), while a pass that hangs, the GPU's queue or ORT's turn
+   * (`exclusive`), needs the page reloaded. */
   async reset(): Promise<void> {
     const pending = [...this.sessions.values()];
     this.sessions.clear();
@@ -158,12 +167,12 @@ export class Onnx {
   }
 }
 
-/** A session released, not waiting for ever on one whose pass hangs (why `reset` is
- * called), nor failing on one that never got built. */
+/** A session released in ORT's turn (`exclusive`), not waiting for ever on one whose pass
+ * hangs (why `reset` is called), nor failing on one that never got built. */
 async function released(pending: Promise<Session>): Promise<void> {
   try {
     const s = await pending;
-    await Promise.race([s.session.release(), new Promise<void>((r) => setTimeout(r, 3000))]);
+    await Promise.race([exclusive(() => s.session.release()), new Promise<void>((r) => setTimeout(r, 3000))]);
   } catch { /* a session that failed to build has nothing to release */ }
 }
 

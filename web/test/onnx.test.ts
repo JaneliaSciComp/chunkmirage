@@ -69,3 +69,18 @@ test("passes take turns across sessions and callers: one starts when the one bef
   assert.equal(await second, 2);
   assert.deepEqual(events, ["first starts", "first ends", "second starts"]);
 });
+
+test("a session is built in the same turn: a model's first block waits for the call before it", async () => {
+  const lines: string[] = [], onnx = new Onnx({ log: (l) => lines.push(l) });
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const held = exclusive(() => gate);  // another model's pass, say, still running
+  const out = onnxStage(onnx, fixture("double")).produce(block, at);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(ready(lines), 0, "not built while another call holds the turn");
+  release();
+  await held;
+  assert.deepEqual(Array.from((await out).data as Float32Array), [2, 4, 6, 8, 10, 12, 14, 16]);
+  assert.equal(ready(lines), 1);
+  await onnx.reset();
+});
