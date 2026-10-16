@@ -234,8 +234,8 @@ looking at out of the 256 MB; one a client asked for too, while it was on its wa
 as any other. So materialize asks for each chunk once: a box written as exactly the box
 (`extent: "box"`, the default) that does not start on chunk edges has each of its chunks
 stitched from the served chunks it overlaps as they come, rather than asking a served
-chunk again for each of the box's chunks it overlaps. A staged view's stage outputs are kept as usual
-(512 MB), so writing a large region does cycle through those.
+chunk again for each of the box's chunks it overlaps. A staged view's stage outputs are
+kept as usual (512 MB), so writing a large region does cycle through those.
 
 ## What has been computed
 

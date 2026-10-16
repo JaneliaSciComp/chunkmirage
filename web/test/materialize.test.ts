@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import * as zarr from "zarrita";
 import { array3, chunkKey, group3 } from "../src/layout.ts";
 import {
-  allZero, chunkIndices, chunkRange, directoryStore, gzip, memoryStore, region, splitAxes, stitcher, voxelBox, walkOrder, writeChunks,
+  allZero, chunkIndices, chunkRange, directoryStore, gzip, memoryStore, peakChunks, plan, region, splitAxes, stitcher, voxelBox, walkOrder, writeChunks,
   type MaterializeOptions, type MaterializeProgress, type Produce, type Region, type WritableStore,
 } from "../src/materialize.ts";
 import type { ViewInfo } from "../src/types.ts";
@@ -540,12 +540,14 @@ test("a box's chunk is written once the last of the view's chunks it is made of 
     const last = o.map((x, a) => Math.floor((r.at[a] + Math.min((x + 1) * chunk[a], r.shape[a]) - 1) / chunk[a]));
     assert.equal(events.slice(0, i).filter((x) => x.startsWith("make")).at(-1), `make ${last.join(".")}`, `${e} as soon as it is complete`);
   }
-  // held: split along all three (4 ≥ 3 ≥ 3 chunks), a slab across the inner two (3 × 3), a row (3) and one more
+  // held, and projected before it starts (plan): split along all three (4 ≥ 3 ≥ 3 chunks), a
+  // slab across the inner two (3 × 3), a row (3) and one more; on edges along z, split along y
+  // and x, a row and one; along z and y, one; along all, none, each of the view's passing through
   const box = (lo: number[]) => region("v", big, chunk, { lo });
-  assert.equal(held(box([1, 1, 1]), fake.make), 3 * 3 + 3 + 1);
-  assert.equal(held(box([2, 1, 1]), fake.make), 3 + 1);  // on edges along z: split along y and x, a row and one
-  assert.equal(held(box([2, 4, 1]), fake.make), 1);      // along z and y: one
-  assert.equal(held(box([2, 4, 4]), fake.make), 0);      // along all: none, each of the view's passing through
+  for (const [lo, most] of [[[1, 1, 1], 3 * 3 + 3 + 1], [[2, 1, 1], 3 + 1], [[2, 4, 1], 1], [[2, 4, 4], 0]] as [number[], number][]) {
+    assert.equal(held(box(lo), fake.make), most, `held from ${lo}`);
+    assert.deepEqual([plan(box(lo)).peakChunks, plan(box(lo)).peakBytes], [most, most * 64], `projected from ${lo}`);
+  }
   assert.deepEqual(splitAxes(box([2, 4, 4])), []);
   // the view's chunks all empty: nothing held in memory but the counts (no buffer made)
   const r3 = box([1, 1, 1]), s3 = stitcher(r3);
@@ -560,12 +562,14 @@ test("the view's chunks are walked with the split axis of the most chunks outerm
   assert.deepEqual([r.last, splitAxes(r), walkOrder(r)], [[2, 10, 10], [0, 1, 2], [1, 2, 0]]);  // y, then x, z fastest
   // held: a slab across x and z (10 × 2), a row along z (2) and one more; in C order, a slab across y and x
   assert.equal(held(r, fake.make), 10 * 2 + 2 + 1);
+  assert.equal(plan(r).peakChunks, 10 * 2 + 2 + 1);
   assert.equal(held(r, fake.make, [0, 1, 2]), 10 * 10 + 10 + 1);
   assert.equal(held(r, fake.make, [0, 2, 1]), 10 * 10 + 10 + 1);  // the fewest chunks outermost: the most held
   // the axes it does not split go outermost: on chunk edges along y, then x (10 chunks), then z (2)
   const edge = region("v", wide, chunk, { lo: [1, 4, 1] });
   assert.deepEqual([splitAxes(edge), walkOrder(edge)], [[0, 2], [1, 2, 0]]);
   assert.equal(held(edge, fake.make), 2 + 1);
+  assert.equal(plan(edge).peakChunks, 2 + 1);
   assert.ok(held(edge, fake.make, [0, 1, 2]) > 9 * 10);  // C order: a slab across y and x
   // writeChunks asks in that order, each once, and the box reads back as the view
   const store = memoryStore();
@@ -574,6 +578,32 @@ test("the view's chunks are walked with the split axis of the most chunks outerm
   assert.deepEqual(fake.asked, [...chunkIndices(r.lo, r.hi, [1, 2, 0])].map((i) => i.join(".")));
   assert.ok([...fake.calls.values()].every((n) => n === 1));
   assertBox((await readArray(store, "zarr2")).data, [3, 39, 39], [1, 1, 1]);
+});
+
+test("a box's plan: the array, the view's chunks it computes, and the most bytes it holds, the walk's own for any box", () => {
+  // two float32 channels, 2 × 4 × 4 chunks of 256 bytes, off the edges on every axis
+  const p = plan(region("grad", bigChannels, chunk, { lo: [1, 3, 2], hi: [8, 9, 11] }));
+  assert.deepEqual(p, {
+    shape: [2, 7, 6, 9], chunk: [2, 2, 4, 4], total: 24, needed: 36, split: [0, 1, 2], walk: [0, 2, 1],
+    chunkBytes: 2 * 32 * 4, peakChunks: 3 * 2 + 2 + 1, peakBytes: (3 * 2 + 2 + 1) * 256,
+  });
+  // the level's extent holds none
+  const level = plan(region("v", big, chunk, { extent: "level", lo: [1, 3, 2], hi: [8, 9, 11] }));
+  assert.deepEqual([level.shape, level.split, level.walk, level.peakChunks, level.peakBytes], [[9, 10, 11], [], [0, 1, 2], 0, 0]);
+  // for boxes of every kind (split along none to three axes, with one or two chunks along some,
+  // the last spanning a chunk edge or not), what the walk holds is what the plan said
+  let seed = 7;
+  const rnd = (k: number) => { seed = (seed * 1103515245 + 12345) % 2 ** 31; return seed % k; };
+  const seen = new Set<number>();
+  for (let t = 0; t < 400; t++) {
+    const C = [1 + rnd(5), 1 + rnd(5), 1 + rnd(5)], L = C.map((c) => 1 + rnd(c * 6));
+    const lo = L.map((l) => rnd(l)), hi = lo.map((x, a) => x + 1 + rnd(L[a] - x));
+    const r = region("v", { ...view, levels: [{ shape: L, voxel: [1, 1, 1], origin: [0, 0, 0] }] }, C, { lo, hi });
+    const size = 2 * C[0] * C[1] * C[2], most = held(r, () => new Uint8Array(size).fill(1).buffer);
+    assert.equal(peakChunks(r), most, `${L} in ${C}, from ${lo} to ${hi}`);
+    seen.add(splitAxes(r).length);
+  }
+  assert.deepEqual([...seen].sort(), [0, 1, 2, 3]);
 });
 
 test("a box's abort: no chunk asked for or written after it, those asked for given up; the chunks written stay", { timeout: 5000 }, async () => {

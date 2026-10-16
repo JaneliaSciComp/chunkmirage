@@ -203,16 +203,16 @@ export function allZero(bytes: Uint8Array): boolean {
  * them; and the array written: its voxel 0 the level's voxel `at` (0 for the level's extent,
  * the box's lo for the box's), `shape` voxels on the level's axes (the level's own,
  * `levelShape`, or the box's), cut in chunks of `chunk` (the view's), those of its grid's
- * indices [first, last) written, `total` of them, each chunk the channels the ops add first,
- * `channels` values for each voxel, of `item` bytes each; and each chunk's `key` in the
- * store. With the level's extent the array's grid is the view's, [first, last) = [lo, hi). */
+ * indices [first, last) written, `total` of them, each chunk the channel axes the ops add
+ * first (`added`, `channels` values for each voxel in all), of `item` bytes each; and each
+ * chunk's `key` in the store. With the level's extent the array's grid is the view's, [first, last) = [lo, hi). */
 export interface Region {
   name: string; level: number; format: "zarr3" | "zarr2"; compression: "gzip" | null; extent: "level" | "box";
   files: [string, Uint8Array][];
   lo: number[]; hi: number[]; needed: number;
   at: number[]; shape: number[]; levelShape: number[]; chunk: number[];
   first: number[]; last: number[]; total: number;
-  channels: number; item: number;
+  added: number[]; channels: number; item: number;
   key: (index: number[]) => string;
 }
 
@@ -254,7 +254,7 @@ export function region(name: string, v: ViewInfo, chunk: number[], options: Mate
     name, level, format, compression, extent, files: files.map(([path, o]) => [path, json(o)]),
     lo, hi, needed: count(lo, hi),
     at, shape, levelShape, chunk, first, last, total: count(first, last),
-    channels: prod(added), item: item ?? 0,
+    added, channels: prod(added), item: item ?? 0,
     key: (index) => chunkKey(format, LEVEL_PATH, added.length, index),
   };
 }
@@ -283,6 +283,65 @@ export function walkOrder(r: Region): number[] {
 
 /** The bytes of a chunk of region `r`'s array (or of the view's: they are cut alike). */
 export const chunkBytes = (r: Region) => r.channels * prod(r.chunk) * r.item;
+
+/** The most of region `r`'s array chunks its stitcher holds at once, the view's chunks added
+ * one at a time in `walkOrder`. The axes the box does not split are walked outermost and
+ * part it into blocks that share no chunk, so it is the most one block holds, over the split
+ * axes alone, n₁ ≥ n₂ ≥ ... of the box's chunks along them in walk order: along an axis of
+ * three chunks or more (or of two, the last spanning a chunk edge of the view's too), a slab
+ * across the axes inside it, n₂ × n₃ × ..., and what those axes hold of their own; so
+ * n₂ × n₃ + n₃ + 1 along three split axes, n₂ + 1 along two, 1 along one, none along none.
+ * Along an axis of fewer, every axis inside it has two chunks at most, and they are counted
+ * one by one. With the view's chunks coming out of order (`concurrency` above one), a few
+ * more. */
+export function peakChunks(r: Region): number {
+  const split = splitAxes(r), axes = walkOrder(r).filter((a) => split.includes(a)), C = r.chunk;
+  const n = axes.map((a) => r.last[a] - r.first[a]);
+  const e = axes.map((a, i) => {  // the box's last chunk along the axis spans a chunk edge of the view's
+    const o = r.first[a] + n[i] - 1, from = r.at[a] + o * C[a], to = r.at[a] + Math.min((o + 1) * C[a], r.shape[a]);
+    return Math.floor(from / C[a]) !== Math.floor((to - 1) / C[a]);
+  });
+  return mostHeld(n, e);
+}
+
+/** The most chunks held at once by a grid of `n[i]` chunks along each axis (outermost first),
+ * each spanning two of the view's chunks along every axis but where it is the last along it
+ * and `e[i]` is false, the view's chunks walked in C order over these axes (peakChunks). */
+function mostHeld(n: number[], e: boolean[]): number {
+  if (!n.length) return 0;
+  if (n[0] >= 3 || (n[0] === 2 && e[0])) return prod(n.slice(1)) + mostHeld(n.slice(1), e.slice(1));
+  // two chunks at most along this axis and so along those inside it: counted at each of the view's chunks
+  const zero = n.map(() => 0), boxes = [...chunkIndices(zero, n)].map((o) => [o, o.map((x, i) => x + (x < n[i] - 1 || e[i] ? 1 : 0))]);
+  const upTo = (o: number[], p: number[]) => { for (let i = 0; i < o.length; i++) if (o[i] !== p[i]) return o[i] < p[i]; return true; };
+  let most = 0;
+  for (const p of chunkIndices(zero, n.map((x, i) => x + (e[i] ? 1 : 0)))) {
+    most = Math.max(most, boxes.filter(([first, last]) => upTo(first, p) && !upTo(last, p)).length);
+  }
+  return most;
+}
+
+/** What materializing region `r` writes and holds, before it starts (`Engine.materializePlan`):
+ * the array's `shape` and `chunk` shape (the channel axes the ops add first), its chunks
+ * written (`total`), the view's chunks computed for it (`needed`, once each), the axes the box
+ * splits (`split`) and the order the view's chunks are walked in (`walk`, outermost first);
+ * and the most of the array's chunks held at once while they are stitched, `peakChunks`, in
+ * `peakBytes` (`chunkBytes` each), besides the view's chunks on their way (`concurrency` of
+ * them), so a page can warn, or offer to put the box's lo on the view's chunk edges along an
+ * axis, before it starts. */
+export interface MaterializePlan {
+  shape: number[]; chunk: number[]; total: number; needed: number;
+  split: number[]; walk: number[];
+  chunkBytes: number; peakChunks: number; peakBytes: number;
+}
+
+/** Region `r`'s MaterializePlan. */
+export function plan(r: Region): MaterializePlan {
+  const peak = peakChunks(r), bytes = chunkBytes(r);
+  return {
+    shape: [...r.added, ...r.shape], chunk: [...r.added, ...r.chunk], total: r.total, needed: r.needed,
+    split: splitAxes(r), walk: walkOrder(r), chunkBytes: bytes, peakChunks: peak, peakBytes: peak * bytes,
+  };
+}
 
 /** The array's chunk that `add` completes: its index in the array's grid and its bytes, null
  * for nothing but the fill value. */

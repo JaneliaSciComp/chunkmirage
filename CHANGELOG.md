@@ -165,8 +165,9 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
   level's whole shape, the box's chunks in it rounded out to whole chunks (`extent:
   "level"`, for several boxes in one store); a box of the whole level is the same store
   either way; progress counts the array's chunks done and the served chunks computed
-  (`computed`, `needed`); the Python side (`chunkmirage materialize --extent`) writes
-  either too, the box by default;
+  (`computed`, `needed`), and `Engine.materializePlan(view, options)` says beforehand what
+  it will write and the most bytes of the box's chunks it will hold (`peakBytes`); the
+  Python side (`chunkmirage materialize --extent`) writes either too, the box by default;
   `directoryStore()` writes into a folder picked with the File System Access API (or the
   origin's private file system), `memoryStore()` into memory
   ([formats](docs/concepts/formats.md#a-region-written-to-a-store-browser-engine)). Its

@@ -17,13 +17,13 @@ import { Cancelled, Claim, Queue } from "./demand";
 import schema from "./generated/chunkmirage.schema.json";
 import { Kept } from "./kept";
 import { array2, array3, attrs2, dimensionNames, group3 } from "./layout";
-import { region, writeChunks, type MaterializeOptions, type Materialized, type WritableStore } from "./materialize";
+import { plan, region, writeChunks, type MaterializeOptions, type MaterializePlan, type Materialized, type Region, type WritableStore } from "./materialize";
 import { route } from "./routes";
 import { bytes, fitted, inputBox, levelAt, padded, prod, type Block, type Padding, type Stage, type StageAt } from "./stages";
 import type { Answer, Ask, Later, MeshCall, PipelineView, Plan, Printed, Reply, SourceInfo, ToPyWorker, ToReader, ViewInfo } from "./types";
 
 export { isTime, TO_SECONDS } from "./layout";
-export { directoryStore, memoryStore, type MaterializeOptions, type Materialized, type MaterializeProgress, type WritableStore } from "./materialize";
+export { directoryStore, memoryStore, type MaterializeOptions, type MaterializePlan, type Materialized, type MaterializeProgress, type WritableStore } from "./materialize";
 const CONVENTIONS = [
   { uuid: "d35379db-88df-4056-af3a-620245f8e347", name: "multiscales" },
   { uuid: "f17cb550-5864-4468-aeb7-f3180cfb622f", name: "proj:" },
@@ -514,14 +514,30 @@ export class Engine {
    * as many as the queue has slots by default. Resolves with what was written, or
    * on `signal`'s abort with `aborted` (chunks waiting for their turn are dropped, the ones
    * written stay); rejects naming the chunk that failed to compute or be written, once the
-   * writes under way have ended. */
+   * writes under way have ended. `materializePlan` says beforehand what it will write and
+   * hold. */
   async materialize(view: string, store: WritableStore, options: MaterializeOptions = {}): Promise<Materialized> {
+    const r = await this.regionOf(view, options);
+    return writeChunks(store, r, (index, signal) => this.backgroundChunk(view, r.level, index, signal), { ...options, concurrency: options.concurrency ?? this.chunks?.slots ?? 1 });
+  }
+
+  /** What `materialize(view, store, options)` would write and hold, computing nothing
+   * (materialize.ts's plan): the array's shape and chunks, the view's chunks it computes, the
+   * order it walks them in, and the most bytes of the array's chunks it holds at once while
+   * they are stitched (`peakBytes`), for a page to warn, or offer to put the box's lo on the
+   * view's chunk edges along an axis, before it starts. */
+  async materializePlan(view: string, options: MaterializeOptions = {}): Promise<MaterializePlan> {
+    return plan(await this.regionOf(view, options));
+  }
+
+  /** What `options` asks materialize to write of `view` (materialize.ts's region), once its
+   * ops are planned. */
+  private async regionOf(view: string, options: MaterializeOptions): Promise<Region> {
     if (!this.chunks) throw new Error(this.stopped ? "the engine was stopped" : "the engine has not started");
     if (!this.infos[view] && this.sources[view]) await this.ready;  // its ops are being planned
     const v = this.infos[view];
     if (!v) throw new Error(`${view} is not served`);
-    const r = region(view, v, this.views[view].chunk, options);
-    return writeChunks(store, r, (index, signal) => this.backgroundChunk(view, r.level, index, signal), { ...options, concurrency: options.concurrency ?? this.chunks?.slots ?? 1 });
+    return region(view, v, this.views[view].chunk, options);
   }
 
   /** Chunk `index` of a view's level for `materialize`: its whole bytes, as a client's request

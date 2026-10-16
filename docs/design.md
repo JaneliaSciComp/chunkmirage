@@ -530,11 +530,11 @@ as text). What such a page gets, in the order it uses it:
   voxel, its chunks the served chunk shape counted from `lo`, each stitched from the served
   chunks it overlaps, since a page passing a box expects an array of that box; `"level"`:
   the array is the level's whole shape and the box's chunks are written, rounded out to
-  whole chunks, for several boxes written into one store), `format` (`"zarr2"`, OME-Zarr 0.4, the
-  default, since more tools read it; or `"zarr3"`, OME-Zarr 0.5), `compression` (`"gzip"`,
-  the default, or `null`), `skipEmpty` (a chunk of nothing but zeros left out, by default),
-  `concurrency`, `signal` (an `AbortSignal`), `onProgress` (`done`, `total`, `written`,
-  `bytes` for the array's chunks; `computed`, `needed` for the served chunks) and
+  whole chunks, for several boxes written into one store), `format` (`"zarr2"`, OME-Zarr
+  0.4, the default, since more tools read it; or `"zarr3"`, OME-Zarr 0.5), `compression`
+  (`"gzip"`, the default, or `null`), `skipEmpty` (a chunk of nothing but zeros left out, by
+  default), `concurrency`, `signal` (an `AbortSignal`), `onProgress` (`done`, `total`,
+  `written`, `bytes` for the array's chunks; `computed`, `needed` for the served chunks) and
   `attributes` (the consumer's provenance, beside the OME metadata). It resolves with
   `{chunks, written, skipped, bytes, aborted}`. The layout is the one the engine serves for
   the view, from one module (`web/src/layout.ts`) for both, with the one level written as
@@ -549,9 +549,14 @@ as text). What such a page gets, in the order it uses it:
   walk puts the axes the box does not split outermost and the split axis with the most of
   the box's chunks next, so the slab is the one across the other split axes, the smallest
   any order of the axes gives (a wide, shallow box walked in C order would hold a slab
-  across its two wide axes). A single level rather than the pyramid: the engine downsamples nothing itself,
-  and every level would be the model run again on its own grid. The metadata is written first, so a
-  store whose writing stopped is still an OME-Zarr, zero where no chunk was written. The
+  across its two wide axes). `Engine.materializePlan(view, options)` gives that peak for a
+  box before it starts (`peakChunks`, `peakBytes`), so a page can warn, or offer to put the
+  box on the chunk grid along an axis; should a smaller peak ever matter, computing the
+  plane of served chunks two slabs share twice, along the outermost split axis, is the way
+  to it, not compressing chunks while they wait or refusing a box. A single level rather
+  than the pyramid: the engine downsamples nothing itself, and every level would be the
+  model run again on its own grid. The metadata is written first, so a store whose writing
+  stopped is still an OME-Zarr, zero where no chunk was written. The
   chunks come from the same producer the routes use, through the same queue, but in the
   background: they wait behind the viewer's, in all its slots but one, and are never dropped
   as abandoned ([caching](concepts/caching.md#order-of-work-and-requests-given-up-on)), so
