@@ -82,7 +82,8 @@ def build(reg: DatasetRegistry, radius2: int = 2) -> None:
     reg.add("pass1", {"source": "stack://dataset://fixed|dataset://moving", "ops": [{"op": "block_match_test", "stride": 8, "radius": 4, "cache": True}]})
     reg.add("corrected1", {"source": "warp://dataset://moving?field=dataset://pass1&target=dataset://fixed"})
     reg.add("pass2", {"source": "stack://dataset://fixed|dataset://corrected1", "ops": [{"op": "block_match_test", "stride": 8, "radius": radius2, "cache": True}]})
-    reg.add("final", {"source": "warp://dataset://corrected1?field=dataset://pass2&target=dataset://fixed"})
+    # the original through both passes' fields at once, the latest first: one resample
+    reg.add("final", {"source": "warp://dataset://moving?field=dataset://pass2|dataset://pass1&target=dataset://fixed"})
 
 
 def read(reg: DatasetRegistry, name: str) -> np.ndarray:
