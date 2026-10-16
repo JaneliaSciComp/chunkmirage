@@ -7,7 +7,7 @@ import pytest
 import tensorstore as ts
 from starlette.testclient import TestClient
 
-from chunkmirage import Pipeline, create_app, open_source
+from chunkmirage import Pipeline, create_app, gpu, open_source
 from chunkmirage.core import Box
 from chunkmirage.sources.warp import sampled_field
 from chunkmirage.transforms import SwirlField, Swirls
@@ -319,3 +319,32 @@ def test_the_net_displacement_of_several_fields_is_served():
     np.testing.assert_allclose(got, want, atol=1e-4)
     summed = (d1.sample(pts) + d2.sample(pts)).T.reshape(3, *BOX.shape)
     assert np.abs(want - summed).max() > 0.5
+
+
+def test_the_resampler_on_a_gpu_reads_as_on_the_cpu(monkeypatch):
+    torch = pytest.importorskip("torch")
+    p1, p2 = quote(PASS1, safe=""), quote(PASS2, safe="")
+    url = f"warp://{IMG}?field={p2}|{p1}&affine=1,0,0,0.5,0,1,0,-1.3,0,0,1,2.2"
+    cpu = {i: open_source(f"{url}&interpolation={i}").levels[0].read(BOX).astype(float) for i in ("linear", "nearest")}
+    ran = []
+    resample = gpu.resample
+
+
+    def spied(*a):
+        out = resample(*a)
+        ran.append(out is not None)  # whether the torch path resampled it
+        return out
+
+    monkeypatch.setattr(gpu, "resample", spied)
+    monkeypatch.setattr(gpu, "_device", torch.device("cpu"))  # the torch path, on torch's own CPU device
+    for interpolation, want in cpu.items():
+        got = open_source(f"{url}&interpolation={interpolation}").levels[0].read(BOX).astype(float)
+        # single precision: a grey level apart at most, and only at a few voxels
+        assert np.abs(got - want).max() <= 1 and (got != want).mean() < 0.01, interpolation
+    assert ran and all(ran)
+    # a chain with a step the GPU does not run (a swirl) is resampled on the CPU, as before
+    ran.clear()
+    swirled = open_source(f"warp://{IMG}?field=swirl&angle=40").levels[0].read(BOX)
+    monkeypatch.setattr(gpu, "_device", None)
+    np.testing.assert_array_equal(swirled, open_source(f"warp://{IMG}?field=swirl&angle=40").levels[0].read(BOX))
+    assert ran and not any(ran)

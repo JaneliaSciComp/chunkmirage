@@ -4,11 +4,14 @@ waiting (chunkmirage.demand)."""
 import threading
 import time
 
+import numpy as np
 import pytest
 from starlette.testclient import TestClient
 
 from chunkmirage import demand
+from chunkmirage.core import ArrayInfo, Box
 from chunkmirage.server import create_app
+from chunkmirage.sources.base import ChunkedSource
 
 
 def _blocked(queue: demand.Queue):
@@ -168,3 +171,51 @@ def test_a_request_keeps_its_place_however_long_its_input_takes_to_read():
     for t in (late_thread, early_thread):
         t.join(5)
     assert order == ["early", "late"]
+
+
+@pytest.fixture
+def gather_threads():
+    yield demand.set_gather_threads
+    demand.set_gather_threads(max(4, demand._cores()))
+
+
+def _stage(shape, chunk, compute, key):
+    info = ArrayInfo(shape=shape, dtype=np.float32, chunk_shape=chunk, voxel_size=(1.0,) * len(shape),
+                     units=("",) * len(shape), axes=("z", "y", "x")[-len(shape):])
+    return ChunkedSource(info, compute, None, key)
+
+
+def test_a_read_computes_its_chunks_at_once_for_its_request(gather_threads):
+    gather_threads(8)
+    seen = []
+
+    def slow(idx):
+        seen.append((demand.current_claim.get(), demand.current_slots.get()))
+        time.sleep(0.1)
+        return np.full((2, 2, 2), sum(idx), np.float32)
+
+    src, claim = _stage((4, 4, 4), (2, 2, 2), slow, "slow"), demand.Claim()
+    started = time.perf_counter()
+    out = demand.claimed(claim, src.read, Box((0, 0, 0), (4, 4, 4)), slots=demand.Slots(1))
+    took = time.perf_counter() - started
+    assert out[3, 3, 3] == 3 and out[0, 0, 0] == 0
+    assert took < 0.5, f"8 chunks of 0.1 s took {took:.2f} s: one after another"
+    assert all(c is claim for c, _ in seen), "the pool's threads work for the request"
+    assert sum(s is None for _, s in seen) >= 6, "and do not hold its slot"
+
+
+def test_inputs_gathered_by_the_pools_threads_in_turn_cannot_deadlock(gather_threads):
+    # each of 8 chunks reads 8 chunks of the stage before it, on a pool of 2 threads
+    gather_threads(2)
+    inner = _stage((8, 8, 8), (2, 2, 2), lambda idx: (time.sleep(0.01), np.ones((2, 2, 2), np.float32))[1], "inner")
+
+    def outer_chunk(idx):
+        box = Box(tuple(4 * i for i in idx), tuple(4 * i + 4 for i in idx))
+        return inner.read(box)[::2, ::2, ::2]
+
+    outer = _stage((4, 4, 4), (2, 2, 2), outer_chunk, "outer")
+    result = []
+    t = threading.Thread(target=lambda: result.append(outer.read(Box((0, 0, 0), (4, 4, 4)))), daemon=True)
+    t.start()
+    t.join(10)
+    assert result and result[0].sum() == 64, "the read finished"

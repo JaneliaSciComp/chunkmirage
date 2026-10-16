@@ -154,9 +154,13 @@ class VectorField:
         top = np.minimum(np.floor(g.max(axis=0)).astype(int) + 2, self.grid_shape)
         slices = [slice(int(a), int(b)) for a, b in zip(lo, top)]
         slices.insert(self.vector_axis, slice(None))
-        win = np.moveaxis(np.asarray(self._read(tuple(slices)), dtype=float), self.vector_axis, 0)
+        # in the field's own precision (a stored field is float32, its window no float64 copy)
+        win = np.asarray(self._read(tuple(slices)))
+        if win.dtype.kind != "f":
+            win = win.astype(np.float32)
+        win = np.moveaxis(win, self.vector_axis, 0)
         local = (g - lo).T
-        out = np.empty((pts.shape[0], self.ncomp))
+        out = np.empty((pts.shape[0], self.ncomp), dtype=win.dtype)
         for c in range(self.ncomp):
             out[:, c] = map_coordinates(
                 win[c], local, order=self.order, mode="nearest", prefilter=False

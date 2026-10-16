@@ -11,7 +11,7 @@ export const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/";
 // ops and computed sources, so a module added there is picked up here. The two packages'
 // __init__s are stubs: the real ones import the server and tensorstore.
 const PY = import.meta.glob([
-  "../../src/chunkmirage/{core,fused,cache,meshes}.py",
+  "../../src/chunkmirage/{core,fused,cache,demand,meshes}.py",
   "../../src/chunkmirage/ops/*.py",
   "../../src/chunkmirage/sources/base.py",
   "../../src/chunkmirage_contrib/**/*.py",

@@ -120,18 +120,16 @@ describe shipped features as future work.
       (wgpu-py), as one implementation of the solver for both, is still to be measured
       against PyTorch.
 10. **Stages on the GPU.** Heavy work gains on a GPU (block matching, models, large
-    kernels, resampling through many fields); cheap ops do not: a chunk is read and encoded
-    on the CPU, so an op moved on its own would copy its block there and back for work that
-    takes as long as the copies. So a stage would move its block to the device once, run its
-    ops there and move it back once. Ops get a numpy, CuPy or torch array and use that
-    array's library, saying which they support (as `packages` says what they import); the
-    rest run on the CPU. `device=auto|cpu|cuda:N` per server, with `slots` bounding the calls
-    as now. The core's own computation (the resampler of `warp://` and `scene://`,
-    `downsample`, the overlap blend) is written the same way, and contrib's ops move over
-    heaviest first (`register://` already solves on a GPU). It waits on a measured need: one
-    volume resampled on a GPU through a dense field took 3 s where the CPU took 172 s
-    through three lattice fields, measured before BLAS stopped fighting the server's
-    threads.
+    kernels); cheap ops do not: a chunk is read and encoded on the CPU, so an op moved on
+    its own would copy its block there and back for work that takes as long as the copies.
+    So a stage would move its block to the device once, run its ops there and move it back
+    once. Ops get a numpy, CuPy or torch array and use that array's library, saying which
+    they support (as `packages` says what they import); the rest run on the CPU, with
+    `slots` bounding the calls as now. The rest of the core's own computation (`downsample`,
+    the overlap blend) is written the same way, and contrib's ops move over heaviest first
+    (`register://` already solves on a GPU). (The resampler of `warp://` and `scene://` has
+    moved: `serve --device`, see
+    [formats](concepts/formats.md#warp-sources-an-image-through-a-displacement-field).)
 
 ## Untapped potential
 

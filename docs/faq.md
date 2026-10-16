@@ -52,7 +52,9 @@ Usually one of three things:
   least 40). The
   hot paths (numpy, scipy, tensorstore, codecs) release the GIL, so this uses all cores.
   The server keeps BLAS to one thread per call, since the threads it starts for each matrix
-  product would fight these (a three-field `warp://` read took ten times as long).
+  product would fight these (a three-field `warp://` read took ten times as long). The chunks
+  one read needs are computed at once on a pool of a thread per core, so even a single
+  request for a deep chain uses them.
   Pure-Python loops in an op do not; write ops in array operations. `--workers` (processes)
   parallelises too, but each process has its own registry and cache, so live edits only
   reach one of them: it suits fixed pipelines, as in example-virtual-n5's gunicorn setup.

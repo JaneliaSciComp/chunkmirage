@@ -211,6 +211,11 @@ def serve(
         help="threads computing chunks (0 = 2 x CPU count, min 40). numpy/scipy/tensorstore "
         "release the GIL, so this is the effective parallelism",
     ),
+    device: str = typer.Option(
+        "cpu",
+        help="where warp:// and scene:// resample: cpu, cuda or cuda:N (PyTorch, the gpu "
+        "extra), or auto (a GPU if PyTorch sees one, else the CPU)",
+    ),
     resolver: str | None = typer.Option(
         None,
         help="module:function building the pipeline (a PipelineSpec, dict or Pipeline) for a "
@@ -258,6 +263,9 @@ def serve(
 
     if allow_code and not token:  # code runs only for whoever holds the token: there is always one
         token = secrets.token_urlsafe(16)
+    from chunkmirage import gpu
+
+    gpu.set_device(device)
     registry = build_registry(
         source,
         name,

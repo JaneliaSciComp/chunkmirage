@@ -36,6 +36,7 @@ from urllib.parse import parse_qs
 
 import numpy as np
 
+from chunkmirage import gpu
 from chunkmirage.core import ArrayInfo, Box
 from chunkmirage.ngff import DEFAULT_FIELDS, CoordinateSystem, FieldOptions, Image, Node, Scene
 from chunkmirage.sources.base import MultiscaleSource, Source
@@ -191,6 +192,10 @@ class SceneLevelSource(Source):
         return out
 
     def _resample(self, lead: Box, slab: Box) -> np.ndarray:
+        if gpu.device() is not None:  # the chain on a GPU, if every step of it runs there
+            out = gpu.resample(self, lead, slab)
+            if out is not None:
+                return out
         from scipy.ndimage import map_coordinates
 
         n = math.prod(slab.shape)
