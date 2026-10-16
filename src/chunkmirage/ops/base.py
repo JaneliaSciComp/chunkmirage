@@ -86,7 +86,9 @@ class Op(BaseModel):
         """This op as it runs on a scale level described by ``info`` (the stage's output, on
         the input's grid). Ops that work in physical units override it to take the level's
         voxel size: a slope in degrees needs the pixel spacing, which doubles from level to
-        level. The default is the op itself."""
+        level. An op onto a coarser grid that sets ``computed_from`` in ``output_info`` finds
+        its input here as ``info.computed_from``, its exact extent among it (the output's
+        shape is rounded up). The default is the op itself."""
         return self
 
     def apply_at(self, block: np.ndarray, box) -> np.ndarray:

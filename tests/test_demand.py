@@ -106,6 +106,40 @@ def test_a_request_waiting_on_queued_work_frees_its_slot():
     assert done == ["cheap", "expensive"] and slots.stats()["computing"] == 0
 
 
+def test_running_work_gives_up_once_no_request_waits_for_it():
+    # a long job asks demand.cancelled() between its steps: still wanted while any request
+    # waits on it, given up once the last of them is
+    queue, started, results = demand.Queue(slots=1), threading.Event(), []
+
+    def long_job():
+        started.set()
+        while not demand.cancelled():
+            time.sleep(0.01)
+        raise demand.Cancelled
+
+    def ask(claim):
+        demand.current_claim.set(claim)
+        try:
+            results.append(queue.run("fit", 0, long_job))
+        except demand.Cancelled:
+            results.append("gave up")
+
+    first, second = demand.Claim(), demand.Claim()
+    a = threading.Thread(target=ask, args=(first,), daemon=True)
+    a.start()
+    started.wait(2)
+    b = threading.Thread(target=ask, args=(second,), daemon=True)
+    b.start()
+    _settle()
+    first.cancel()
+    _settle()
+    assert results == [], "the second request still waits on it"
+    second.cancel()
+    a.join(2)
+    b.join(2)
+    assert results == ["gave up", "gave up"] and not demand.cancelled()
+
+
 def test_a_cancelled_claim_stops_work_before_it_starts():
     claim = demand.Claim()
     claim.cancel()

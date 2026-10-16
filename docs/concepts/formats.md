@@ -302,7 +302,7 @@ the field side by side and plays the frames.
 
 | parameter | default | meaning |
 | --------- | ------- | ------- |
-| `field` | required unless `affine` or `target` is given | a source URL, or several `\|` apart applied in that order (displacements sampled from each, at its level nearest each output level's voxel size), `swirl` or `swirls` |
+| `field` | required unless `affine` or `target` is given | a source URL, or several `\|` apart applied in that order (displacements sampled from each, at its level nearest each output level's voxel size; a lattice's levels by the voxels they were fitted on, `ArrayInfo.computed_from`, so a zoomed-out view reads the lattice fitted at its level), `swirl` or `swirls` |
 | `affine` | identity | applied after the displacement: 12 numbers, 3 rows of 4 in C order (z, y, x), or 16 with the last row `0 0 0 1`; 6 or 9 for a 2-D image |
 | `target` | the image's grid | the source whose grid (levels, shape, voxel size, position) the output takes |
 | `angle` | `90` | twist on the axis, degrees; it fades as `exp(-(r/radius)²)` with distance `r` from the axis (`swirl`) or the centre (`swirls`). Each of the `swirls` turns by ½ to 1 × `angle`, either way |

@@ -359,6 +359,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "starlette" },
     { name = "tensorstore" },
+    { name = "threadpoolctl" },
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -449,6 +450,7 @@ requires-dist = [
     { name = "scipy", marker = "extra == 'ops'", specifier = ">=1.12" },
     { name = "starlette", specifier = ">=0.37" },
     { name = "tensorstore", specifier = ">=0.1.60" },
+    { name = "threadpoolctl", specifier = ">=3.1" },
     { name = "tifffile", marker = "extra == 'tiff'", specifier = ">=2024.1" },
     { name = "torch", marker = "extra == 'cpu'", specifier = ">=2.6", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "chunkmirage", extra = "cpu" } },
     { name = "torch", marker = "extra == 'gpu'", specifier = ">=2.6", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "chunkmirage", extra = "gpu" } },
@@ -2981,6 +2983,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b5/0d/cbc231244789b634a5796b1bdddc704806c94cdf13cc7ad2d66d8616ef53/tensorstore-0.1.85-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:19a3a809948a96eb44a6da72eef04f8ba44086d52f1e8122b84938890551fa2e", size = 15499976, upload-time = "2026-08-05T15:35:47.733Z" },
     { url = "https://files.pythonhosted.org/packages/9c/e4/c6c573e4b75410bbd8ce541b1222f04fec9a87dff5298ee85b2267d0805b/tensorstore-0.1.85-cp314-cp314t-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:da1b05a99b568dbf8f807efe307d7832f31cb1db35b3bc4144f3740dc7a04cae", size = 19986971, upload-time = "2026-08-05T15:35:50.451Z" },
     { url = "https://files.pythonhosted.org/packages/66/91/02d93b2d718e33d0c50e06445ab7518b3b8f391dea5c55838f9f9ff9f9cc/tensorstore-0.1.85-cp314-cp314t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:82df9ad8e1df057f38203d12475a2929f36032a5a5224ac584851ed89e64622c", size = 21599959, upload-time = "2026-08-05T15:35:53.617Z" },
+]
+
+[[package]]
+name = "threadpoolctl"
+version = "3.7.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/00/dc/6c58154c1c65f758ea979e7139cb76993a9cfc662d14e9be3c4a667cfb77/threadpoolctl-3.7.0.tar.gz", hash = "sha256:61348cfb77d53b9242e0017029244b559b810c142ced65b4e21eeca1843959a7", size = 31961, upload-time = "2026-09-15T15:46:20.263Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/43/3f/f88a53f60a472b46f4023f56d204dd7de33d34c5d2acbfa0d70a674e639e/threadpoolctl-3.7.0-py3-none-any.whl", hash = "sha256:cd8b60b5641b45c67bbf73c64c843235fc2d8a480c87389f52f5dbee893b86be", size = 26362, upload-time = "2026-09-15T15:46:19.168Z" },
 ]
 
 [[package]]

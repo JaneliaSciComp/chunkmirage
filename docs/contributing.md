@@ -104,9 +104,10 @@ Packages build on chunkmirage through its plugin API, which is stable:
 * **Ops.** `Op` and its contract: the class attributes `name`, `halo`, `overlap`, `cache`,
   `packages`, `output_kind` and `slots`; the methods `apply`, `apply_at`, `output_dtype`,
   `output_info`, `input_voxel_size`, `for_level` and `cache_token`; parameters as pydantic
-  fields. `register` and the `chunkmirage.ops` entry point.
+  fields. `register` and the `chunkmirage.ops` entry point. `demand.cancelled()` and
+  `demand.Cancelled`, for a long op to give up once no request waits for it.
 * **Sources.** `Source` (`info`, `read`, `read_padded`, `cache_key`), `ChunkedSource`,
-  `MultiscaleSource`, `ArrayInfo` and `Box`; an opener `opener(url, *, cache_bytes, cache)`
+  `MultiscaleSource`, `ArrayInfo` (its `computed_from` among it) and `Box`; an opener `opener(url, *, cache_bytes, cache)`
   returning a `MultiscaleSource`, registered with `register_source` or the
   `chunkmirage.sources` entry point, or for files told apart by their path a matcher
   registered with `register_matcher` or `chunkmirage.source_matchers`; `open_source`.

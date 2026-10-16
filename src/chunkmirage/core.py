@@ -89,7 +89,12 @@ def kind_for_dtype(dtype) -> str | None:
 class ArrayInfo:
     """Static description of one scale level of a chunked array (C-order axes). ``kind`` is
     what its values are, for viewers choosing how to show it: ``image`` (intensities),
-    ``label`` (segment ids) or ``mask`` (inside or not); ``None`` if unknown."""
+    ``label`` (segment ids) or ``mask`` (inside or not); ``None`` if unknown.
+    ``computed_from`` is the input an op's values were computed on when that is finer than
+    their own grid, as an op writing one vector per lattice node sets it in ``output_info``:
+    its values were fitted on the input's voxels, not its nodes'. ``warp://`` then takes a
+    field's level by the voxels it was fitted on, and the op's ``for_level`` sees the
+    input's exact extent (the output's shape is rounded up). ``None``: its own grid."""
 
     shape: tuple[int, ...]
     dtype: np.dtype
@@ -99,6 +104,7 @@ class ArrayInfo:
     axes: tuple[str, ...]
     translation: tuple[float, ...] = field(default=None)  # type: ignore[assignment]
     kind: str | None = None
+    computed_from: ArrayInfo | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "dtype", np.dtype(self.dtype))
@@ -148,10 +154,14 @@ class ArrayInfo:
         old, new = self.voxel_size[-k:], tuple(float(v) for v in voxel_size)
         shape = tuple(math.ceil(n * o / v - 1e-9) for n, o, v in zip(self.shape[-k:], old, new))
         shift = tuple(t + (v - o) / 2 for t, o, v in zip(self.translation[-k:], old, new))
+        fitted = self.computed_from
+        if fitted is not None:  # a coarser copy of a lattice: as if fitted on voxels as much coarser
+            fitted = fitted.rescaled([f * v / o for f, o, v in zip(fitted.voxel_size[-k:], old, new)])
         return self.with_(
             shape=self.shape[:-k] + shape,
             voxel_size=self.voxel_size[:-k] + new,
             translation=self.translation[:-k] + shift,
+            computed_from=fitted,
         )
 
     @staticmethod

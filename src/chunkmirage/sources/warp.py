@@ -363,12 +363,13 @@ def open_warp(url: str, *, cache_bytes: int = 0, cache=None) -> MultiscaleSource
     def fields_for(grid: ArrayInfo, k: int) -> list:
         """The fields output level ``i`` is read through, in the order applied: the swirl
         (frame ``k``), or each stored field at its level nearest this level's voxels (coarse
-        for a coarse view); none for an affine alone."""
+        for a coarse view; a lattice's by the voxels it was fitted on, which are finer than
+        its nodes); none for an affine alone."""
         if procedural:
             return [fields[k]]
         out = []
         for field_ms in field_mss:
-            j = field_ms.nearest_level(grid.voxel_size)
+            j = field_ms.nearest_level(grid.voxel_size, fitted=True)
             out.append(sampled_field(field_ms.levels[j], f"field|{field_ms.levels[j].cache_key()}"))
         return out
 
