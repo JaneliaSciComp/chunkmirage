@@ -231,8 +231,11 @@ whole region, so the queue holds a few of its chunks at a time however large the
 A chunk only materialize asked for is not kept once written (the kept chunks are for
 clients that fetch a chunk again), so a large region does not push what the viewer is
 looking at out of the 256 MB; one a client asked for too, while it was on its way, is kept
-as any other. A staged view's stage outputs are kept as usual (512 MB), so writing a large
-region does cycle through those.
+as any other. So materialize asks for each chunk once: a box written as exactly the box
+(`extent: "box"`) that does not start on chunk edges has each of its chunks stitched from
+the served chunks it overlaps as they come, rather than asking a served chunk again for
+each of the box's chunks it overlaps. A staged view's stage outputs are kept as usual
+(512 MB), so writing a large region does cycle through those.
 
 ## What has been computed
 

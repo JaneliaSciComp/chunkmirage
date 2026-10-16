@@ -501,14 +501,17 @@ export class Engine {
 
   /** Write a region of `view` into `store` as an OME-Zarr of its own (materialize.ts): one
    * level of the view (`options.level`, the finest by default) over a box of its voxels
-   * (`lo`, `hi`, rounded out to whole chunks; the whole level by default), as zarr v2 with
-   * OME-Zarr 0.4 or zarr v3 with OME-Zarr 0.5, gzipped, its chunks of nothing but zeros left
-   * out. The group and the array are written first, so the store reads as the view from the
-   * start, zero where no chunk is yet; then the chunks, each computed as a client's request
-   * for it is (kept, or shared with one on its way, and kept after) but in the background:
-   * behind every chunk a client waits for, in all the queue's slots but one, and never
-   * dropped because a client gave up on it (demand.ts). `concurrency` chunks are asked for
-   * at once, as many as the queue has slots by default. Resolves with what was written, or
+   * (`lo`, `hi`; the whole level by default), as zarr v2 with OME-Zarr 0.4 or zarr v3 with
+   * OME-Zarr 0.5, gzipped, its chunks of nothing but zeros left out. With `extent` "level"
+   * (the default) the array is the level's whole shape and the box's chunks are written,
+   * rounded out to whole chunks; with "box" it is exactly the box, translated to its first
+   * voxel, each of its chunks stitched from the view's it overlaps. The group and the array
+   * are written first, so the store reads as the view from the start, zero where no chunk is
+   * yet; then the chunks, each of the view's computed once, as a client's request for it is
+   * (kept, or shared with one on its way, and kept after) but in the background: behind
+   * every chunk a client waits for, in all the queue's slots but one, and never dropped
+   * because a client gave up on it (demand.ts). `concurrency` chunks are asked for at once,
+   * as many as the queue has slots by default. Resolves with what was written, or
    * on `signal`'s abort with `aborted` (chunks waiting for their turn are dropped, the ones
    * written stay); rejects naming the chunk that failed to compute or be written, once the
    * writes under way have ended. */
