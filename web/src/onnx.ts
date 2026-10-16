@@ -5,8 +5,7 @@
 // means: a page puts those in stages of its own before and after this one, and whatever
 // describes its models (a manifest, a catalog) stays with the page. Sessions are built once
 // per model and shared by the views that use it (`retain` and `release`), and one forward
-// pass runs at a time per session: an InferenceSession is not re-entrant, and two runs
-// overlapping on WebGPU never resolve. ORT's WebAssembly runtime is fetched from `wasmPaths`,
+// pass runs at a time on the page, whatever its session (`exclusive`). ORT's WebAssembly runtime is fetched from `wasmPaths`,
 // ort/ beside the page by default, where the Vite plugin in web/vite-ort.ts serves it.
 import * as ort from "onnxruntime-web/webgpu";
 import { asReals, type Numbers } from "./asread.ts";  // with its extension: Node's runner (npm test) resolves no other
@@ -22,7 +21,23 @@ export interface GpuLimits { maxBufferSize: number | null; maxStorageBufferBindi
 /** A forward pass's output tensor: its values, dims and type, and the pass's time alone. */
 export interface Output { data: Numbers; dims: number[]; type: string; ms: number }
 
-interface Session { session: ort.InferenceSession; provider: Provider; input: string; output: string; turn: Promise<unknown> }
+interface Session { session: ort.InferenceSession; provider: Provider; input: string; output: string }
+
+let turn: Promise<unknown> = Promise.resolve();  // the last pass started on this page's ORT
+
+/** `pass` run after every pass started before it on this page's ORT, whatever its session or
+ * Onnx; its result. ORT Web runs all its sessions in one WebAssembly instance, and its WebGPU
+ * build waits on the GPU with Emscripten's Asyncify, which allows one suspended call per
+ * instance: a run started while another waits breaks both. Two runs of one session never
+ * resolved, and a page serving a model beside its finetuned copy, their runs free to overlap,
+ * hung and then crashed while both computed. So the passes take turns, and anything else running a session
+ * on the same ORT (a page's own training passes, say) takes its turn here too. On WASM alone
+ * the runs are synchronous and never overlap anyway, so the turn costs nothing there. */
+export function exclusive<T>(pass: () => Promise<T>): Promise<T> {
+  const mine = turn.then(pass);
+  turn = mine.catch(() => {});  // the next pass waits for this one, however it ends
+  return mine;
+}
 /** `wasmPaths`: where ORT's WebAssembly runtime is served from, ort/ beside the page by
  * default (web/vite-ort.ts puts it there); `log` hears what the sessions do. */
 export interface OnnxOptions { wasmPaths?: string; log?: (line: string) => void }
@@ -80,21 +95,20 @@ export class Onnx {
     if (!session.inputNames.includes(input)) throw new Error(`${model.key} has no input ${input} (it has ${session.inputNames.join(", ")})`);
     if (!session.outputNames.includes(output)) throw new Error(`${model.key} has no output ${output} (it has ${session.outputNames.join(", ")})`);
     this.log(`${model.key}: session ready on ${provider === "webgpu" ? "WebGPU" : "WASM (the CPU)"}`);
-    return { session, provider, input, output, turn: Promise.resolve() };
+    return { session, provider, input, output };
   }
 
   /** One forward pass of `model` on `data` of `dims` (float32), after the session's other
-   * passes: the output tensor, and the pass's time alone, not the wait for its turn. */
+   * passes on the page (`exclusive`): the output tensor, and the pass's time alone, not the
+   * wait for its turn. */
   async run(model: OnnxModel, data: Float32Array, dims: number[]): Promise<Output> {
     const s = await this.session(model);
-    const pass = s.turn.then(async () => {
+    return exclusive(async () => {
       const t0 = performance.now();
       const results = await s.session.run({ [s.input]: new ort.Tensor("float32", data, dims) });
       const out = results[s.output];
       return { data: out.data as Numbers, dims: [...out.dims], type: out.type, ms: performance.now() - t0 };
     });
-    s.turn = pass.catch(() => {});  // the next pass waits for this one, however it ends
-    return pass;
   }
 
   /** A view starts using `key`'s session. */
