@@ -409,6 +409,10 @@ def materialize(
         help="the region, in level 0's voxels along the last axes: lo:hi, each comma separated in "
         "C order, e.g. 0,0,0:64,512,512 (every level writes the same region; default all of it)",
     ),
+    extent: str = typer.Option(
+        "box", help="box: an array of exactly the box, placed where it is; level: its chunks in an "
+        "array of the level's whole shape (to write several boxes into one store)",
+    ),
     chunk: str | None = typer.Option(None, help="output chunk shape, as for serve"),
     select: str | None = typer.Option(None, help="pin non-spatial axes, as for serve"),
     compressor: str | None = typer.Option(None, help="as the format takes it (default: blosc for zarr, gzip for n5)"),
@@ -438,7 +442,7 @@ def materialize(
 
     counts = write(
         registry.get("processed"), out, format=format, levels=level or None, box=region,
-        compressor=compressor, skip_empty=not keep_empty, progress=report,
+        extent=extent, compressor=compressor, skip_empty=not keep_empty, progress=report,
     )
     typer.echo(json.dumps({**counts, "seconds": round(time.perf_counter() - started, 1)}))
 

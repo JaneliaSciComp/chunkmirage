@@ -144,7 +144,7 @@ server.stop()
 address must be known before the app is built.
 
 `chunkmirage.materialize(pipeline, where, *, format="zarr3", levels=None, box=None,
-compressor=None, skip_empty=True, progress=None)` writes a pipeline (or a box of it) into
+extent="box", compressor=None, skip_empty=True, progress=None)` writes a pipeline (or a box of it) into
 a store as a frontend serves it, which reads back as a stored dataset: the Python side of
 `chunkmirage materialize`
 ([formats](../concepts/formats.md#a-dataset-written-to-a-store-python-and-the-command-line)).

@@ -58,7 +58,10 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
 - `chunkmirage materialize` and `chunkmirage.materialize`: a dataset, or a box of it,
   computed and written into a store (a directory, `gs://`, `s3://`) as a frontend serves it,
   zarr v3, zarr v2 or N5, so it reads back as a stored dataset of its own; the metadata
-  first, chunks several at once, empty ones left out.
+  first, chunks several at once, empty ones left out. A box is exactly the box by default
+  (`--extent box`: arrays of its shape, placed where it is, each of the dataset's chunks it
+  reaches computed once), or its chunks in arrays of the levels' whole shapes
+  (`--extent level`).
 
 ### Sources
 
@@ -162,8 +165,8 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
   level's whole shape, the box's chunks in it rounded out to whole chunks (`extent:
   "level"`, for several boxes in one store); a box of the whole level is the same store
   either way; progress counts the array's chunks done and the served chunks computed
-  (`computed`, `needed`); the Python side (`chunkmirage materialize`) writes the level's
-  extent only, for now;
+  (`computed`, `needed`); the Python side (`chunkmirage materialize --extent`) writes
+  either too, the box by default;
   `directoryStore()` writes into a folder picked with the File System Access API (or the
   origin's private file system), `memoryStore()` into memory
   ([formats](docs/concepts/formats.md#a-region-written-to-a-store-browser-engine)). Its

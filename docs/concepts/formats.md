@@ -90,10 +90,18 @@ part way is still the dataset, zero where no chunk was written yet; then the chu
 levels asked for (all by default), several at once, each of nothing but zeros left out
 (`--keep-empty` writes them). `--box` takes level 0's voxels along the last axes, `lo:hi`
 each comma separated in C order (`0,0,0:64,512,512`), and every level writes the same
-region on its own voxels, rounded out to whole chunks, in an array of the level's whole
-shape: what the browser engine writes with `extent: "level"`. Writing exactly the box
-(the browser engine's default, `extent: "box"`) is not supported here yet. From Python,
-`chunkmirage.materialize(pipeline, where, format=, levels=, box=, compressor=,
+region on its own voxels, rounded out to whole voxels. As the browser engine does,
+`--extent box` (the default) writes exactly the box: each level an array of the box's
+shape, its translation moved by the box's corner so it lands where the box is, in chunks
+of the dataset's shape counted from that corner, those at the far edge stored whole with
+zeros past the box. Each of its chunks is read from the dataset's chunks it overlaps; when
+the last stage keeps no chunks of its own (no `cache: true`), those pass through a cache
+of up to 1 GiB, walked so that the fewest wait (the axes the box's corner is on chunk
+edges along first, then the one with the most chunks), so each is computed once while a
+slab of them fits. `--extent level` writes the box's chunks, rounded out to whole chunks,
+into arrays of the levels' whole shapes, for several boxes in one store; a box of the
+whole level is the same store either way. From Python,
+`chunkmirage.materialize(pipeline, where, format=, levels=, box=, extent=, compressor=,
 skip_empty=, progress=)` does the same for any pipeline, another dataset's chain read
 through `dataset://` among them (`registry.get(name)`), and returns the counts
 (`{chunks, written, skipped, bytes}`). Inside a running server it competes with clients'
