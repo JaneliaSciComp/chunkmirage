@@ -320,9 +320,10 @@ the field side by side and plays the frames.
 The parameters follow the last `?`, so the image URL may carry its own query. With
 `serve --device cuda` (or `auto`; `chunkmirage.gpu.set_device` in Python) the resampler runs
 on a GPU, here and for `scene://`: every output voxel through the affines and sampled fields
-and the image interpolated, in PyTorch, in single precision, so values agree with the CPU's
-to within a grey level and the cache keys are the same. Measured on a 184 M-voxel volume
-through three lattice fields, that took 0.5 s on an A100 where one CPU thread took 154 s
+and the image interpolated, the resampler's own code run with CuPy for numpy and
+`cupyx.scipy.ndimage` for `scipy.ndimage` (the `cupy` extra), in single precision, so values
+agree with the CPU's to within a grey level and the cache keys are the same. Measured on a 184 M-voxel volume
+through three lattice fields, CuPy took 0.5 s on an A100 where one CPU thread took 154 s
 and 24 took 13.5 s, most of it sampling the fields. A chain with any other step (a swirl,
 an inverse estimated numerically) is resampled on the CPU. To show the field as RGB, its components must be a Neuroglancer shader channel dimension (`c^`, read
 with `getDataValue(0..2)`). The precomputed frontend makes them one, but holds only

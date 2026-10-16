@@ -123,8 +123,10 @@ describe shipped features as future work.
     kernels); cheap ops do not: a chunk is read and encoded on the CPU, so an op moved on
     its own would copy its block there and back for work that takes as long as the copies.
     So a stage would move its block to the device once, run its ops there and move it back
-    once. Ops get a numpy, CuPy or torch array and use that array's library, saying which
-    they support (as `packages` says what they import); the rest run on the CPU, with
+    once. Ops get a numpy or CuPy array and use that array's library (`chunkmirage.gpu`'s
+    `array_module` and `ndimage`; `cupyx.scipy.ndimage` takes `scipy.ndimage`'s calls, which
+    most ops make), saying which they support (as `packages` says what they import); the
+    rest run on the CPU, with
     `slots` bounding the calls as now. The rest of the core's own computation (`downsample`,
     the overlap blend) is written the same way, and contrib's ops move over heaviest first
     (`register://` already solves on a GPU). (The resampler of `warp://` and `scene://` has

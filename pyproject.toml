@@ -44,11 +44,12 @@ mesh = ["scikit-image>=0.22", "DracoPy>=1.4"]
 mcp = ["mcp>=1.0"]
 viewer = ["neuroglancer>=2.40"]
 https = ["cryptography>=42"]
-# register:// solves on a GPU when there is one (CPU otherwise), and serve --device resamples
-# warp:// and scene:// on one. gpu is PyTorch's CUDA build,
+# register:// solves on a GPU when there is one (CPU otherwise). gpu is PyTorch's CUDA build,
 # ~3 GB of wheels, so not in `all`; cpu is its CPU-only build (CI, laptops). Pick one.
 gpu = ["torch>=2.6", "scipy>=1.12"]
 cpu = ["torch>=2.6", "scipy>=1.12"]
+# serve --device resamples warp:// and scene:// on a GPU through CuPy (CUDA 12)
+cupy = ["cupy-cuda12x>=13", "scipy>=1.12"]
 all = ["chunkmirage[hdf5,tiff,ops,mesh,mcp,viewer,https]"]
 
 [project.urls]

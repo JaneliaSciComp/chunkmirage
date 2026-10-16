@@ -213,8 +213,8 @@ def serve(
     ),
     device: str = typer.Option(
         "cpu",
-        help="where warp:// and scene:// resample: cpu, cuda or cuda:N (PyTorch, the gpu "
-        "extra), or auto (a GPU if PyTorch sees one, else the CPU)",
+        help="where warp:// and scene:// resample: cpu, cuda or cuda:N (CuPy, the cupy "
+        "extra), or auto (a GPU if CuPy sees one, else the CPU)",
     ),
     resolver: str | None = typer.Option(
         None,

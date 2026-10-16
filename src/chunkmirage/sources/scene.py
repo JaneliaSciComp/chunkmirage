@@ -41,7 +41,7 @@ from chunkmirage.core import ArrayInfo, Box
 from chunkmirage.ngff import DEFAULT_FIELDS, CoordinateSystem, FieldOptions, Image, Node, Scene
 from chunkmirage.sources.base import MultiscaleSource, Source
 from chunkmirage.sources.tensorstore_source import TensorStoreSource
-from chunkmirage.transforms import Affine, Sequence, Transform, simplify
+from chunkmirage.transforms import Affine, Displacements, Sequence, Transform, VectorField, simplify
 
 MAX_POINTS = 1 << 20  # voxels resampled at once; bounds the coordinate arrays' memory
 MAX_WINDOW_BYTES = 2 << 30  # most one output slab may read from the source image
@@ -192,27 +192,35 @@ class SceneLevelSource(Source):
         return out
 
     def _resample(self, lead: Box, slab: Box) -> np.ndarray:
-        if gpu.device() is not None:  # the chain on a GPU, if every step of it runs there
-            out = gpu.resample(self, lead, slab)
-            if out is not None:
-                return out
-        from scipy.ndimage import map_coordinates
+        dev = gpu.device()
+        if dev is not None and _on_gpu(self.mapping):  # the same code with CuPy, in float32
+            import cupy
 
+            with cupy.cuda.Device(dev):
+                return self._resample_with(cupy, np.float32, lead, slab)
+        return self._resample_with(np, float, lead, slab)
+
+    def _resample_with(self, xp, ftype, lead: Box, slab: Box) -> np.ndarray:
+        """The slab resampled with array library ``xp`` (numpy, or CuPy on a GPU), its
+        points in ``ftype``; windows are read, and the result returned, on the CPU."""
+        map_coordinates = gpu.ndimage(xp).map_coordinates
+        host = gpu.host
         n = math.prod(slab.shape)
-        pts = np.indices(slab.shape, dtype=float).reshape(len(slab.shape), -1).T
-        coords = self.mapping.apply(pts + np.asarray(slab.start, dtype=float))
+        pts = xp.indices(slab.shape, dtype=ftype).reshape(len(slab.shape), -1).T
+        coords = self.mapping.apply(pts + xp.asarray(slab.start, dtype=ftype))
         # A voxel owns [-0.5, 0.5) around its centre; points outside the image get 0.
-        inside = np.all((coords >= -0.5) & (coords < self._src_spatial - 0.5), axis=1)
+        size = xp.asarray(self._src_spatial, dtype=coords.dtype)
+        inside = xp.all((coords >= -0.5) & (coords < size - 0.5), axis=1)
         res = np.zeros((*lead.shape, n), dtype=self._info.dtype)
-        if inside.any():
+        if bool(inside.any()):
             c = coords[inside]
             if self.order == 0:
-                c = np.floor(c + 0.5)
-                lo, hi = c.min(axis=0).astype(int), c.max(axis=0).astype(int) + 1
+                c = xp.floor(c + 0.5)
+                lo, hi = host(c.min(axis=0)).astype(int), host(c.max(axis=0)).astype(int) + 1
             else:
                 lo, hi = (
-                    np.floor(c.min(axis=0)).astype(int),
-                    np.floor(c.max(axis=0)).astype(int) + 2,
+                    np.floor(host(c.min(axis=0))).astype(int),
+                    np.floor(host(c.max(axis=0))).astype(int) + 2,
                 )
             lo = np.clip(lo, 0, self._src_spatial.astype(int))
             hi = np.clip(hi, 0, self._src_spatial.astype(int))
@@ -225,20 +233,31 @@ class SceneLevelSource(Source):
                     "large area. Use smaller output chunks (chunk=...)."
                 )
             data = self.src.read(window)
-            local = c - lo
-            if self.order == 0:
-                vals = data[(Ellipsis, *local.astype(np.intp).T)]
+            local = c - xp.asarray(lo, dtype=c.dtype)
+            if self.order == 0:  # the nearest voxel, gathered on the CPU in the image's dtype
+                vals = data[(Ellipsis, *host(local).astype(np.intp).T)]
             else:
+                if xp is not np:
+                    data = xp.asarray(data).astype(ftype, copy=False)
                 vals = np.empty((*lead.shape, len(c)))
                 for li in np.ndindex(*lead.shape):
-                    vals[li] = map_coordinates(
-                        data[li], local.T, order=1, mode="nearest", prefilter=False, output=float
-                    )
+                    vals[li] = host(map_coordinates(
+                        data[li], local.T, order=1, mode="nearest", prefilter=False, output=ftype
+                    ))
                 if np.issubdtype(self._info.dtype, np.integer):
                     lim = np.iinfo(self._info.dtype)
                     vals = np.clip(np.rint(vals), lim.min, lim.max)
-            res[..., inside] = vals
+            res[..., host(inside)] = vals
         return res.reshape(*lead.shape, *slab.shape)
+
+
+def _on_gpu(mapping: Transform) -> bool:
+    """Whether every step of ``mapping`` runs on CuPy's arrays: affines and sampled fields."""
+    parts = mapping.parts if isinstance(mapping, Sequence) else [mapping]
+    return all(
+        isinstance(p, Affine) or (isinstance(p, Displacements) and isinstance(p.field, VectorField))
+        for p in parts
+    )
 
 
 def _resolve_target(scene: Scene, src: Image, target: str | None) -> tuple[Node, Image | None]:
