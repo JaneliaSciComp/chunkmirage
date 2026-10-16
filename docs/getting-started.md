@@ -129,3 +129,10 @@ arr = ts.open({"driver": "zarr3",
                "kvstore": "http://localhost:8000/em-thresh/zarr3/s0/"}).result()
 arr[0:64, 0:64, 0:64].read().result()
 ```
+
+To keep a result instead, write it to disk as the server serves it, a zarr of its own that
+any tool reads (see [formats](concepts/formats.md#a-dataset-written-to-a-store-python-and-the-command-line)):
+
+```bash
+chunkmirage materialize /path/to/data.zarr/em/fibsem-uint8 em-thresh.zarr --op threshold:low=120
+```
