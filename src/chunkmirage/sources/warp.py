@@ -1,7 +1,9 @@
-"""``warp://`` sources: an image resampled through a displacement field, on its own grid or
-another's.
+"""``warp://`` sources: an image resampled through displacement fields and an affine, on
+its own grid or another's.
 
     warp://<image>?field=<source>&affine=<matrix>&target=<source>
+    warp://<image>?field=<newest source>|...|<oldest source>&affine=<matrix>
+    warp://<image>?affine=<matrix>&target=<source>
     warp://<image>?field=swirl&angle=90&radius=200&centre=z,y,x&plane=y,x
     warp://<image>?field=swirls&count=8&seed=0&angle=90&radius=200&centre=z,y,x&spread=z,y,x
     warp://<image>?field=...&show=field
@@ -14,26 +16,35 @@ units, at each voxel of the field's own grid, in the output's space. Another dat
 the server (``dataset://<name>``, a pipeline's output: a block matcher's lattice, a model's
 prediction), a stored zarr, a warp's own ``show=field``. A point ``x`` of the output is read
 from the image at ``A(x + d(x))``, ``A`` the ``affine`` (identity by default), as
-``register://`` places its points. The second and third twist the image by a swirl computed
-from coordinates, or by several 3-D swirls at random places with random axes (3-D images
-only), so nothing is stored and any parameter can change at any time. The output grid is
-``target``'s (any source: its levels are the output's, each reading the image level that
-suits it) or the image's own. ``show=field`` serves the displacement itself, components
-first, in the image's units (for example as an RGB layer). ``frames`` (the swirls only)
-adds a leading ``t`` axis of frames that twist from 0 to ``angle``, so a viewer animates
-the swirl by playing ``t`` rather than by changing the URL. All are computed chunk by
-chunk with the same resampler as ``scene://``, so a new parameter value (a REST ``PUT`` of
-the new URL) shows up as soon as the viewer refetches, and the field's keys are part of
-the output's, so an edit upstream of the field reaches it. A field or target URL with a
-query of its own is percent-encoded (``urllib.parse.quote(url, safe="")``).
+``register://`` places its points. Several fields, ``|`` apart, are applied in turn, the
+first listed first, each sampled where the ones before it have moved the point, and the
+image is read once: with ``T_i(x) = x + d_i(x)``, ``field=d_n|...|d_1`` reads the image at
+``A(T_1(...T_n(x)...))``, for two fields ``A(x + d_2(x) + d_1(x + d_2(x)))``. That is how
+passes of a registration compose (the latest pass's field first, since it was fitted on the
+image the earlier ones had already moved), and it resamples the original image once where
+warping the warped image would interpolate it once per pass and blur it. With no field,
+``affine`` or ``target`` alone places the image. The swirls twist the image by a swirl
+computed from coordinates, or by several 3-D swirls at random places with random axes (3-D
+images only), so nothing is stored and any parameter can change at any time. The output
+grid is ``target``'s (any source: its levels are the output's, each reading the image level
+that suits it) or the image's own. ``show=field`` serves the displacement itself (of
+several fields, the net one, ``T_1(...T_n(x)...) - x``), components first, in the image's
+units (for example as an RGB layer). ``frames`` (the swirls only) adds a leading ``t`` axis
+of frames that twist from 0 to ``angle``, so a viewer animates the swirl by playing ``t``
+rather than by changing the URL. All are computed chunk by chunk with the same resampler as
+``scene://``, so a new parameter value (a REST ``PUT`` of the new URL) shows up as soon as
+the viewer refetches, and every field's keys are part of the output's, so an edit upstream
+of a field reaches it. A field or target URL with a query of its own is percent-encoded
+(``urllib.parse.quote(url, safe="")``).
 
 Query parameters:
 
-* ``field``: the deformation (required). A source URL: displacements sampled from it, at
-  the field level nearest each output level's voxel size. ``swirl``: one twist about an
-  axis parallel to a spatial axis, fading with distance from the axis. ``swirls``:
-  ``count`` twists, each about its own axis through its own centre and fading with distance
-  from the centre, so each is a ball of twist; their displacements add.
+* ``field``: the deformation; required unless ``affine`` or ``target`` is given. A source
+  URL, or several ``|`` apart, applied in that order: displacements sampled from each, at
+  its level nearest each output level's voxel size. ``swirl``: one twist about an axis
+  parallel to a spatial axis, fading with distance from the axis. ``swirls``: ``count``
+  twists, each about its own axis through its own centre and fading with distance from
+  the centre, so each is a ball of twist; their displacements add.
 * ``affine``: applied after the displacement: 12 numbers, 3 rows of 4 in C order
   (``z, y, x``), or 16 with the last row ``0 0 0 1``; for a 2-D image 6 or 9. Identity by
   default.
@@ -160,6 +171,18 @@ class FramesSource(Source):
         return np.concatenate(blocks) if self.replace_t else np.stack(blocks)
 
 
+class NetDisplacement:
+    """Several fields applied in turn as one: ``sample(x)`` is ``T_1(...T_n(x)...) - x``
+    with ``T_i(x) = x + d_i(x)``, the first field first (for ``show=field``)."""
+
+    def __init__(self, fields):
+        self._through = Sequence([Displacements(f) for f in fields])
+        self.key = "|".join(f.key for f in fields)
+
+    def sample(self, pts: np.ndarray) -> np.ndarray:
+        return self._through.apply(pts) - pts
+
+
 def sampled_field(level: Source, key: str) -> VectorField:
     """The displacements stored in ``level``, a ``(c, z, y, x)`` array (components first, in
     the output's units), as a field over its own grid: sampled between its voxels linearly,
@@ -225,26 +248,30 @@ def open_warp(url: str, *, cache_bytes: int = 0, cache=None) -> MultiscaleSource
     # (synthetic://blobs?shape=...?field=swirl&angle=90).
     location, _, query = url[len("warp://") :].rpartition("?")
     q = {k: v[-1] for k, v in parse_qs(query).items()}
-    if "field" not in q:
+    if "field" not in q and not ({"affine", "target"} & set(q)):
         raise ValueError(
             "warp:// needs a field after the image URL: warp://<image>?field=<source URL>, "
-            "field=swirl or field=swirls (the warp's parameters follow the last '?')"
+            "field=swirl or field=swirls, or an affine= or target= alone to place the image "
+            "(the warp's parameters follow the last '?')"
         )
     if unknown := set(q) - _PARAMS:
         raise ValueError(
             f"unknown warp:// parameters {sorted(unknown)}; allowed: {sorted(_PARAMS)}"
         )
-    kind = q["field"]
+    kind = q.get("field")
     procedural = kind in ("swirl", "swirls")
     if procedural:
         only = {"swirl": {"plane"}, "swirls": {"count", "seed", "spread"}}
         if misplaced := set(q) & only["swirls" if kind == "swirl" else "swirl"]:
             raise ValueError(f"{sorted(misplaced)} do not apply to field={kind}")
     elif misplaced := set(q) & _SWIRL_PARAMS:
-        raise ValueError(f"{sorted(misplaced)} apply to field=swirl or swirls, not to a field read from {kind}")
+        what = f"a field read from {kind}" if kind else "a warp with no field"
+        raise ValueError(f"{sorted(misplaced)} apply to field=swirl or swirls, not to {what}")
     show = q.get("show", "image")
     if show not in ("image", "field"):
         raise ValueError(f"show must be image or field, got {show!r}")
+    if show == "field" and kind is None:
+        raise ValueError("show=field needs a field: with an affine alone there is no displacement to show")
 
     src = open_source(location, cache_bytes=cache_bytes, cache=cache)
     info0 = src.levels[0].info
@@ -299,13 +326,15 @@ def open_warp(url: str, *, cache_bytes: int = 0, cache=None) -> MultiscaleSource
             def make_field(fraction: float):
                 return Swirls(centres, axes, radii, twists * fraction)
     else:
-        field_ms = open_source(kind, cache_bytes=cache_bytes, cache=cache)
-        finfo = field_ms.levels[0].info
-        if finfo.ndim != n + 1 or finfo.shape[0] != n or list(finfo.axes[1:]) != spatial:
-            raise ValueError(
-                f"field {kind}: a displacement field is (c, {', '.join(spatial)}) with c = {n} "
-                f"components (z, y, x displacements), got axes {finfo.axes} of shape {finfo.shape}"
-            )
+        # fields read from sources, applied in the order given (the first listed first)
+        field_mss = [open_source(u, cache_bytes=cache_bytes, cache=cache) for u in kind.split("|")] if kind else []
+        for u, field_ms in zip(kind.split("|") if kind else [], field_mss):
+            finfo = field_ms.levels[0].info
+            if finfo.ndim != n + 1 or finfo.shape[0] != n or list(finfo.axes[1:]) != spatial:
+                raise ValueError(
+                    f"field {u}: a displacement field is (c, {', '.join(spatial)}) with c = {n} "
+                    f"components (z, y, x displacements), got axes {finfo.axes} of shape {finfo.shape}"
+                )
 
     labels = info0.dtype.kind == "u" and info0.dtype.itemsize >= 4
     interpolation = q.get("interpolation", "nearest" if labels else "linear")
@@ -331,19 +360,25 @@ def open_warp(url: str, *, cache_bytes: int = 0, cache=None) -> MultiscaleSource
     fields = [make_field(f) for f in fractions] if procedural else []
     img_vox = [np.asarray(lvl.info.voxel_size[n_lead:], dtype=float) for lvl in src.levels]
 
-    def field_for(grid: ArrayInfo, k: int) -> VectorField | SwirlField | Swirls:
+    def fields_for(grid: ArrayInfo, k: int) -> list:
+        """The fields output level ``i`` is read through, in the order applied: the swirl
+        (frame ``k``), or each stored field at its level nearest this level's voxels (coarse
+        for a coarse view); none for an affine alone."""
         if procedural:
-            return fields[k]
-        # the stored field's level nearest this level's voxels: coarse for a coarse view
-        j = field_ms.nearest_level(grid.voxel_size)
-        return sampled_field(field_ms.levels[j], f"field|{field_ms.levels[j].cache_key()}")
+            return [fields[k]]
+        out = []
+        for field_ms in field_mss:
+            j = field_ms.nearest_level(grid.voxel_size)
+            out.append(sampled_field(field_ms.levels[j], f"field|{field_ms.levels[j].cache_key()}"))
+        return out
 
     def level(i: int, k: int) -> Source:
         """Output level ``i`` (the target's, or the image's own) through field ``k``."""
         base, k_lead = (src.levels[i].info, n_lead) if target is None else (target.levels[i].info, t_lead)
         grid = _spatial(base, k_lead, chunk)
         to_space = Affine.scale_translation(grid.voxel_size, grid.translation)
-        field = field_for(grid, k)
+        flds = fields_for(grid, k)
+        field_key = "|".join(f.key for f in flds) if flds else "none"
         grid_key = f"{grid.shape}|{grid.voxel_size}|{grid.translation}|{grid.chunk_shape}"
         if show == "field":
             finfo = ArrayInfo(
@@ -355,14 +390,15 @@ def open_warp(url: str, *, cache_bytes: int = 0, cache=None) -> MultiscaleSource
                 axes=("c", *grid.axes),
                 translation=(0.0, *grid.translation),
             )
-            ident = f"warp|field|{field.key}|{grid_key}|{i}"
-            return FieldLevelSource(field, to_space, finfo, "warp:" + hashlib.sha1(ident.encode()).hexdigest()[:12])
+            ident = f"warp|field|{field_key}|{grid_key}|{i}"
+            net = flds[0] if len(flds) == 1 else NetDisplacement(flds)
+            return FieldLevelSource(net, to_space, finfo, "warp:" + hashlib.sha1(ident.encode()).hexdigest()[:12])
 
         def mapping_for(j: int, displaced: bool = True):
-            # grid index -> space -> displaced -> affine -> index of image level j
+            # grid index -> space -> displaced by each field in turn -> affine -> index of image level j
             to_index = Affine.scale_translation(img_vox[j], src.levels[j].info.translation[n_lead:]).inverse()
-            steps = [to_space, Displacements(field), affine, to_index] if displaced else [to_space, affine, to_index]
-            return simplify(Sequence(steps))
+            through = [Displacements(f) for f in flds] if displaced else []
+            return simplify(Sequence([to_space, *through, affine, to_index]))
 
         # on its own grid the image's level i is read; on a target's, the image level
         # whose voxels suit the output's through the mapping (a coarse view reads a coarse
@@ -382,7 +418,7 @@ def open_warp(url: str, *, cache_bytes: int = 0, cache=None) -> MultiscaleSource
             translation=li.translation[:n_lead] + grid.translation,
             kind=li.kind,
         )
-        ident = f"warp|{lvl.cache_key()}|{field.key}|{affine_key}|{grid_key}|{order}|{i}"
+        ident = f"warp|{lvl.cache_key()}|{field_key}|{affine_key}|{grid_key}|{order}|{i}"
         return SceneLevelSource(lvl, mapping_for(j), info, n_lead, order, "warp:" + hashlib.sha1(ident.encode()).hexdigest()[:12])
 
     levels: list[Source] = []

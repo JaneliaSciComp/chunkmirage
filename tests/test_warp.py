@@ -9,6 +9,7 @@ from starlette.testclient import TestClient
 
 from chunkmirage import Pipeline, create_app, open_source
 from chunkmirage.core import Box
+from chunkmirage.sources.warp import sampled_field
 from chunkmirage.transforms import SwirlField, Swirls
 
 
@@ -211,7 +212,7 @@ def test_bad_urls_explain_themselves(zarr2_path):
 
 
 # ------------------------------------------------ a field from any source, an affine, a target
-IMG = "synthetic://blobs?shape=32,48,48&chunk=16,16,16&levels=1&seed=2&voxel_size=1"
+IMG = "synthetic://julia?shape=32,48,48&chunk=16,16,16&levels=1&seed=2&voxel_size=1"  # textured (blobs are empty this small)
 
 
 def test_a_field_read_from_a_source_reproduces_the_procedural_warp():
@@ -258,3 +259,63 @@ def test_bad_fields_explain_themselves():
         open_source(f"warp://{img}?field={quote(img, safe='')}&frames=3")
     with pytest.raises(ValueError, match="affine needs 12"):
         open_source(f"warp://{img}?field=swirl&affine=1,2,3")
+
+
+# ------------------------------------------------ an affine alone, and several fields at once
+def test_an_affine_or_a_target_alone_places_the_image_without_a_field():
+    img = "synthetic://blobs?shape=16,32,32&chunk=16,16,16&levels=1&seed=2&voxel_size=1"
+    shifted = open_source(f"warp://{img}?affine=1,0,0,0,0,1,0,0,0,0,1,8")
+    box = Box((0, 0, 0), (16, 32, 32))
+    raw, out = open_source(img).levels[0].read(box), shifted.levels[0].read(box)
+    np.testing.assert_array_equal(out[:, :, :24], raw[:, :, 8:])
+    assert shifted.name.endswith("~warped")
+    # a target alone: the image on another grid, read from the level that suits it
+    img2 = "synthetic://noise?shape=64,64,64&chunk=32,32,32&levels=2&seed=2&voxel_size=8"
+    coarse = "synthetic://noise?shape=32,32,32&chunk=8,8,8&levels=1&seed=7&voxel_size=16"
+    placed = open_source(f"warp://{img2}?target={quote(coarse, safe='')}")
+    box2 = Box((0, 0, 0), (32, 32, 32))
+    np.testing.assert_array_equal(placed.levels[0].read(box2), open_source(img2).levels[1].read(box2))
+    with pytest.raises(ValueError, match="needs a field"):
+        open_source(f"warp://{img}?interpolation=nearest")
+    with pytest.raises(ValueError, match="show=field needs a field"):
+        open_source(f"warp://{img}?affine=1,0,0,0,0,1,0,0,0,0,1,8&show=field")
+    with pytest.raises(ValueError, match="a warp with no field"):
+        open_source(f"warp://{img}?affine=1,0,0,0,0,1,0,0,0,0,1,8&angle=3")
+
+
+# two passes' fields: the first pass's, and the second's, fitted on the image the first moved
+PASS1 = f"warp://{IMG}?field=swirl&angle=60&centre=16,20,24&radius=16&show=field"
+PASS2 = f"warp://{IMG}?field=swirl&angle=-45&centre=16,28,20&radius=14&show=field"
+BOX = Box((0, 0, 0), (32, 48, 48))
+
+
+def test_several_fields_compose_before_one_resample():
+    p1, p2 = quote(PASS1, safe=""), quote(PASS2, safe="")
+    composed = open_source(f"warp://{IMG}?field={p2}|{p1}")  # the latest pass's field first
+    nested = open_source(f"warp://warp://{IMG}?field={p1}?field={p2}")  # the warped image warped again
+    c, n = composed.levels[0].read(BOX).astype(float), nested.levels[0].read(BOX).astype(float)
+    # the same mapping (a grey level apart on average, of 254), the original interpolated once
+    # instead of twice, so sharper: more gradient, away from the edges
+    assert np.abs(c - n).mean() < 3, np.abs(c - n).mean()
+    inner = (slice(4, -4),) * 3
+    assert np.abs(np.diff(c[inner], axis=-1)).mean() > np.abs(np.diff(n[inner], axis=-1)).mean()
+    # the order is the order given: the other way round is another image, under another key
+    other = open_source(f"warp://{IMG}?field={p1}|{p2}")
+    assert other.levels[0].cache_key() != composed.levels[0].cache_key()
+    assert np.abs(other.levels[0].read(BOX).astype(float) - c).mean() > 3
+
+
+def test_the_net_displacement_of_several_fields_is_served():
+    p1, p2 = quote(PASS1, safe=""), quote(PASS2, safe="")
+    net = open_source(f"warp://{IMG}?field={p2}|{p1}&show=field")
+    got = net.levels[0].read(Box((0, 0, 0, 0), (3, *BOX.shape)))
+    # T_1(T_2(x)) - x, each field sampled as the warp samples it: the second pass's at x, the
+    # first's where that moved the point; not the sum of the two at x
+    d1 = sampled_field(open_source(PASS1).levels[0], "1")
+    d2 = sampled_field(open_source(PASS2).levels[0], "2")
+    pts = np.indices(BOX.shape, dtype=float).reshape(3, -1).T  # voxels of 1 at the origin
+    moved = pts + d2.sample(pts)
+    want = (moved + d1.sample(moved) - pts).T.reshape(3, *BOX.shape)
+    np.testing.assert_allclose(got, want, atol=1e-4)
+    summed = (d1.sample(pts) + d2.sample(pts)).T.reshape(3, *BOX.shape)
+    assert np.abs(want - summed).max() > 0.5

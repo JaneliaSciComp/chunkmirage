@@ -244,29 +244,46 @@ under the same path keeps its key; restart or clear the cache after doing that.
 
 ```
 warp://<image>?field=<source>&affine=<12 numbers>&target=<source>
+warp://<image>?field=<newest source>|...|<oldest source>&affine=<12 numbers>
+warp://<image>?affine=<12 numbers>&target=<source>
 warp://<image>?field=swirl&angle=90&radius=200&centre=z,y,x&plane=y,x
 warp://<image>?field=swirls&count=8&seed=0&angle=90&radius=200
 ```
 
 serves `<image>` (anything above or below, including `synthetic://` URLs) resampled
-through a displacement field. The field is **any source**: a `(c, z, y, x)` array whose
-three components are the z, y and x displacement, in the image's units, at each voxel of
-the field's own grid, in the output's space. Another dataset of this server
+through a displacement field and an affine. The field is **any source**: a `(c, z, y, x)`
+array whose three components are the z, y and x displacement, in the image's units, at
+each voxel of the field's own grid, in the output's space. Another dataset of this server
 ([`dataset://<name>`](#dataset-sources-another-dataset-of-the-server-in-process): a block
 matcher's lattice, a model's predicted deformation), a stored zarr, or a warp's own
 `show=field`. A point `x` of the output is read from the image at `A(x + d(x))`, `A` the
 `affine` (identity by default), the convention `register://` uses. The output is on the
 image's own grid, or on `target`'s (any source: its levels are the output's, each reading
 the image level that suits it through the mapping), so a pass fitted on a fixed image's
-grid is applied there: `warp://moving?field=dataset://pass1&target=dataset://fixed`. The
-field's keys are part of the output's, so an edit upstream of the field reaches it. A
-field or target URL with a query of its own is percent-encoded
+grid is applied there: `warp://moving?field=dataset://pass1&target=dataset://fixed`.
+
+**Several fields**, `|` apart, are applied in turn, the first listed first, each sampled
+where the ones before it have moved the point, and the image is read once. With
+`T_i(x) = x + d_i(x)`, `field=d_n|...|d_1` reads the image at `A(T_1(...T_n(x)...))`; for
+two fields that is `A(x + d_2(x) + d_1(x + d_2(x)))`, not a sum of the two vectors at `x`.
+That is how the passes of a registration compose: the latest pass's field goes first,
+since it was fitted on the image the earlier passes had already moved, so after two passes
+`warp://moving?field=dataset://pass2|dataset://pass1&target=dataset://fixed` is the image
+both passes correct. Warping the warped image instead
+(`warp://warp://moving?field=...pass1...?field=...pass2...`) is the same mapping but
+interpolates the image once per pass, which blurs it and the images later passes match on;
+the one-resample form is sharper, measurably. **No field** with an `affine` or a `target`
+places the image through the affine alone, on the target's grid: the first step of a
+chain, before any pass has made a field, and the way to put two images on one grid for a
+two-input op. Every field's keys are part of the output's, so an edit upstream of any of
+them reaches it. A field or target URL with a query of its own is percent-encoded
 (`urllib.parse.quote(url, safe="")`); `dataset://` names need none.
 
 Or the field is `swirl` or `swirls`, deformations computed from coordinates: the image
 twisted on its own grid, nothing stored, not even the field, so any parameter can change
 at any time: `PUT` a new URL and the viewer refetches what is on screen. With
-`&show=field` either kind serves the displacement itself, a `(c, z, y, x)` float32 volume.
+`&show=field` either kind serves the displacement itself, a `(c, z, y, x)` float32 volume;
+of several fields, the net displacement `T_1(...T_n(x)...) - x`, the affine kept apart.
 The resampling is the same as for scene sources, and each chunk reads only the compact
 region its displaced voxels come from, however large the displacement.
 
@@ -285,7 +302,7 @@ the field side by side and plays the frames.
 
 | parameter | default | meaning |
 | --------- | ------- | ------- |
-| `field` | (required) | a source URL (displacements sampled from it, at the field level nearest each output level's voxel size), `swirl` or `swirls` |
+| `field` | required unless `affine` or `target` is given | a source URL, or several `\|` apart applied in that order (displacements sampled from each, at its level nearest each output level's voxel size), `swirl` or `swirls` |
 | `affine` | identity | applied after the displacement: 12 numbers, 3 rows of 4 in C order (z, y, x), or 16 with the last row `0 0 0 1`; 6 or 9 for a 2-D image |
 | `target` | the image's grid | the source whose grid (levels, shape, voxel size, position) the output takes |
 | `angle` | `90` | twist on the axis, degrees; it fades as `exp(-(r/radius)²)` with distance `r` from the axis (`swirl`) or the centre (`swirls`). Each of the `swirls` turns by ½ to 1 × `angle`, either way |
@@ -318,7 +335,9 @@ never computed twice, and every stage key downstream holds its keys. A chain of 
 datasets is how passes of a computation are stacked without writing anything to disk
 between them (each stage still cached): a field fitted by one pass, the moving image
 warped by it, the next pass fitted on that
-(`stack://dataset://fixed|dataset://corrected`), its field, the image warped again. Each
+(`stack://dataset://fixed|dataset://corrected`), its field, and the original image warped
+through both fields at once (`warp://dataset://moving?field=dataset://pass2|dataset://pass1`,
+one resample; see [warp sources](#warp-sources-an-image-through-a-displacement-field)). Each
 stage of the chain is cached once, and a change to one pass's parameters recomputes only
 that pass and what follows it on screen.
 
