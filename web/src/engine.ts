@@ -502,10 +502,10 @@ export class Engine {
   /** Write a region of `view` into `store` as an OME-Zarr of its own (materialize.ts): one
    * level of the view (`options.level`, the finest by default) over a box of its voxels
    * (`lo`, `hi`; the whole level by default), as zarr v2 with OME-Zarr 0.4 or zarr v3 with
-   * OME-Zarr 0.5, gzipped, its chunks of nothing but zeros left out. With `extent` "level"
-   * (the default) the array is the level's whole shape and the box's chunks are written,
-   * rounded out to whole chunks; with "box" it is exactly the box, translated to its first
-   * voxel, each of its chunks stitched from the view's it overlaps. The group and the array
+   * OME-Zarr 0.5, gzipped, its chunks of nothing but zeros left out. With `extent` "box"
+   * (the default) the array is exactly the box, translated to its first voxel, each of its
+   * chunks stitched from the view's it overlaps; with "level" it is the level's whole shape
+   * and the box's chunks are written, rounded out to whole chunks. The group and the array
    * are written first, so the store reads as the view from the start, zero where no chunk is
    * yet; then the chunks, each of the view's computed once, as a client's request for it is
    * (kept, or shared with one on its way, and kept after) but in the background: behind

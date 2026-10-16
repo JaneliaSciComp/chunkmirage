@@ -12,10 +12,6 @@ const OME_UNIT: Record<string, string> = { nm: "nanometer", um: "micrometer", m:
 export const V2_DTYPE: Record<string, string> = {
   uint8: "|u1", int8: "|i1", uint16: "<u2", int16: "<i2", uint32: "<u4", int32: "<i4", uint64: "<u8", int64: "<i8", float32: "<f4", float64: "<f8",
 };
-/** The bytes of one value of each of the engine's dtypes. */
-export const ITEM_BYTES: Record<string, number> = {
-  uint8: 1, int8: 1, uint16: 2, int16: 2, uint32: 4, int32: 4, uint64: 8, int64: 8, float32: 4, float64: 8,
-};
 export const isTime = (a: ViewAxis) => a.unit in TO_SECONDS;
 
 /** A level of a view as one of a group's datasets: its path in the group, and which of the

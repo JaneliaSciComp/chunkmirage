@@ -153,14 +153,17 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
 - `Engine.materialize(view, store, options)` writes a box of a served view (or a whole
   level) into a store as an OME-Zarr of its own, zarr v2 with OME 0.4 or zarr v3 with OME
   0.5, gzipped, its empty chunks left out, the metadata the engine serves for the view
-  (`web/src/layout.ts`, shared with the routes) with the one level as its one dataset: the
+  (`web/src/layout.ts`, shared with the routes) with the one level as its one dataset:
+  exactly the box (`extent: "box"`, the default), `hi − lo` voxels with the level's
+  translation moved by `lo` voxels, its chunks the served chunk shape counted from `lo`,
+  each stitched from the served chunks it overlaps (each computed once, walked with the
+  split axis of the most chunks outermost, so a slab across the other split axes is held
+  at a time), those at its far edge stored whole with the fill value past the box; or the
   level's whole shape, the box's chunks in it rounded out to whole chunks (`extent:
-  "level"`, the default), or exactly the box (`extent: "box"`), `hi − lo` voxels with the
-  level's translation moved by `lo` voxels, its chunks the served chunk shape counted from
-  `lo`, each stitched from the served chunks it overlaps (each computed once, about a slab
-  of the box's chunks held at a time), those at its far edge stored whole with the fill
-  value past the box; progress counts the array's chunks done and the served chunks
-  computed (`computed`, `needed`);
+  "level"`, for several boxes in one store); a box of the whole level is the same store
+  either way; progress counts the array's chunks done and the served chunks computed
+  (`computed`, `needed`); the Python side (`chunkmirage materialize`) writes the level's
+  extent only, for now;
   `directoryStore()` writes into a folder picked with the File System Access API (or the
   origin's private file system), `memoryStore()` into memory
   ([formats](docs/concepts/formats.md#a-region-written-to-a-store-browser-engine)). Its

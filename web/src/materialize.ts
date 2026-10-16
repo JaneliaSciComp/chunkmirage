@@ -8,7 +8,8 @@
 // written, gzip, the array's chunks stitched from the view's for a box that does not start
 // on chunk edges, and the loop that has the chunks made and writes them, from any producer
 // (the engine's queue on the page, a fake one in the tests).
-import { array2, array3, attrs2, chunkKey, dimensionNames, group3, ITEM_BYTES } from "./layout.ts";  // with its extension: Node's runner resolves no other
+import { TYPED } from "./asread.ts";  // with its extension: Node's runner resolves no other
+import { array2, array3, attrs2, chunkKey, dimensionNames, group3 } from "./layout.ts";
 import type { ViewInfo } from "./types.ts";
 
 /** Where materialize writes: files by "/"-separated path relative to the store's root. */
@@ -92,14 +93,16 @@ export interface MaterializeOptions {
    * whole level. Clipped to the level, and rounded out to whole voxels (to whole chunks, with
    * the level's `extent`). */
   lo?: number[]; hi?: number[];
-  /** What the written array covers. "level" (the default): the level's whole shape, with the
-   * level's translation, so the box keeps its place in it; the chunks the box touches are
-   * written, rounded out to whole chunks. "box": exactly the box, not rounded to chunks: its
-   * shape hi − lo, its translation the level's moved by lo voxels, cut in the view's chunk
-   * shape counted from lo. Where the box does not start on the view's chunk edges, each of
-   * its chunks is stitched from the view's chunks it overlaps (up to 2 along each axis), each
-   * of those computed once; the chunks at its far edge overhang it and are stored whole, the
-   * fill value past the box, as zarr stores a chunk at an array's edge. */
+  /** What the written array covers. "box" (the default): exactly the box, not rounded to
+   * chunks: its shape hi − lo, its translation the level's moved by lo voxels, cut in the
+   * view's chunk shape counted from lo. Where the box does not start on the view's chunk
+   * edges, each of its chunks is stitched from the view's chunks it overlaps (up to 2 along
+   * each axis), each of those computed once; the chunks at its far edge overhang it and are
+   * stored whole, the fill value past the box, as zarr stores a chunk at an array's edge.
+   * "level": the level's whole shape, with the level's translation, so the box keeps its
+   * place in it (several boxes written into one store, say); the chunks the box touches are
+   * written, rounded out to whole chunks. A box of the whole level is the same store, byte
+   * for byte, either way. */
   extent?: "level" | "box";
   /** "zarr2" (OME-Zarr 0.4: .zgroup, .zattrs, .zarray, "/" as the dimension separator) or
    * "zarr3" (OME-Zarr 0.5, zarr.json); default "zarr2", which more tools read. */
@@ -162,15 +165,16 @@ export function chunkRange(shape: number[], chunk: number[], lo?: number[], hi?:
   return { lo: box.lo.map((x, a) => Math.floor(x / chunk[a])), hi: box.hi.map((x, a) => Math.ceil(x / chunk[a])) };
 }
 
-/** The chunk indices [lo, hi), in C order (the last axis fastest). */
-export function* chunkIndices(lo: number[], hi: number[]): Generator<number[]> {
+/** The chunk indices [lo, hi), in C order (the last axis fastest), or in `order`, the axes
+ * from the outermost to the innermost (the last of them fastest). */
+export function* chunkIndices(lo: number[], hi: number[], order: number[] = lo.map((_, a) => a)): Generator<number[]> {
   if (hi.some((h, a) => h <= lo[a])) return;
   const at = [...lo];
   for (;;) {
     yield [...at];
-    let a = at.length - 1;
-    while (a >= 0 && ++at[a] >= hi[a]) { at[a] = lo[a]; a--; }
-    if (a < 0) return;
+    let k = order.length - 1;
+    while (k >= 0 && ++at[order[k]] >= hi[order[k]]) { at[order[k]] = lo[order[k]]; k--; }
+    if (k < 0) return;
   }
 }
 
@@ -222,14 +226,14 @@ const count = (lo: number[], hi: number[]) => prod(lo.map((l, a) => hi[a] - l));
  * whole shape (so a box keeps its place in it) or the box's, the chunks and dtype served,
  * compressed as asked; and the chunks of the box. */
 export function region(name: string, v: ViewInfo, chunk: number[], options: MaterializeOptions = {}): Region {
-  const { level = 0, format = "zarr2", compression = "gzip", extent = "level", attributes = {} } = options;
+  const { level = 0, format = "zarr2", compression = "gzip", extent = "box", attributes = {} } = options;
   if (!Number.isInteger(level) || !v.levels[level]) throw new Error(`${name} has no level ${level}: it has ${v.levels.length}`);
   if (format !== "zarr2" && format !== "zarr3") throw new Error(`format ${JSON.stringify(format)}: "zarr2" or "zarr3"`);
   if (compression !== "gzip" && compression !== null) throw new Error(`compression ${JSON.stringify(compression)}: "gzip" or null`);
   if (extent !== "level" && extent !== "box") throw new Error(`extent ${JSON.stringify(extent)}: "level" or "box"`);
   const levelShape = v.levels[level].shape, box = voxelBox(levelShape, options.lo, options.hi);
   const { lo, hi } = chunkRange(levelShape, chunk, box.lo, box.hi);  // the view's chunks the box needs
-  const whole = extent === "level", item = ITEM_BYTES[v.out];
+  const whole = extent === "level", item = TYPED[v.out]?.BYTES_PER_ELEMENT;
   if (!whole && !item) throw new Error(`${name} is ${v.out}, which a box is not cut from`);
   const at = whole ? levelShape.map(() => 0) : box.lo, shape = whole ? levelShape : box.hi.map((h, a) => h - box.lo[a]);
   const first = whole ? lo : shape.map(() => 0), last = whole ? hi : shape.map((n, a) => Math.ceil(n / chunk[a]));
@@ -255,6 +259,28 @@ export function region(name: string, v: ViewInfo, chunk: number[], options: Mate
   };
 }
 
+/** The axes along which region `r`'s array chunks are stitched from two of the view's
+ * chunks: those along which the array's first chunk spans a chunk edge of the view's (the
+ * box starts off the view's chunk edges there, and does not lie within one of its chunks). */
+export function splitAxes(r: Region): number[] {
+  return r.chunk.flatMap((c, a) => {
+    const from = r.at[a] + r.first[a] * c, to = r.at[a] + Math.min((r.first[a] + 1) * c, r.shape[a]);
+    return Math.floor(from / c) !== Math.floor((to - 1) / c) ? [a] : [];
+  });
+}
+
+/** The order region `r`'s served chunks are walked in, its axes from the outermost to the
+ * innermost: first the axes it does not split (`splitAxes`), in C order, then those it
+ * splits, the one with the most of the array's chunks first (C order among equals). Of the
+ * orders of the axes, it holds the fewest array chunks at once (`stitcher`): a slab across
+ * the split axes but the outermost, so the longest split axis is the one walked slab by
+ * slab. The level's extent splits none: C order, as the view's chunks are numbered. */
+export function walkOrder(r: Region): number[] {
+  const split = splitAxes(r), count = (a: number) => r.last[a] - r.first[a];
+  const rest = r.chunk.map((_, a) => a).filter((a) => !split.includes(a));
+  return [...rest, ...split.sort((a, b) => count(b) - count(a) || a - b)];
+}
+
 /** The bytes of a chunk of region `r`'s array (or of the view's: they are cut alike). */
 export const chunkBytes = (r: Region) => r.channels * prod(r.chunk) * r.item;
 
@@ -271,10 +297,11 @@ export type Completed = [index: number[], bytes: Uint8Array | null];
  * chunks it overlaps that holds a value not zero comes (none, if they are all zero), each
  * one's part copied in, the rest the fill value; it is complete, and forgotten here, once all
  * of them have come. The array's chunks begun and not complete are `open`: with the view's
- * chunks added in C order, at most a slab of them (one chunk thick along the first axis on
- * which the box does not start on a chunk edge, the box's chunks across the axes after it),
- * a row and one more, so a row and one where the box starts on chunk edges along z alone,
- * one along z and y, and none along every axis; a few more where they come out of order. */
+ * chunks added in `walkOrder`, at most a slab of them across the split axes but the
+ * outermost (`splitAxes`), a row along the innermost and one more. With the box's chunks
+ * n1 ≥ n2 ≥ n3 along three split axes, n2 × n3 + n3 + 1; along two, n1 ≥ n2, n2 + 1; along
+ * one, 1; none if it splits none (the box starts on the view's chunk edges). A few more
+ * where they come out of order. */
 export function stitcher(r: Region): { add: (index: number[], bytes: Uint8Array) => Completed[]; readonly open: number } {
   const C = r.chunk, n = C.length, size = chunkBytes(r);
   const open = new Map<string, { bytes: Uint8Array | null; left: number }>();
@@ -345,8 +372,9 @@ export type Produce = (index: number[], signal: AbortSignal) => Promise<ArrayBuf
 const why = (e: unknown) => String((e as Error)?.message ?? e);
 
 /** Write region `r` into `store`: its metadata, then its chunks. The view's chunks the box
- * covers are asked of `produce` once each, in C order (the last axis fastest),
- * `concurrency` at once (one by default); each, as it comes, completes the array's chunks it
+ * covers are asked of `produce` once each, in `walkOrder` (C order where the box splits no
+ * chunk of the view's, as with the level's extent), `concurrency` at once (one by default);
+ * each, as it comes, completes the array's chunks it
  * is the last of (`stitcher`: with the level's extent, or a box on the view's chunk edges,
  * just itself), and those are written, gzipped if `r` says so, those of nothing but zeros
  * skipped (`skipEmpty`, the default). Only the array's chunks begun and not yet complete are
@@ -381,7 +409,7 @@ export async function writeChunks(store: WritableStore, r: Region, produce: Prod
   report();
   // a chunk of the view named as the array's chunk it is, with the level's extent; as the engine names it, with the box's
   const named = (index: number[]) => (r.extent === "level" ? `chunk ${r.key(index)} of ${r.name}` : `chunk ${r.name}/${r.level}/${index.join(".")}`);
-  const stitched = stitcher(r), indices = chunkIndices(r.lo, r.hi);
+  const stitched = stitcher(r), indices = chunkIndices(r.lo, r.hi, walkOrder(r));
   const lane = async () => {
     for (let next = indices.next(); !next.done && !stop.signal.aborted; next = indices.next()) {
       const index = next.value;

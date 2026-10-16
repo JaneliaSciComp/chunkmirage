@@ -526,10 +526,11 @@ as text). What such a page gets, in the order it uses it:
   each file written whole through `createWritable()`, and `memoryStore()` one of a `Map`,
   for tests and for zipping a small result. The options: the view's `level` (the finest by
   default), a voxel box `lo`, `hi` on it (the whole level by default; clipped to the level),
-  `extent` (`"level"`, the default: the array is the level's whole shape and the box's
-  chunks are written, rounded out to whole chunks; `"box"`: the array is exactly the box,
-  translated to its first voxel, its chunks the served chunk shape counted from `lo`, each
-  stitched from the served chunks it overlaps), `format` (`"zarr2"`, OME-Zarr 0.4, the
+  `extent` (`"box"`, the default: the array is exactly the box, translated to its first
+  voxel, its chunks the served chunk shape counted from `lo`, each stitched from the served
+  chunks it overlaps, since a page passing a box expects an array of that box; `"level"`:
+  the array is the level's whole shape and the box's chunks are written, rounded out to
+  whole chunks, for several boxes written into one store), `format` (`"zarr2"`, OME-Zarr 0.4, the
   default, since more tools read it; or `"zarr3"`, OME-Zarr 0.5), `compression` (`"gzip"`,
   the default, or `null`), `skipEmpty` (a chunk of nothing but zeros left out, by default),
   `concurrency`, `signal` (an `AbortSignal`), `onProgress` (`done`, `total`, `written`,
@@ -543,9 +544,12 @@ as text). What such a page gets, in the order it uses it:
   does not start on the served chunks' edges is not computed again on the box's own grid:
   the engine keeps no chunk only materialize asked for, so asking a served chunk again for
   each of the box's chunks it overlaps would compute it up to eight times; instead the
-  served chunks are each asked for once, in C order, and copied into the box's chunks they
-  overlap, a box chunk written once complete, so about a slab of the box's chunks is held
-  at once. A single level rather than the pyramid: the engine downsamples nothing itself,
+  served chunks are each asked for once and copied into the box's chunks they overlap, a
+  box chunk written once complete, so about a slab of the box's chunks is held at once. The
+  walk puts the axes the box does not split outermost and the split axis with the most of
+  the box's chunks next, so the slab is the one across the other split axes, the smallest
+  any order of the axes gives (a wide, shallow box walked in C order would hold a slab
+  across its two wide axes). A single level rather than the pyramid: the engine downsamples nothing itself,
   and every level would be the model run again on its own grid. The metadata is written first, so a
   store whose writing stopped is still an OME-Zarr, zero where no chunk was written. The
   chunks come from the same producer the routes use, through the same queue, but in the
