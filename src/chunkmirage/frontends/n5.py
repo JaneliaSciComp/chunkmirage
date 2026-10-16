@@ -88,6 +88,9 @@ class N5Frontend(Frontend):
             },
         }
 
+    def chunk_key(self, level: int, index) -> str:
+        return f"s{level}/" + "/".join(str(i) for i in index[::-1])  # N5's axes are x first
+
     def encode(self, info: ArrayInfo, index, block: np.ndarray) -> bytes:
         # mode 0 = default; dims are F-order (x first) = reversed C shape; data big-endian.
         header = struct.pack(">HH", 0, block.ndim) + struct.pack(

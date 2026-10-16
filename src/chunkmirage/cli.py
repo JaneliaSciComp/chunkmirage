@@ -398,6 +398,52 @@ def schema(
 
 
 @app.command()
+def materialize(
+    source: str = typer.Argument(..., help="what to compute, as for serve"),
+    out: str = typer.Argument(..., help="where to write it: a directory, or a file://, gs:// or s3:// URL"),
+    op: list[str] = typer.Option([], "--op", "-o", help="op spec, as for serve (repeatable)"),
+    format: str = typer.Option("zarr3", help="zarr3 (OME-Zarr 0.5), zarr (zarr v2, OME-Zarr 0.4) or n5"),
+    level: list[int] = typer.Option([], "--level", "-l", help="a level to write (repeatable; default every level)"),
+    box: str | None = typer.Option(
+        None,
+        help="the region, in level 0's voxels along the last axes: lo:hi, each comma separated in "
+        "C order, e.g. 0,0,0:64,512,512 (every level writes the same region; default all of it)",
+    ),
+    chunk: str | None = typer.Option(None, help="output chunk shape, as for serve"),
+    select: str | None = typer.Option(None, help="pin non-spatial axes, as for serve"),
+    compressor: str | None = typer.Option(None, help="as the format takes it (default: blosc for zarr, gzip for n5)"),
+    keep_empty: bool = typer.Option(False, "--keep-empty", help="also write chunks of nothing but zeros"),
+    device: str = typer.Option("cpu", help="where warp:// and scene:// resample, as for serve"),
+    cache_gb: float = typer.Option(2.0, help="in-process chunk cache size"),
+):
+    """Compute SOURCE through its ops and write it to OUT as FORMAT serves it, read back as a
+    stored dataset of its own."""
+    import json
+    import time
+
+    from chunkmirage import gpu
+    from chunkmirage.core import Box
+    from chunkmirage.materialize import materialize as write
+
+    gpu.set_device(device)
+    registry = build_registry(source, "processed", op, chunk, cache_gb=cache_gb, select=select)
+    region = None
+    if box:
+        lo, _, hi = box.partition(":")
+        region = Box(tuple(int(v) for v in lo.split(",")), tuple(int(v) for v in hi.split(",")))
+    started = time.perf_counter()
+
+    def report(c):
+        typer.echo(f"s{c['level']}: {c['written'] + c['skipped']}/{c['chunks']} chunks", err=True)
+
+    counts = write(
+        registry.get("processed"), out, format=format, levels=level or None, box=region,
+        compressor=compressor, skip_empty=not keep_empty, progress=report,
+    )
+    typer.echo(json.dumps({**counts, "seconds": round(time.perf_counter() - started, 1)}))
+
+
+@app.command()
 def inspect(source: str):
     """Print what chunkmirage sees when opening SOURCE."""
     from chunkmirage.sources import open_source

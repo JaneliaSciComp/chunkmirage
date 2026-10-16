@@ -49,6 +49,30 @@ the control page (`/ui`, with the token when there is one), the control API URL 
 `--python-viewer`, the viewer URL; the port and thread count when they differ from what
 was asked for.
 
+## `materialize`
+
+```bash
+chunkmirage materialize SOURCE OUT [--op ...] [--format zarr3] [--level N ...] [--box lo:hi]
+```
+
+Computes SOURCE through its ops and writes it to OUT as a frontend serves it, a stored
+dataset of its own ([formats](../concepts/formats.md#a-dataset-written-to-a-store-python-and-the-command-line)).
+Prints the counts as JSON (`chunks`, `written`, `skipped`, `bytes`, `seconds`) and each
+batch's progress on stderr.
+
+| flag | default | meaning |
+| ---- | ------- | ------- |
+| `OUT` | | a directory, or a `file://`, `gs://` or `s3://` URL |
+| `--op`, `-o` | none | op spec, as for `serve` (repeatable) |
+| `--format` | `zarr3` | `zarr3` (OME-Zarr 0.5), `zarr` (zarr v2, OME-Zarr 0.4, consolidated) or `n5` |
+| `--level`, `-l` | every level | a level whose chunks to write (repeatable); every level's metadata is written |
+| `--box` | all of it | level 0's voxels along the last axes, `lo:hi` each comma separated in C order; every level writes the same region, rounded out to whole chunks |
+| `--chunk`, `--select` | as for `serve` | output chunk shape; non-spatial axes pinned |
+| `--compressor` | blosc (zarr), gzip (n5) | as the format takes it |
+| `--keep-empty` | off | also write chunks of nothing but zeros (left out otherwise: a reader takes a missing chunk as the fill value) |
+| `--device` | `cpu` | where `warp://` and `scene://` resample, as for `serve` |
+| `--cache-gb` | `2.0` | in-process chunk cache |
+
 ## `ops`
 
 Lists registered ops with halo, cache flag and parameters.

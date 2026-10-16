@@ -55,6 +55,10 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
   in another app.
 - `chunkmirage.serve` and `Server`: an app served from Python on a port bound first, with a
   callback once it accepts connections, in a background thread or this one.
+- `chunkmirage materialize` and `chunkmirage.materialize`: a dataset, or a box of it,
+  computed and written into a store (a directory, `gs://`, `s3://`) as a frontend serves it,
+  zarr v3, zarr v2 or N5, so it reads back as a stored dataset of its own; the metadata
+  first, chunks several at once, empty ones left out.
 
 ### Sources
 
