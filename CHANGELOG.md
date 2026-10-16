@@ -33,6 +33,16 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
 - BLAS kept to one thread per call in the server (`threadpoolctl`), and affines applied
   without it: its threads fought the server's, and a three-field `warp://` read took ten
   times as long.
+- The chunks one read needs are computed at once on a pool of a thread per core
+  (`demand.gather`, `demand.set_gather_threads`), for the read's request, so a single
+  request for a deep chain of stages uses every core; it ran in one thread before.
+- `serve --device cuda|cuda:N|auto` (`chunkmirage.gpu.set_device`, the `cupy` extra):
+  `warp://` and `scene://` resample on a GPU, their own code run with CuPy and
+  `cupyx.scipy.ndimage`, the points pushed through affines and sampled fields and the image
+  interpolated there (0.5 s for a 184 M-voxel volume through three lattice fields on an
+  A100, 13.5 s on 24 CPU threads); values within a grey level of the CPU's, cache keys the
+  same. A sampled field is read in its own precision, not copied
+  to float64.
 - `--token` for the control API, `--https` with a self-signed certificate.
 - zarr v2 and v3 chunks compressed with blosc (zstd, byte shuffle) by default, 10 to 30
   times quicker to encode than gzip; `--compressor` chooses another. `--cache-gb` takes effect (an empty cache

@@ -114,7 +114,7 @@ Packages build on chunkmirage through its plugin API, which is stable:
 * **Schema.** A parameter model listed under `chunkmirage.models` appears in
   `chunkmirage schema` under the entry point's name, for the browser engine's types.
 * **Serving.** `PipelineSpec`, `Pipeline`, `create_app` and its parameters, `serve` and
-  `Server`,
+  `Server`, `gpu.set_device`, `demand.set_gather_threads`,
   `DatasetRegistry` (`add`, `get`, `resolve`, `refresh`, `remove`, `subscribe`) and its
   resolver, the `chunkmirage.routes` entry point, the REST routes in the
   [API reference](reference/api.md), the served URL layout, and the CLI's flags.

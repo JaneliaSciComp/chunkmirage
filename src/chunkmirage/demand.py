@@ -14,20 +14,27 @@ already running finishes, and its result is kept, unless it asks :func:`cancelle
 steps of its own and gives up (a long op over many blocks). Work asked for outside a request (from
 Python, with no claim) is never dropped. The server bounds how many requests compute at once
 with :class:`Slots`, and a request waiting on a queue's work gives its slot up meanwhile, so
-cheap requests never wait behind expensive ones. The browser engine's ``web/src/demand.ts``
-keeps the same rules for its expensive work.
+cheap requests never wait behind expensive ones. A read that needs many chunks computes
+them at once on a pool of a thread per core (:func:`gather`), on behalf of its request. The
+browser engine's ``web/src/demand.ts`` keeps the same rules for its expensive work.
 """
 
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import itertools
+import os
+import sys
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
-from typing import Any
+from typing import Any, TypeVar
+
+T = TypeVar("T")
 
 
 class Cancelled(Exception):
@@ -150,6 +157,69 @@ def _waiting():
     """While a request's thread waits on queued work, its slot is free for others."""
     slots = current_slots.get()
     return slots.given_up() if slots is not None else contextlib.nullcontext()
+
+
+def _cores() -> int:
+    try:
+        return len(os.sched_getaffinity(0))  # what the process may use (a cluster job's share)
+    except AttributeError:
+        return os.cpu_count() or 1
+
+
+_gather_threads = max(4, _cores())
+_pool: ThreadPoolExecutor | None = None
+_pool_lock = threading.Lock()
+
+
+def set_gather_threads(n: int) -> None:
+    """How many threads :func:`gather` computes on (default a thread per core, at least 4);
+    1 computes everything in the thread that asks."""
+    global _gather_threads, _pool
+    with _pool_lock:
+        _gather_threads, old, _pool = max(1, int(n)), _pool, None
+    if old is not None:
+        old.shutdown(wait=False)
+
+
+def _unslotted(fn: Callable[[], T]) -> T:
+    current_slots.set(None)  # in this task's copy of the context: the request keeps its slot
+    return fn()
+
+
+def gather(fns: Iterable[Callable[[], T]]) -> list[T]:
+    """Each of ``fns`` called, at once on a pool of threads, and their results in order: the
+    chunks a read needs, which are computed one after another otherwise, so a request's
+    whole chain of inputs ran in its one thread. Each runs on behalf of the caller's request
+    (its claim, so queued work is still shared and dropped), and the caller gives its slot up
+    while it waits. The caller runs the first itself, and any the pool has not started by
+    the time it wants it, so a thread only ever waits on work that is running: inputs
+    gathered in turn by the pool's threads cannot deadlock, however deep the chain and
+    however few the threads. In the browser (no threads) they run one after another."""
+    fns = list(fns)
+    if len(fns) < 2 or _gather_threads < 2 or sys.platform == "emscripten":
+        return [fn() for fn in fns]
+    with _pool_lock:
+        global _pool
+        if _pool is None:
+            _pool = ThreadPoolExecutor(_gather_threads, thread_name_prefix="chunkmirage-gather")
+        pool = _pool
+    # each in its own copy of the caller's context: a context runs in one thread at a time
+    futures = [pool.submit(contextvars.copy_context().run, _unslotted, fn) for fn in fns[1:]]
+    try:
+        results = [fns[0]()]
+        for future, fn in zip(futures, fns[1:]):
+            if future.cancel():  # not started: run it here
+                results.append(fn())
+            elif future.done():
+                results.append(future.result())
+            else:
+                with _waiting():
+                    results.append(future.result())
+        return results
+    except BaseException:
+        for future in futures:
+            future.cancel()
+        raise
 
 
 class _Job:

@@ -3,9 +3,11 @@ from __future__ import annotations
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
+from functools import partial
 
 import numpy as np
 
+from chunkmirage import demand
 from chunkmirage.cache import LRUCache
 from chunkmirage.core import KINDS, ArrayInfo, Box
 from chunkmirage.fused import tent
@@ -154,16 +156,34 @@ class ChunkedSource(Source):
         if info.chunk_box(idx) == box:
             return self.chunk(idx)
         out = np.empty(box.shape, dtype=info.dtype)
+
+        def put(cidx, cbox, inter):  # chunks are disjoint: they may be put at once
+            out[inter.relative_to(box).slices()] = self.chunk(cidx)[inter.relative_to(cbox).slices()]
+
+        parts = []
         for cidx in info.chunks_covering(box):
             cbox = info.chunk_box(cidx)
             inter = Box(
                 tuple(max(a, b) for a, b in zip(box.start, cbox.start)),
                 tuple(min(a, b) for a, b in zip(box.stop, cbox.stop)),
             )
-            if inter.empty:
-                continue
-            data = self.chunk(cidx)
-            out[inter.relative_to(box).slices()] = data[inter.relative_to(cbox).slices()]
+            if not inter.empty:
+                parts.append((cidx, cbox, inter))
+        self._each(parts, put)
+        return out
+
+    def _each(self, parts: list[tuple], fn: Callable) -> list:
+        """``fn(*part)`` for each part, whose first item is a chunk index: those whose chunk
+        is cached here, the rest computed at once (``demand.gather``)."""
+        out: list = [None] * len(parts)
+        todo = []
+        for i, part in enumerate(parts):
+            if self.in_cache(part[0]):
+                out[i] = fn(*part)
+            else:
+                todo.append(i)
+        for i, result in zip(todo, demand.gather([partial(fn, *parts[i]) for i in todo])):
+            out[i] = result
         return out
 
 
@@ -211,6 +231,7 @@ class BlockSource(ChunkedSource):
         first = [max((a - o) // c, 0) for a, o, c in zip(box.start[lead:], self.overlap, chunks)]
         last = [min((b - 1 + o) // c, g - 1) for b, o, c, g in zip(box.stop[lead:], self.overlap, chunks, grid)]
         ahead = tuple(a // c for a, c in zip(box.start[:lead], info.chunk_shape[:lead]))
+        parts = []
         for rel in np.ndindex(*[hi - lo + 1 for lo, hi in zip(first, last)]):
             index = ahead + tuple(int(lo + r) for lo, r in zip(first, rel))
             extent = self.chunk_box(index)
@@ -218,11 +239,13 @@ class BlockSource(ChunkedSource):
                 tuple(max(a, b) for a, b in zip(box.start, extent.start)),
                 tuple(min(a, b) for a, b in zip(box.stop, extent.stop)),
             )
-            if inter.empty:
-                continue
+            if not inter.empty:
+                parts.append((index, extent, inter))
+        # the blocks computed at once, then summed here (they overlap)
+        pieces = self._each(parts, lambda index, extent, inter: self.chunk(index)[inter.relative_to(extent).slices()])
+        for (index, _, inter), data in zip(parts, pieces):
             core = Box.from_chunk(index[lead:], chunks)
             weight = tent(inter.start[lead:], inter.stop[lead:], core.start, core.stop, self.overlap)
-            data = self.chunk(index)[inter.relative_to(extent).slices()]
             dst = inter.relative_to(box).slices()
             acc[dst] += weight * data
             total[dst[lead:]] += weight

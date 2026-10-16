@@ -198,7 +198,13 @@ never wait behind ones that do. Work asked for from Python, with no request behi
 never dropped. Ten requests for
 full-resolution chunks of the fly templates' refined registration, each given up on after
 half a second, had all their block fits dropped; a patient request for another chunk was
-served in 8.5 s. `GET /api/queue` reports what runs, waits and was dropped, per level. The
+served in 8.5 s. `GET /api/queue` reports what runs, waits and was dropped, per level.
+A read that needs several chunks not yet cached computes them at once, on a pool of a thread
+per core (`demand.gather`), each on behalf of the read's request (its claim, so their queued
+work is shared and dropped as its own); the request gives its slot up while it waits, and
+runs any chunk no thread has started yet itself, so chains of stages whose chunks gather
+their inputs in turn cannot deadlock. A request's whole chain of inputs used to run in its
+one thread, so the first view of a deep chain used one core. The
 browser page keeps the same rules (`web/src/demand.ts`); it learns of a given-up request
 from its streamed reply being cancelled, a service worker being told of nothing else.
 

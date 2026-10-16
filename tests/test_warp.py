@@ -7,7 +7,7 @@ import pytest
 import tensorstore as ts
 from starlette.testclient import TestClient
 
-from chunkmirage import Pipeline, create_app, open_source
+from chunkmirage import Pipeline, create_app, gpu, open_source
 from chunkmirage.core import Box
 from chunkmirage.sources.warp import sampled_field
 from chunkmirage.transforms import SwirlField, Swirls
@@ -319,3 +319,16 @@ def test_the_net_displacement_of_several_fields_is_served():
     np.testing.assert_allclose(got, want, atol=1e-4)
     summed = (d1.sample(pts) + d2.sample(pts)).T.reshape(3, *BOX.shape)
     assert np.abs(want - summed).max() > 0.5
+
+
+def test_the_gpu_takes_chains_of_affines_and_sampled_fields_only():
+    # with CuPy (serve --device cuda) the resampler's own code runs on the GPU; a chain with
+    # anything else stays on the CPU. No GPU here: what is checked is the choice.
+    from chunkmirage.sources.scene import _on_gpu
+
+    p1 = quote(PASS1, safe="")
+    assert _on_gpu(open_source(f"warp://{IMG}?field={p1}&affine=1,0,0,0.5,0,1,0,0,0,0,1,0").levels[0].mapping)
+    assert _on_gpu(open_source(f"warp://{IMG}?affine=1,0,0,0.5,0,1,0,0,0,0,1,0").levels[0].mapping)
+    assert not _on_gpu(open_source(f"warp://{IMG}?field=swirl&angle=40").levels[0].mapping)
+    gpu.set_device("auto")  # no CuPy, or no GPU: the CPU
+    assert gpu.device() is None

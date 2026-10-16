@@ -19,6 +19,8 @@ from collections.abc import Sequence as Seq
 
 import numpy as np
 
+from chunkmirage.gpu import array_module, host, ndimage
+
 
 class Transform(ABC):
     """A function from points in one coordinate system to points in another."""
@@ -83,14 +85,16 @@ class Affine(Transform):
     def apply(self, pts):
         # each output axis as multiply-adds of whole columns, not a matrix product: BLAS
         # splits even this one over threads of its own, which fight a server's chunk
-        # threads (1 M points took seconds there, against tens of milliseconds like this)
-        pts = np.asarray(pts, dtype=float)
-        out = np.empty((*pts.shape[:-1], self.ndim_out))
+        # threads (1 M points took seconds there, against tens of milliseconds like this).
+        # Points on a GPU (CuPy) stay there, in their precision; on the CPU, in float64.
+        xp = array_module(pts)
+        pts = np.asarray(pts, dtype=float) if xp is np else pts
+        out = xp.empty((*pts.shape[:-1], self.ndim_out), dtype=pts.dtype)
         for j, (row, t) in enumerate(zip(self.linear, self.offset)):
-            col = pts[..., 0] * row[0]
+            col = pts[..., 0] * float(row[0])
             for i in range(1, self.ndim_in):
-                col += pts[..., i] * row[i]
-            out[..., j] = col + t
+                col += pts[..., i] * float(row[i])
+            out[..., j] = col + float(t)
         return out
 
     def then(self, other: Affine) -> Affine:
@@ -138,25 +142,32 @@ class VectorField:
         return len(self.grid_shape)
 
     def sample(self, pts: np.ndarray) -> np.ndarray:
-        """Vectors at ``pts`` (NaN rows, e.g. unconvergent inverse points, stay NaN)."""
-        finite = np.isfinite(pts).all(axis=1)
-        if not finite.all():
-            out = np.full((pts.shape[0], self.ncomp), np.nan)
-            if finite.any():
+        """Vectors at ``pts`` (NaN rows, e.g. unconvergent inverse points, stay NaN), on the
+        GPU for points there (CuPy): the window is read on the CPU and copied over."""
+        xp = array_module(pts)
+        finite = xp.isfinite(pts).all(axis=1)
+        if not bool(finite.all()):
+            out = xp.full((pts.shape[0], self.ncomp), xp.nan, dtype=pts.dtype)
+            if bool(finite.any()):
                 out[finite] = self.sample(pts[finite])
             return out
-        from scipy.ndimage import map_coordinates
-
         g = self.to_grid.apply(pts)
-        hi = np.asarray(self.grid_shape, dtype=float) - 1
-        g = np.clip(g, 0.0, hi)
-        lo = np.floor(g.min(axis=0)).astype(int)
-        top = np.minimum(np.floor(g.max(axis=0)).astype(int) + 2, self.grid_shape)
+        hi = xp.asarray(self.grid_shape, dtype=g.dtype) - 1
+        g = xp.clip(g, 0.0, hi)
+        lo = np.floor(host(g.min(axis=0))).astype(int)
+        top = np.minimum(np.floor(host(g.max(axis=0))).astype(int) + 2, self.grid_shape)
         slices = [slice(int(a), int(b)) for a, b in zip(lo, top)]
         slices.insert(self.vector_axis, slice(None))
-        win = np.moveaxis(np.asarray(self._read(tuple(slices)), dtype=float), self.vector_axis, 0)
-        local = (g - lo).T
-        out = np.empty((pts.shape[0], self.ncomp))
+        # in the field's own precision (a stored field is float32, its window no float64 copy)
+        win = np.asarray(self._read(tuple(slices)))
+        if win.dtype.kind != "f":
+            win = win.astype(np.float32)
+        win = np.moveaxis(win, self.vector_axis, 0)
+        if xp is not np:
+            win = xp.asarray(np.ascontiguousarray(win))
+        local = (g - xp.asarray(lo, dtype=g.dtype)).T
+        out = xp.empty((pts.shape[0], self.ncomp), dtype=win.dtype)
+        map_coordinates = ndimage(xp).map_coordinates
         for c in range(self.ncomp):
             out[:, c] = map_coordinates(
                 win[c], local, order=self.order, mode="nearest", prefilter=False

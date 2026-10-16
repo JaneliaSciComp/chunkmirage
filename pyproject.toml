@@ -48,6 +48,8 @@ https = ["cryptography>=42"]
 # ~3 GB of wheels, so not in `all`; cpu is its CPU-only build (CI, laptops). Pick one.
 gpu = ["torch>=2.6", "scipy>=1.12"]
 cpu = ["torch>=2.6", "scipy>=1.12"]
+# serve --device resamples warp:// and scene:// on a GPU through CuPy (CUDA 12)
+cupy = ["cupy-cuda12x>=13", "scipy>=1.12"]
 all = ["chunkmirage[hdf5,tiff,ops,mesh,mcp,viewer,https]"]
 
 [project.urls]

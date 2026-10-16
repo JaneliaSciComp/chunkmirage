@@ -123,7 +123,7 @@ axis, such as `time, y, x` frames of the sun, scroll through that axis as z). `V
 layer has on screen, so it goes blank until the new chunks arrive; stepping a parameter
 faster than a screenful computes never shows a finished frame. For a parameter you want
 to sweep, serve the sweep as a `t` axis instead (as
-[`warp://…&frames=N`](formats.md#warp-sources-procedural-deformations) does, and
+[`warp://…&frames=N`](formats.md#warp-sources-an-image-through-a-displacement-field) does, and
 `register://…&frames=N` for the steps of a solve) and play it
 with Neuroglancer's playback (click the dimension in the top bar, or set `velocity` in the
 state). Nothing is invalidated: each frame is fetched once, then comes from the browser's
@@ -215,7 +215,7 @@ Two cases, and they belong in different places:
   image through OME-Zarr 0.6 transformations on the server, chunk by chunk. Editing the
   scene's transformations and `PUT`ting the dataset again changes the digest, and the
   viewer refetches as above. For a deformation you can change continuously, a
-  [`warp://` source](formats.md#warp-sources-procedural-deformations) computes a swirl
+  [`warp://` source](formats.md#warp-sources-an-image-through-a-displacement-field) computes a swirl
   from coordinates, over a `t` axis of frames if you like; `examples/swirl_demo.py` plays
   it in the python viewer with its displacement field shown as an RGB layer. To have the
   field solved rather than given, a
