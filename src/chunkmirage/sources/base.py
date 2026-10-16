@@ -276,12 +276,17 @@ class MultiscaleSource:
                 best = i
         return best, False
 
-    def nearest_level(self, voxel_size: Sequence[float]) -> int:
+    def nearest_level(self, voxel_size: Sequence[float], *, fitted: bool = False) -> int:
         """The level whose voxel size (its last axes) is nearest ``voxel_size``, by ratio
-        (the sum over axes of the size's log ratio); the finer of two as near."""
+        (the sum over axes of the size's log ratio); the finer of two as near. ``fitted``:
+        a level computed on finer voxels than its own is matched by those
+        (``ArrayInfo.computed_from``), as a lattice's by the image level it was fitted on."""
         want = np.log(np.asarray(voxel_size, dtype=float))
-        dist = [
-            float(np.abs(np.log(np.asarray(lvl.info.voxel_size[-len(want) :], dtype=float)) - want).sum())
-            for lvl in self.levels
-        ]
+
+        def vox(info: ArrayInfo) -> np.ndarray:
+            if fitted and info.computed_from is not None:
+                info = info.computed_from
+            return np.asarray(info.voxel_size[-len(want) :], dtype=float)
+
+        dist = [float(np.abs(np.log(vox(lvl.info)) - want).sum()) for lvl in self.levels]
         return min(range(len(dist)), key=lambda i: (round(dist[i], 9), i))

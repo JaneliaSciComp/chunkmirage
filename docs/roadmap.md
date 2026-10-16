@@ -119,6 +119,12 @@ describe shipped features as future work.
       engines cannot drift. Whether the page's WebGPU shaders can also serve Python
       (wgpu-py), as one implementation of the solver for both, is still to be measured
       against PyTorch.
+10. **The resampler on the GPU.** `warp://` and `scene://` resample on the CPU: the chain
+    of coordinates, each field's sampling and the image's interpolation. One volume
+    resampled through a dense field on a GPU (cupyx `map_coordinates`) took 3 s where the
+    CPU took 172 s through three lattice fields. A path for the whole chain (torch
+    `grid_sample`, with `device=auto|cpu|cuda:N` as `register://` has) waits on measuring
+    the CPU again now that BLAS no longer fights the server's threads.
 
 ## Untapped potential
 

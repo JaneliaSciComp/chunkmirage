@@ -44,18 +44,24 @@ Usually one of three things:
 * **Connection limit.** Over HTTP/1.1 a browser opens at most 6 connections per host, shared
   by every tab, the control page's event stream, and the viewer's chunk requests. Close
   stale control-page tabs (each holds one connection and its own embedded viewer requesting
-  chunks). `--server hypercorn --https` negotiates HTTP/2, which multiplexes requests over
-  one connection, but is experimental.
+  chunks). A chunk computing holds its connection, so cheap layers of the same server (a
+  stored image) wait behind slow computed ones. `--server hypercorn --https` negotiates
+  HTTP/2, which multiplexes requests over one connection, but is experimental; serving the
+  cheap layers from another server also works.
 * **Parallelism.** Chunks are computed in a threadpool (`--threads`, default 2 × CPUs, at
   least 40). The
   hot paths (numpy, scipy, tensorstore, codecs) release the GIL, so this uses all cores.
+  The server keeps BLAS to one thread per call, since the threads it starts for each matrix
+  product would fight these (a three-field `warp://` read took ten times as long).
   Pure-Python loops in an op do not; write ops in array operations. `--workers` (processes)
   parallelises too, but each process has its own registry and cache, so live edits only
   reach one of them: it suits fixed pipelines, as in example-virtual-n5's gunicorn setup.
 * **Cancelled requests still cost CPU.** Neuroglancer cancels and re-requests chunks whenever
   the view or state changes (every push from the control page does this). The server shares
   one computation between identical in-flight requests and skips requests whose client has
-  already left, but a computation that has started runs to completion and is cached.
+  already left, but a computation that has started runs to completion and is cached, unless
+  its op asks `demand.cancelled()` and gives up
+  ([caching](concepts/caching.md#order-of-work-and-requests-given-up-on)).
 * **Compute-bound source or op.** Check `GET /api/cache` for misses and time one chunk with
   `curl -w %{time_total}`. Heavy ops need `cache=True` and, for real speed, a GPU. Python-level
   loops in an op serialise on the GIL; large numpy/scipy operations run on all cores.

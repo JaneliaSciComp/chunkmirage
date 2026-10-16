@@ -10,7 +10,8 @@ arrived first: a request takes its place in line when it arrives (its claim's ``
 not when its job reaches the queue, so jobs whose inputs took different times to read
 still run in the order clients asked for them. A waiting job whose every claim is
 cancelled is dropped without running, and whoever waits on it gets :class:`Cancelled`; one
-already running finishes, and its result is kept. Work asked for outside a request (from
+already running finishes, and its result is kept, unless it asks :func:`cancelled` between
+steps of its own and gives up (a long op over many blocks). Work asked for outside a request (from
 Python, with no claim) is never dropped. The server bounds how many requests compute at once
 with :class:`Slots`, and a request waiting on a queue's work gives its slot up meanwhile, so
 cheap requests never wait behind expensive ones. The browser engine's ``web/src/demand.ts``
@@ -65,6 +66,20 @@ class Claim:
 
 
 current_claim: ContextVar[Claim | None] = ContextVar("chunkmirage_claim", default=None)
+_current_job: ContextVar[_Job | None] = ContextVar("chunkmirage_job", default=None)
+
+
+def cancelled() -> bool:
+    """Whether no one waits any more for the work this thread is doing: every request
+    waiting on the queued job it runs has been given up on (or, outside a queue, its own
+    request). Never for work asked for outside a request. A long op asks between steps of
+    its own and raises :class:`Cancelled` to stop: nothing it made is kept, and whoever asks
+    for it again computes it anew."""
+    job = _current_job.get()
+    if job is not None:
+        return not job.kept and not job.claims
+    claim = current_claim.get()
+    return claim is not None and claim.cancelled
 
 
 class Slots:
@@ -188,6 +203,9 @@ class Queue:
             if not job.done.is_set():
                 with _waiting():
                     job.done.wait()
+            if isinstance(job.error, Cancelled) and job.state != "dropped" and not (claim and claim.cancelled):
+                # it gave up (``cancelled``) just as this request came to want it: run it anew
+                return self.run(key, level, compute)
             if job.error is not None:
                 raise job.error
             return job.result
@@ -208,6 +226,7 @@ class Queue:
             if job.state == "dropped":
                 raise Cancelled
         started = time.perf_counter()
+        token = _current_job.set(job)
         try:
             job.result = compute()
             return job.result
@@ -215,6 +234,7 @@ class Queue:
             job.error = e
             raise
         finally:
+            _current_job.reset(token)
             with self._cond:
                 self._jobs.pop(key, None)
                 self._running -= 1

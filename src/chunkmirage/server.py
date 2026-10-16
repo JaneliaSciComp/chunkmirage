@@ -18,7 +18,8 @@ Other packages add routes of their own (``extra_routes``, the ``chunkmirage.rout
 point). Every path is relative to where the app is mounted, so it works as a sub-app too.
 
 Chunk computation runs in the default threadpool; numpy, numcodecs and tensorstore all
-release the GIL for the heavy parts, so a single process serves many chunks concurrently.
+release the GIL for the heavy parts, so a single process serves many chunks concurrently
+(BLAS kept to one thread per call, so its own threads do not fight them).
 """
 
 from __future__ import annotations
@@ -266,12 +267,24 @@ def _level_info(p: Pipeline) -> list[dict]:
     ]
 
 
+_blas_limited = False
+
+
 def set_compute_threads(n: int) -> None:
     """Size the threadpool that computes chunks (default 40). numpy/scipy/tensorstore release
     the GIL, so this is the server's parallelism for chunk work; pure-Python ops serialise.
     Call it from the event loop that serves: the pool belongs to it (an app mounted in
-    another shares the host's pool)."""
+    another shares the host's pool). The first call also keeps the process's BLAS to one
+    thread per call: these threads are the parallelism, and the threads BLAS starts for a
+    product in each of them fight them (a three-field ``warp://`` read took ten times as long)."""
     import anyio
+
+    global _blas_limited
+    if not _blas_limited:
+        from threadpoolctl import threadpool_limits
+
+        threadpool_limits(1, user_api="blas")
+        _blas_limited = True
 
     # ``n`` compute at once (demand.Slots); threads of requests waiting on queued work (their
     # slot given up meanwhile) or for a slot must not run the pool out

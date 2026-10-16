@@ -4,7 +4,8 @@ lattice node (a coarser grid than its input) and whose blocks overlap by a node,
 where they meet, undoes a known rotation in two passes, the second fitted on the image the
 first corrected. Editing the second pass's parameter rebuilds only it and what follows, the
 first pass's chunks staying cached; the result does not depend on the order chunks are
-asked for; and the coverage layer marks exactly the blocks fitted."""
+asked for; the coverage layer marks exactly the blocks fitted; and a zoomed-out view reads
+the lattice fitted at its level, not the finest."""
 
 from typing import ClassVar
 
@@ -36,11 +37,12 @@ class BlockMatch(Op):
 
     def output_info(self, info: ArrayInfo) -> ArrayInfo:
         out = info.rescaled([v * self.stride for v in info.voxel_size[1:]])
-        return out.with_(shape=(3, *out.shape[1:]), chunk_shape=(3, *out.chunk_shape[1:]), dtype=np.dtype("float32"), kind="image")
+        return out.with_(shape=(3, *out.shape[1:]), chunk_shape=(3, *out.chunk_shape[1:]), dtype=np.dtype("float32"),
+                         kind="image", computed_from=info)  # fitted on the input's voxels
 
     def for_level(self, info: ArrayInfo) -> Op:
         op = self.model_copy()
-        op._voxel = tuple(float(v) / self.stride for v in info.voxel_size[-3:])  # the input's voxels
+        op._voxel = tuple(float(v) for v in info.computed_from.voxel_size[-3:])  # the input's voxels
         op._cache = self._cache
         return op
 
@@ -157,3 +159,22 @@ def test_the_result_does_not_depend_on_the_order_chunks_are_asked_in():
     backward = [fb.chunk(0, i) for i in reversed(idx)][::-1]
     for x, y in zip(forward, backward):
         np.testing.assert_array_equal(x, y)
+
+
+def test_a_zoomed_out_view_reads_the_lattice_fitted_at_its_level():
+    # a lattice's nodes are coarser than every image level, so by its own voxel size its
+    # finest level would suit every view; matched by the voxels each level was fitted on,
+    # the coarsest view reads only the coarsest lattice
+    reg = DatasetRegistry()
+    fixed = FIXED.replace("levels=1", "levels=3")
+    reg.add("fixed", {"source": fixed})
+    reg.add("moving", {"source": f"warp://{fixed}?field=swirl&angle=5&radius=1000"})
+    reg.add("pass1", {"source": "stack://dataset://fixed|dataset://moving", "ops": [{"op": "block_match_test", "stride": 8, "radius": 4, "cache": True}]})
+    reg.add("corrected1", {"source": "warp://dataset://moving?field=dataset://pass1&target=dataset://fixed"})
+    pass1, corrected1 = reg.get("pass1"), reg.get("corrected1")
+    assert [lvl.info.voxel_size[1:] for lvl in pass1.levels] == [(64.0,) * 3, (128.0,) * 3, (256.0,) * 3]
+    assert [lvl.info.computed_from.voxel_size[1:] for lvl in pass1.levels] == [(8.0,) * 3, (16.0,) * 3, (32.0,) * 3]
+    assert pass1.levels[2].info.computed_from.shape == (2, 16, 16, 16), "the input's exact extent, for for_level"
+    calls = BlockMatch.calls
+    corrected1.read(2, Box((0, 0, 0), corrected1.info(2).shape))
+    assert BlockMatch.calls - calls == np.prod(pass1.levels[2].info.chunk_grid), "only the coarsest lattice was fitted"

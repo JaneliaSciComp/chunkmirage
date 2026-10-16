@@ -185,7 +185,9 @@ the server responsive. Expensive work inside a request goes through a queue of i
 with a few slots (three for `register://`'s refined blocks, whose fits share the GPU; an
 op's `slots` for an op that declares them, a model on a GPU say, in a queue named `op
 <name>`): a job is shared by every request that needs it, dropped unrun once none of them waits any
-more, and kept if it had started. Among waiting jobs the finest level goes first, then the
+more, and kept if it had started, unless it gives up: a long op asks `demand.cancelled()`
+between steps of its own and raises `demand.Cancelled` once no request waits for it,
+keeping nothing (a request that comes to want it meanwhile computes it anew). Among waiting jobs the finest level goes first, then the
 one whose request arrived first. A request takes its place in line when it arrives, not
 when its job reaches the queue: an op's input is read before its job queues (so no slot is
 held reading), and reads take different times, so ordering by queueing would run a

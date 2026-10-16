@@ -28,7 +28,11 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
 - Live edits through the REST API, Server-Sent Events, a control page and a
   python-neuroglancer viewer that follows them.
 - Work bounded, shared between requests and ordered finest level first, then by when
-  each request arrived; work no client waits for any more is dropped.
+  each request arrived; work no client waits for any more is dropped, and a long op that
+  asks `demand.cancelled()` between its steps gives up once none does.
+- BLAS kept to one thread per call in the server (`threadpoolctl`), and affines applied
+  without it: its threads fought the server's, and a three-field `warp://` read took ten
+  times as long.
 - `--token` for the control API, `--https` with a self-signed certificate.
 - zarr v2 and v3 chunks compressed with blosc (zstd, byte shuffle) by default, 10 to 30
   times quicker to encode than gzip; `--compressor` chooses another. `--cache-gb` takes effect (an empty cache
@@ -76,6 +80,9 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
 - An op on a coarser grid (one vector per `stride` voxels) gets output chunks that follow
   the grid: the input's chunk divided by the factor, or what its `output_info` sets; an op
   at one resolution and the pyramid made from it keep their chunks, as a stored pyramid does.
+  One that sets `computed_from` (its input's `ArrayInfo`) has `warp://` take a field's
+  level by the voxels it was fitted on, so a zoomed-out view reads the lattice fitted at its
+  level, not the finest, and sees its input's exact extent in `for_level`.
 - `overlap` on an op: each block also computes that margin beyond its chunk, the blocks are
   cached as a stage of their own, and a served chunk is the weighted mean of every block
   reaching it, smooth where blocks computed on their own disagree and the same whatever

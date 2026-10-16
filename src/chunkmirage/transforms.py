@@ -81,7 +81,17 @@ class Affine(Transform):
         return self.matrix[:, -1]
 
     def apply(self, pts):
-        return pts @ self.linear.T + self.offset
+        # each output axis as multiply-adds of whole columns, not a matrix product: BLAS
+        # splits even this one over threads of its own, which fight a server's chunk
+        # threads (1 M points took seconds there, against tens of milliseconds like this)
+        pts = np.asarray(pts, dtype=float)
+        out = np.empty((*pts.shape[:-1], self.ndim_out))
+        for j, (row, t) in enumerate(zip(self.linear, self.offset)):
+            col = pts[..., 0] * row[0]
+            for i in range(1, self.ndim_in):
+                col += pts[..., i] * row[i]
+            out[..., j] = col + t
+        return out
 
     def then(self, other: Affine) -> Affine:
         """``other ∘ self``: apply self first."""
