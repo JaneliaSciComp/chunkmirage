@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { Onnx, onnxStage } from "../src/onnx.ts";
+import { exclusive, Onnx, onnxStage } from "../src/onnx.ts";
 import type { StageAt } from "../src/stages.ts";
 
 const fixture = (name: string) => ({
@@ -53,5 +53,34 @@ test("a session is shared by its users and released by the last; a release nobod
   await onnx.release(model.key);  // the last: released
   await stage.produce(block, at);
   assert.equal(ready(lines), 2);  // built again
+  await onnx.reset();
+});
+
+test("passes take turns across sessions and callers: one starts when the one before it has ended, however it ended", async () => {
+  const events: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const first = exclusive(async () => { events.push("first starts"); await gate; events.push("first ends"); throw new Error("first fails"); });
+  const second = exclusive(async () => { events.push("second starts"); return 2; });
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(events, ["first starts"]);  // the second waits, though it needs nothing of the first
+  release();
+  await assert.rejects(first, /first fails/);
+  assert.equal(await second, 2);
+  assert.deepEqual(events, ["first starts", "first ends", "second starts"]);
+});
+
+test("a session is built in the same turn: a model's first block waits for the call before it", async () => {
+  const lines: string[] = [], onnx = new Onnx({ log: (l) => lines.push(l) });
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const held = exclusive(() => gate);  // another model's pass, say, still running
+  const out = onnxStage(onnx, fixture("double")).produce(block, at);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(ready(lines), 0, "not built while another call holds the turn");
+  release();
+  await held;
+  assert.deepEqual(Array.from((await out).data as Float32Array), [2, 4, 6, 8, 10, 12, 14, 16]);
+  assert.equal(ready(lines), 1);
   await onnx.reset();
 });

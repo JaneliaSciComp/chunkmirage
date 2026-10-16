@@ -494,8 +494,14 @@ as text). What such a page gets, in the order it uses it:
   CPU) when the browser has none. `new Onnx({wasmPaths, log})` holds the sessions, one per
   model (`OnnxModel`: a key that is its identity, its bytes when first needed, the tensors
   to feed and read, the session's first by default), shared by the views that use it
-  (`retain`, `release`; `reset` drops them all, for a session in a bad state), each running
-  one forward pass at a time, since two overlapping on WebGPU never resolve; `limits()`
+  (`retain`, `release`; `reset` drops them all, for a session in a bad state). One call
+  into ORT runs at a time on the page, whatever its session, a forward pass or a session
+  built or released (`exclusive`, which a page running sessions of its own on the same ORT
+  calls too, from the engine's module): ORT Web runs every session in one WebAssembly
+  instance, whose WebGPU build waits on the GPU through Asyncify, one suspended call at a
+  time, so two calls overlapping never resolve, two models' as much as one's, and a page's
+  second model built while its first computes is one such overlap. A pass that hangs holds
+  the turn, and only a reload recovers from it; `limits()`
   gives the GPU's `maxBufferSize` and whether it has `shader-f16`, for a page choosing
   among a model's sizes. `onnxStage(onnx, model, {halo, inputVoxelSize, added})` feeds
   each input block as a float32 tensor `[1, C, z, y, x]` and returns the tensor the model
