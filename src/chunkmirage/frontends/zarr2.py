@@ -78,6 +78,9 @@ class Zarr2Frontend(Frontend):
             meta[f"s{lvl}/.zattrs"] = {}
         return {"zarr_consolidated_format": 1, "metadata": meta}
 
+    def chunk_key(self, level: int, index) -> str:
+        return f"s{level}/" + self.separator.join(str(i) for i in index)
+
     def encode(self, info: ArrayInfo, index, block: np.ndarray) -> bytes:
         full = self.pad_to_full(info, index, block)
         raw = np.ascontiguousarray(full).astype(full.dtype.newbyteorder("<"), copy=False).tobytes()

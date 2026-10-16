@@ -73,6 +73,31 @@ view as zarr v2 with OME-Zarr 0.4 (`virtual/<page>/zarr2/<view>/`), the same chu
 readers that predate zarr v3's final spec: GDAL 3.8, as the fires demo runs it in the page
 (gdal3.js), opens a level as a zarr array and translates it to a GeoTIFF.
 
+## A dataset written to a store (Python and the command line)
+
+```bash
+chunkmirage materialize SOURCE OUT [--op ...] [--format zarr3|zarr|n5] [--level N ...] [--box lo:hi]
+```
+
+computes SOURCE through its ops and writes it to OUT (a directory, or a `file://`, `gs://`
+or `s3://` URL, through tensorstore) as a frontend serves it: zarr v3 with OME-Zarr 0.5
+(the default), zarr v2 with OME-Zarr 0.4 and consolidated metadata, or N5. The metadata
+and every chunk are byte for byte what a client fetches, so the store opens wherever the
+served dataset did and reads back as a stored source of its own: a stage computed once (a
+registration's pass, a model's output over a region) is then read from disk instead of
+computed again. Every level's metadata is written first, so a store whose writing stopped
+part way is still the dataset, zero where no chunk was written yet; then the chunks of the
+levels asked for (all by default), several at once, each of nothing but zeros left out
+(`--keep-empty` writes them). `--box` takes level 0's voxels along the last axes, `lo:hi`
+each comma separated in C order (`0,0,0:64,512,512`), and every level writes the same
+region on its own voxels, rounded out to whole chunks. From Python,
+`chunkmirage.materialize(pipeline, where, format=, levels=, box=, compressor=,
+skip_empty=, progress=)` does the same for any pipeline, another dataset's chain read
+through `dataset://` among them (`registry.get(name)`), and returns the counts
+(`{chunks, written, skipped, bytes}`). Inside a running server it competes with clients'
+requests as any work asked for from Python does (never dropped, in arrival order), and
+its chunks pass through the server's cache.
+
 ## A region written to a store (browser engine)
 
 The browser engine also writes a view, or a box of it, into a store as files

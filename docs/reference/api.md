@@ -143,6 +143,12 @@ server.stop()
 `Server(app, sock, ...)` takes a socket bound already (`netutil.bind_socket`), when the
 address must be known before the app is built.
 
+`chunkmirage.materialize(pipeline, where, *, format="zarr3", levels=None, box=None,
+compressor=None, skip_empty=True, progress=None)` writes a pipeline (or a box of it) into
+a store as a frontend serves it, which reads back as a stored dataset: the Python side of
+`chunkmirage materialize`
+([formats](../concepts/formats.md#a-dataset-written-to-a-store-python-and-the-command-line)).
+
 Two process-wide settings `chunkmirage serve` makes from its flags, for an application
 serving its own: `chunkmirage.gpu.set_device("cpu" | "auto" | "cuda" | "cuda:N")` (where
 `warp://` and `scene://` resample, `--device`), and `chunkmirage.demand.set_gather_threads(n)`

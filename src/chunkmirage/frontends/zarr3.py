@@ -84,6 +84,9 @@ class Zarr3Frontend(Frontend):
             "dimension_names": list(info.axes),
         }
 
+    def chunk_key(self, level: int, index) -> str:
+        return f"s{level}/c/" + "/".join(str(i) for i in index)
+
     def encode(self, info: ArrayInfo, index, block: np.ndarray) -> bytes:
         full = self.pad_to_full(info, index, block)
         raw = np.ascontiguousarray(full).astype(full.dtype.newbyteorder("<"), copy=False).tobytes()

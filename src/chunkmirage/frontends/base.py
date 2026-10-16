@@ -61,6 +61,12 @@ class Frontend(ABC):
     root_keys: ClassVar[tuple[str, ...]] = ()  # metadata keys of the group
     level_keys: ClassVar[tuple[str, ...]] = ()  # metadata keys of each level
 
+    def chunk_key(self, level: int, index: tuple[int, ...]) -> str | None:
+        """The path chunk ``index`` of ``level`` is served at, which ``resolve`` maps back to
+        it; None for a format whose chunks are not files of their own (what ``materialize``
+        cannot write)."""
+        return None
+
     def listing(self, pipeline: Pipeline, path: str) -> list[str] | None:
         """What a directory listing of ``path`` shows: the group's metadata keys and one
         directory per level, or a level's metadata keys (never its chunks); None if ``path``
