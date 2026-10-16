@@ -63,7 +63,7 @@ export class Blocks {
 
   /** The lattice's values over [lo, hi) (lattice indices): every block whose fit reaches it,
    * weighted 1 over its own points and less the further into its context (register.py's
-   * _tent), so the field turns from one block's fit to the next's across their overlap. */
+   * fused.tent), so the field turns from one block's fit to the next's across their overlap. */
   async window(lo: number[], hi: number[], claim?: Claim): Promise<ControlGrid> {
     const { shape: n, origin, spacing } = this.lattice, B = this.block, ctx = this.context;
     const b0 = lo.map((v, a) => Math.max(Math.floor((v - ctx) / B[a]), 0));

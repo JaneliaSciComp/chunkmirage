@@ -50,6 +50,10 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
 - `warp://` takes its field from any source (`field=<url>`: a `(c, z, y, x)` array of
   displacements, another dataset's output among them), an `affine` after the displacement
   and the output grid from `target=<source>`; the swirls stay as they were.
+- `coverage://<name>`: one voxel per chunk of another dataset's last cached stage, saying
+  whether it is computed and whether the full-resolution result under it is (a preview
+  told from a result while browsing), read afresh at every request;
+  `GET /api/datasets/{name}/coverage` gives the counts per level.
 
 - zarr v2/v3, N5, precomputed and HDF5 on file, S3, GCS and HTTP; xarray arrays with their
   coordinates and CF packing; cloud-optimized GeoTIFFs.
@@ -69,6 +73,10 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
 - An op on a coarser grid (one vector per `stride` voxels) gets output chunks that follow
   the grid: the input's chunk divided by the factor, or what its `output_info` sets; an op
   at one resolution and the pyramid made from it keep their chunks, as a stored pyramid does.
+- `overlap` on an op: each block also computes that margin beyond its chunk, the blocks are
+  cached as a stage of their own, and a served chunk is the weighted mean of every block
+  reaching it, smooth where blocks computed on their own disagree and the same whatever
+  order they are computed in; `register://`'s refined blocks blend with the same weights.
 
 - Pointwise ops, filters, morphology, connected components, spots, contacts, differences,
   gradients, downsampling, normalized differences, slope and hillshade, with halos handled

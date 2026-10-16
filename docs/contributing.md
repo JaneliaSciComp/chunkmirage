@@ -101,8 +101,8 @@ process). Either is documented in `docs/concepts/formats.md`.
 
 Packages build on chunkmirage through its plugin API, which is stable:
 
-* **Ops.** `Op` and its contract: the class attributes `name`, `halo`, `cache`, `packages`,
-  `output_kind` and `slots`; the methods `apply`, `apply_at`, `output_dtype`,
+* **Ops.** `Op` and its contract: the class attributes `name`, `halo`, `overlap`, `cache`,
+  `packages`, `output_kind` and `slots`; the methods `apply`, `apply_at`, `output_dtype`,
   `output_info`, `input_voxel_size`, `for_level` and `cache_token`; parameters as pydantic
   fields. `register` and the `chunkmirage.ops` entry point.
 * **Sources.** `Source` (`info`, `read`, `read_padded`, `cache_key`), `ChunkedSource`,

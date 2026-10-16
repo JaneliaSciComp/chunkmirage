@@ -191,7 +191,9 @@ invert = "mypackage.ops:Invert"
 `apply` gets each block padded by `halo` and returns it computed, as the `python` op's
 does; `output_dtype`, `output_kind` or `output_info` say what it makes when that differs
 from its input, `apply_at` is told where the block sits, `input_voxel_size` runs it at one
-resolution (a model trained at 8 nm), `for_level` adapts it to each level's voxel size, and
+resolution (a model trained at 8 nm), `for_level` adapts it to each level's voxel size,
+`overlap` has each block also compute a margin beyond its chunk, blended with its
+neighbours' where they meet (a fit per block, a model's tiles), and
 `cache = True` keeps its output for cheaper ops after it. The whole contract, with what a
 returned block may look like, is on the [pipelines page](../concepts/pipelines.md#ops); a
 template with a test is in [Contributing](../contributing.md#adding-an-op), and the API a

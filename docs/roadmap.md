@@ -101,8 +101,11 @@ describe shipped features as future work.
       Pyodide, `synthetic://`, `label` and the rest already run in the page, and the
       fractal is a computed pyramid 2^28 voxels across that costs nothing.) The same volume
       served as N5 and precomputed by the service worker, beside its zarr v2 and v3.
-    * A layer of where `refine` has fitted the field and how well (each block's
-      correlation before and after), in both engines.
+    * A layer of how well `refine` has fitted each block (its correlation before and
+      after), in both engines. (Where any dataset's stage has computed, the full-resolution
+      result or a coarse preview, is served by
+      [`coverage://`](concepts/formats.md#coverage-sources-what-the-cache-holds-of-a-dataset)
+      in Python.)
     * User code on the GPU. Array functions exported to ONNX run in both engines (ONNX
       Runtime and ONNX Runtime Web). (The CPU tier has shipped: the
       [`python` op](reference/ops.md#your-own-python-the-python-op) runs in the page

@@ -38,6 +38,6 @@ update the matching page in the same commit:
 - The core composes, it doesn't compute: anything with an algorithm in it (every op but
   `downsample` and `python`, computed sources, solvers) goes in `src/chunkmirage_contrib/`,
   wired to the core through entry points only; `tests/test_core_boundary.py` enforces it.
-- Ops are pydantic models with class-level `name`, `halo`, `cache` (and `packages` they import
+- Ops are pydantic models with class-level `name`, `halo`, `overlap`, `cache` (and `packages` they import
   beyond numpy, for the browser engine); register via
   `@register` and the `chunkmirage.ops` entry point.

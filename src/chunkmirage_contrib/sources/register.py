@@ -79,6 +79,7 @@ from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt, PositiveInt, 
 from chunkmirage import demand
 from chunkmirage.cache import LRUCache
 from chunkmirage.core import ArrayInfo, Box
+from chunkmirage.fused import tent
 from chunkmirage.neuroglancer import compare_shader, field_shader
 from chunkmirage.sources.base import MultiscaleSource, Source
 from chunkmirage.sources.scene import SceneLevelSource, _pick_level
@@ -373,7 +374,7 @@ def _refined_field(
     ``stages`` halvings of them (so the block's coarsest copy is about as coarse as the
     solved level), and kept in ``blocks``, context included. Neighbouring blocks overlap
     there, and a lattice point's value is the average of the blocks covering it, each
-    weighted 1 over its own block and less the further into its context (``_tent``), so the
+    weighted 1 over its own block and less the further into its context (``fused.tent``), so the
     field turns smoothly from one block's fit to the next's across the overlap instead of
     stepping at their boundary. A block's fit depends on nothing but the solved field and
     the images, so neither does the blend on the order blocks are fitted in."""
@@ -498,7 +499,7 @@ def _refined_field(
             i0, i1 = np.maximum(k0, w0), np.minimum(k1, w1)
             if (i1 <= i0).any():
                 continue
-            weight = _tent(i0, i1, c0, c1, context)
+            weight = tent(i0, i1, c0, c1, context)
             if not weight.any():
                 continue
             values = fitted(index)[tuple(slice(a - k, b - k) for a, b, k in zip(i0, i1, k0))]
@@ -508,17 +509,6 @@ def _refined_field(
         return (acc / total[..., None]).astype(np.float32)[..., sl[3]]
 
     return VectorField(read, info.shape, 3, Affine.scale_translation(spacing, lo), key)
-
-
-def _tent(i0, i1, c0, c1, context: int) -> np.ndarray:
-    """A block's weight at lattice points ``i0:i1``: 1 on its own points ``c0:c1``, falling
-    linearly to 1 / (context + 1) at the edge of its context, 0 beyond; the product over axes."""
-    weight = np.ones(())
-    for a, b, lo, hi in zip(i0, i1, c0, c1):
-        k = np.arange(a, b)
-        d = np.maximum(np.maximum(lo - k, k - (hi - 1)), 0)
-        weight = np.multiply.outer(weight, np.clip(1 - d / (context + 1), 0, 1))
-    return weight
 
 
 _FIELDS = ("shape", "chunk_shape", "voxel_size", "units", "axes", "translation")

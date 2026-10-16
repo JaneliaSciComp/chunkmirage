@@ -139,6 +139,23 @@ def run(ops: Sequence[Op], block: np.ndarray, in_box: Box, out_box: Box, out: Ar
     return np.asarray(block[lead.slices() + crop.slices()], dtype=out.dtype)
 
 
+def tent(i0: Sequence[int], i1: Sequence[int], c0: Sequence[int], c1: Sequence[int],
+         overlap: int | Sequence[int]) -> np.ndarray:
+    """A block's weight at the voxels ``i0:i1`` where blocks overlap: 1 on its own voxels
+    ``c0:c1``, falling linearly to ``1 / (overlap + 1)`` at the edge of its overlap and 0
+    beyond, the product over the axes (``overlap`` one for all, or per axis). Two
+    neighbours' weights cross in the middle of their overlap, so their mean turns smoothly
+    from one block's values to the other's instead of stepping where they meet."""
+    k = len(i0)
+    o = tuple(overlap) if isinstance(overlap, (tuple, list)) else (int(overlap),) * k
+    weight = np.ones(())
+    for a, b, lo, hi, ov in zip(i0, i1, c0, c1, o):
+        idx = np.arange(a, b)
+        d = np.maximum(np.maximum(lo - idx, idx - (hi - 1)), 0)
+        weight = np.multiply.outer(weight, np.clip(1 - d / (ov + 1), 0, 1))
+    return weight
+
+
 def pad_edge(data: np.ndarray, box: Box, shape: Sequence[int]) -> np.ndarray:
     """``data``, read over ``box`` clipped to an array of ``shape``, extended to all of
     ``box`` by repeating the nearest voxel inside (``Source.read_padded(edge=True)``)."""

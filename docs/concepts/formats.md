@@ -330,6 +330,30 @@ they last read of it, until they are edited. A `dataset://` URL resolves against
 registry building the dataset that holds it, so it is opened through the server (the REST
 API, `create_app`'s datasets, a `DatasetRegistry`), not by `open_source` on its own.
 
+### Coverage sources (what the cache holds of a dataset)
+
+```
+coverage://<name>
+```
+
+one voxel per chunk of another dataset of this server, saying what has been computed
+there, to tell a real result from a preview while browsing: zoomed out, a dataset shows its
+ops run on the coarse level, not a downsample of the full-resolution result, and nothing on
+screen says whether that result exists. The levels are the dataset's. A voxel covers one
+chunk of that level's last cached stage (the last op with `cache`; the blocks of an op with
+`overlap`, where it ran; stage 0 when nothing after it is cached) and holds the sum of two
+bits: 1 when that chunk is in the cache, 2 when every chunk of the finest level under it
+is. So at full resolution a chunk is 3 or 0; zoomed out, 1 marks a preview (computed on the
+coarse level, the fine chunks under it not all computed), 3 a region whose full-resolution
+result exists. Served as labels (`kind` label), so a viewer colours the values apart. It is
+read afresh at every request and never cached; a viewer that keeps what it fetched, as
+Neuroglancer does, shows the state at the time, so reload the layer to see more.
+`GET /api/datasets/{name}/coverage` gives the counts per level. A dataset none of whose
+stages is cached (a `dataset://` source with uncached ops, or `cache_source: false`) has
+no coverage, since its chunks are computed at each request: look at the datasets it reads.
+As `dataset://` does, it resolves against the registry building the dataset that holds it,
+and counts the dataset it describes as one it reads, so editing that rebuilds it.
+
 ### Register sources (deformable registration on a GPU)
 
 ```

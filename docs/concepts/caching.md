@@ -9,6 +9,7 @@ Each pipeline stage can memoize its output chunks. By default:
 | stage 0: raw source             | yes    | refetching from disk or S3 is the expensive part        |
 | ops with `cache = True`         | yes    | expensive to recompute (inference)                      |
 | an op with an input voxel size, and the levels made from it | yes | it runs on one level, and every coarser level is made from its output ([ops at one resolution](pipelines.md#ops-at-one-resolution)) |
+| the blocks of an op with `overlap` | yes | each block, chunk plus overlap, is computed once and blended into every chunk it reaches ([overlapping blocks](pipelines.md#overlapping-blocks-blended-where-they-meet)); the op's own output as its `cache` says |
 | ops with `cache = False`        | no     | fused with their neighbours into one stage and recomputed from the cached upstream stage |
 | encoded bytes (gzip, blosc, ...)| no     | encoding is fast; caching arrays serves all formats     |
 
@@ -198,6 +199,16 @@ half a second, had all their block fits dropped; a patient request for another c
 served in 8.5 s. `GET /api/queue` reports what runs, waits and was dropped, per level. The
 browser page keeps the same rules (`web/src/demand.ts`); it learns of a given-up request
 from its streamed reply being cancelled, a service worker being told of nothing else.
+
+## What has been computed
+
+Zoomed out, a dataset shows its ops run on the coarse level, not a downsample of the
+full-resolution result, and nothing on screen says whether that result exists. A
+[`coverage://<name>`](formats.md#coverage-sources-what-the-cache-holds-of-a-dataset) source
+is the answer as a layer: one voxel per chunk of the dataset's last cached stage at each
+level, saying whether that chunk is in the cache and whether every finest-level chunk under
+it is, read afresh at every request; `GET /api/datasets/{name}/coverage` gives the counts
+per level. Both read the cache as it is, so what was evicted counts as not computed.
 
 ## Inspecting and clearing
 
