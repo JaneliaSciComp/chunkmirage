@@ -114,6 +114,9 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
 - `cache_token()` for ops whose output depends on state outside their parameters, and
   `DatasetRegistry.refresh` to read it again.
 - `slots` to bound how many calls of an op run at once.
+- `Pipeline.plan(level, box)`: what a read would compute, computing nothing: per stage, the
+  chunks it is asked for, those held and those to compute, following `dataset://` into
+  the datasets it reads and stopping at other sources.
 - Zero padding past the volume's edge (`padding`).
 - Channel axes read whole, so an op may change their length: select or combine channels.
 - A level shrunk by a whole factor for an op at one voxel size is the mean of each block,
