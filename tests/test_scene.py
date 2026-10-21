@@ -526,20 +526,11 @@ def test_time_and_channel_keep_their_own_scale(tmp_path):
     assert info.units[0] == "millisecond"
 
 
-def test_references_ignore_slashes_and_sequences_compose_in_order():
+def test_references_ignore_slashes():
     from chunkmirage.ngff import _ref
-    from chunkmirage.sources.tensorstore_source import _ome_transforms
 
     assert _ref({"path": "moving/", "name": "physical"}) == ("moving", "physical")
     assert _ref({"path": "/", "name": "world"}) == (None, "world")
-    seq = {
-        "type": "sequence",
-        "transformations": [
-            {"type": "translation", "translation": [1, 2]},
-            {"type": "scale", "scale": [2, 3]},
-        ],
-    }
-    assert _ome_transforms([seq], 2) == ((2.0, 3.0), (2.0, 6.0))  # 2*(i+1), 3*(i+2)
 
 
 def test_the_inverse_judges_the_points_it_returns():

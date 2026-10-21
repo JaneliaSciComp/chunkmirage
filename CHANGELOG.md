@@ -89,6 +89,17 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
   tensorstore rejects.
 - Voxels placed as Neuroglancer places them: precomputed `voxel_offset` and funlib `offset`
   are corners.
+- Stored arrays are opened and placed by worldarray (`worldarray>=0.1,<1`), the reader
+  chunkmirage shares with cellmap-flow, cellmap-analyze and mesh-n-bone; chunkmirage keeps
+  xarray coordinates, CF packing, the overrides and `kind`
+  ([design](docs/design.md#why-worldarray-for-placing-them)). What it adds or changes:
+  a precomputed scale opened by its key (`vol/4_4_40`) or as `vol/s<N>`; a one-channel
+  precomputed volume served as `z, y, x`, its channel dropped; N5 with a bare-list
+  `pixelResolution`, `units` as one string, or an `axes` attribute; zarr v3
+  `dimension_units` and a `scale` attribute as the voxel size; a dataset path of more than
+  one part (`seg/s0`) found in an ancestor group; an OME `scale` that disagrees with an
+  array's own `voxel_size` warns and OME wins, and one of the wrong length is refused; a
+  bucket with listing off read through its refusals; `AWS_ENDPOINT_URL`.
 - An array nothing places has its corner at the origin, voxel 0's centre half a voxel on
   along its spatial axes, as Neuroglancer draws a plain array and worldarray places one: a
   stored array without placement metadata, an xarray dimension without an even
