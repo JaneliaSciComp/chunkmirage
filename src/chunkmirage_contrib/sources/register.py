@@ -727,7 +727,7 @@ def open_register(
         field = field_for(i, k)
         key = "register:" + _digest(f"register|{field.key}|{i}|{p.show}|{order}|{grid.chunk_shape}")
         if p.show == "field":
-            info = _prepend(grid, ArrayInfo((3,), np.float32, (3,), (1.0,), ("",), ("c",)))
+            info = _prepend(grid, ArrayInfo((3,), np.float32, (3,), (1.0,), ("",), ("c",), (0.0,)))
             return FieldLevelSource(field, to_space, info, key)
 
         def mapping_for(j: int, through: VectorField):
@@ -744,7 +744,7 @@ def open_register(
         if p.show == "image":
             return registered
         dtype = np.result_type(fl.dtype, ml.dtype)
-        pair = _prepend(grid, ArrayInfo((2,), dtype, (2,), (1.0,), ("",), ("c",)))
+        pair = _prepend(grid, ArrayInfo((2,), dtype, (2,), (1.0,), ("",), ("c",), (0.0,)))
         return PairSource(fix.levels[i], flead, registered, mlead, pair, key + ":pair")
 
     out: list[Source] = []

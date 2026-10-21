@@ -313,7 +313,7 @@ def test_the_net_displacement_of_several_fields_is_served():
     # first's where that moved the point; not the sum of the two at x
     d1 = sampled_field(open_source(PASS1).levels[0], "1")
     d2 = sampled_field(open_source(PASS2).levels[0], "2")
-    pts = np.indices(BOX.shape, dtype=float).reshape(3, -1).T  # voxels of 1 at the origin
+    pts = np.indices(BOX.shape, dtype=float).reshape(3, -1).T + 0.5  # voxels of 1, the corner at 0
     moved = pts + d2.sample(pts)
     want = (moved + d1.sample(moved) - pts).T.reshape(3, *BOX.shape)
     np.testing.assert_allclose(got, want, atol=1e-4)

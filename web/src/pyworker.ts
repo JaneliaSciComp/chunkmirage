@@ -49,7 +49,7 @@ def _info(shape, dtype, chunk, voxel, origin=None, unit=""):
     axes = (("c",) if n == 4 else ()) + ("z", "y", "x")
     return ArrayInfo(shape=tuple(shape), dtype=np.dtype(dtype), chunk_shape=tuple(shape[: n - 3]) + tuple(chunk),
                      voxel_size=(1.0,) * (n - 3) + tuple(voxel), units=(unit,) * n, axes=axes,
-                     translation=(0.0,) * (n - 3) + tuple(origin or (0.0,) * 3))
+                     translation=None if origin is None else (0.0,) * (n - 3) + tuple(origin))
 
 def plan(view, ops, shape, dtype, chunk, voxel, source=None):
     ops = [op_from_spec(s) for s in json.loads(ops)]
