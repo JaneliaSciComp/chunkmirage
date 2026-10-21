@@ -468,11 +468,13 @@ as text). What such a page gets, in the order it uses it:
   arguments, arrays as bytes): the package's own steps (`chunkmirage_contrib.stitching`,
   `tracking`), or the page's own Python, which `start`'s `modules` writes into the workers
   beside the package's (`"pkg/mod.py"` to its text) and `call("pkg.mod:fn", args, arrays)`
-  reaches by module path: `fn(args, arrays)` answers JSON, bytes (one array) or JSON with
-  arrays (`chunkmirage.calls`, which runs natively too, so the page's Python is tested with
-  pytest). The workers take turns, so a call carries its own state; `workers` sets how many
-  start (one does for a page that only calls). cellmap-flow's rank score is such Python,
-  written once and run by its server and its page alike.
+  reaches by module path: `fn(args, arrays)` answers JSON, one array (bytes or a numpy
+  array) or JSON with arrays (`chunkmirage.calls`, which runs natively too, so the page's
+  Python is tested with pytest). A module under `chunkmirage/` or `chunkmirage_contrib/`
+  is refused: the package's own files are not a page's to replace. The workers take turns,
+  so a call carries its own state; `workers` sets how many start, one at least (one does
+  for a page that only calls). cellmap-flow's rank score is such Python, written once and
+  run by its server and its page alike.
 * `Engine.serve(view, info, chunk, produce)` serves a view whose chunks the page computes
   (a model run by ONNX Runtime Web, say): `produce(level, index)` gives each chunk as zarr
   v3 bytes, the engine queues, shares and drops the work as its own (finest level first,

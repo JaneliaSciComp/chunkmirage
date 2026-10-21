@@ -137,9 +137,10 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
   `onnx` stage (ONNX Runtime Web on WebGPU, WebAssembly without it) and the Vite plugin that
   serves its runtime beside the page.
 - A page's own Python in the workers: `Engine.start`'s `modules` writes a page's modules
-  beside the package's, `call("pkg.mod:fn", args, arrays)` runs one by module path
-  (`chunkmirage.calls`: `fn(args, arrays)` answers JSON, bytes or JSON with arrays, and runs
-  natively too), and `workers` sets how many Pyodide workers start
+  beside the package's (never under `chunkmirage/` or `chunkmirage_contrib/`),
+  `call("pkg.mod:fn", args, arrays)` runs one by module path (`chunkmirage.calls`:
+  `fn(args, arrays)` answers JSON, one array as bytes or numpy, or JSON with arrays, and runs
+  natively too), and `workers` sets how many Pyodide workers start, one at least
   ([design](docs/design.md#another-page-on-the-engine)).
 - A staged view's stages may return 64-bit integer blocks (`BigUint64Array` and
   `BigInt64Array`; `uint64` and `int64` in the engine's dtype table), kept and served as

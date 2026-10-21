@@ -83,8 +83,9 @@ const notFound = { status: 404, body: "", type: "text/plain" };
  * (the default) when a view first needs them, "always" at `start`, for a page that will
  * `call()` Python and wants it loading while the data opens. `modules`: the page's own
  * Python, written into the workers beside the package's (`"pkg/mod.py"` to its text, each
- * package's `__init__.py` among them), for `call("pkg.mod:fn", ...)`. `workers`: how many
- * Pyodide workers, most of the cores by default; one does for a page that only calls. */
+ * package's `__init__.py` among them; not under `chunkmirage/` or `chunkmirage_contrib/`,
+ * which are the package's own), for `call("pkg.mod:fn", ...)`. `workers`: how many Pyodide
+ * workers, most of the cores by default and one at least; one does for a page that only calls. */
 export interface StartOptions { packages?: string[]; python?: "auto" | "always"; modules?: Record<string, string>; workers?: number }
 
 export class Engine {
@@ -143,8 +144,10 @@ export class Engine {
     this.reader = new Rpc<ToReader>(new Worker(new URL("./reader.ts", import.meta.url), { type: "module" }));
     this.chunks = new Queue<ArrayBuffer>(workers());
     this.packages = [...packages];
+    const taken = Object.keys(modules).filter((p) => /^\/?(chunkmirage|chunkmirage_contrib)\//.test(p));
+    if (taken.length) throw new Error(`a page's modules cannot replace the package's own files: ${taken.join(", ")}`);
     this.modules = { ...modules };
-    this.poolSize = poolSize;
+    this.poolSize = Math.max(1, Math.floor(poolSize) || 0);
     this.wants(views);
     if (python === "always" || Object.values(views).some(needsPython)) {
       const n = this.python().length;
