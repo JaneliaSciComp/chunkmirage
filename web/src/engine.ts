@@ -81,8 +81,11 @@ const notFound = { status: 404, body: "", type: "text/plain" };
 /** `Engine.start`'s options. `packages`: what Python loads beyond numpy and the ops' own
  * imports (each op's schema says those). `python`: when the Pyodide workers start; "auto"
  * (the default) when a view first needs them, "always" at `start`, for a page that will
- * `call()` the package's Python and wants it loading while the data opens. */
-export interface StartOptions { packages?: string[]; python?: "auto" | "always" }
+ * `call()` Python and wants it loading while the data opens. `modules`: the page's own
+ * Python, written into the workers beside the package's (`"pkg/mod.py"` to its text, each
+ * package's `__init__.py` among them), for `call("pkg.mod:fn", ...)`. `workers`: how many
+ * Pyodide workers, most of the cores by default; one does for a page that only calls. */
+export interface StartOptions { packages?: string[]; python?: "auto" | "always"; modules?: Record<string, string>; workers?: number }
 
 export class Engine {
   readonly page = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
@@ -101,6 +104,8 @@ export class Engine {
   private reader: Rpc<ToReader> | null = null;
   private pool: Rpc<ToPyWorker>[] = [];  // the Pyodide workers, none until a view needs Python (`python`)
   private packages: string[] = [];        // what Python loads beyond numpy when it starts
+  private modules: Record<string, string> = {};  // the page's own Python, written beside the package's
+  private poolSize = workers();           // Pyodide workers to start
   private warm: Promise<void> = Promise.resolve();  // Python loaded in every worker of the pool
   private turn = 0;
   private chunks: Queue<ArrayBuffer> | null = null;
@@ -126,7 +131,7 @@ export class Engine {
    * so a viewer can start meanwhile. A view with no ops is planned at once and served from
    * the reader alone, so a page whose views need no Python never loads it; one that will
    * `call()` the package's Python asks for it with `python: "always"`. */
-  async start(views: Record<string, PipelineView>, status: (s: string) => void, { packages = [], python = "auto" }: StartOptions = {}): Promise<void> {
+  async start(views: Record<string, PipelineView>, status: (s: string) => void, { packages = [], python = "auto", modules = {}, workers: poolSize = workers() }: StartOptions = {}): Promise<void> {
     if (!window.isSecureContext) throw new Error("This page needs a secure context: open it over https, or through localhost.");
     if (!navigator.serviceWorker) throw new Error("This browser has no service workers (a private window?).");
     this.stopped = false;
@@ -138,6 +143,8 @@ export class Engine {
     this.reader = new Rpc<ToReader>(new Worker(new URL("./reader.ts", import.meta.url), { type: "module" }));
     this.chunks = new Queue<ArrayBuffer>(workers());
     this.packages = [...packages];
+    this.modules = { ...modules };
+    this.poolSize = poolSize;
     this.wants(views);
     if (python === "always" || Object.values(views).some(needsPython)) {
       const n = this.python().length;
@@ -162,8 +169,8 @@ export class Engine {
     if (this.stopped) throw new Error("the engine was stopped: start another");
     if (!this.pool.length) {
       this.status?.(`Loading Python (Pyodide, ${["numpy", ...this.packages].join(", ")}) and chunkmirage's ops…`);
-      this.pool = Array.from({ length: workers() }, () => new Rpc<ToPyWorker>(new Worker(new URL("./pyworker.ts", import.meta.url), { type: "module" }), (p) => this.print(p)));
-      this.warm = Promise.all(this.pool.map((w) => w.call({ type: "plan", views: {}, packages: this.packages }))).then(() => {});
+      this.pool = Array.from({ length: this.poolSize }, () => new Rpc<ToPyWorker>(new Worker(new URL("./pyworker.ts", import.meta.url), { type: "module" }), (p) => this.print(p)));
+      this.warm = Promise.all(this.pool.map((w) => w.call({ type: "plan", views: {}, packages: this.packages, modules: this.modules }))).then(() => {});
       this.warm.catch(() => {});
     }
     return this.pool;
@@ -361,8 +368,11 @@ export class Engine {
     return this.reader.call<ArrayBuffer>({ type: "read", view, level, lo, hi, ...(at ? { at } : {}) });
   }
 
-  /** A step of a page's work (chunkmirage_contrib.stitching's, or tracking's `track_*`), run by the
-   * next Pyodide worker (started, with Python loading, if none runs yet). */
+  /** A step of a page's work, run by the next Pyodide worker (started, with Python loading,
+   * if none runs yet): chunkmirage_contrib.stitching's, tracking's `track_*`, or a function
+   * of the page's own modules (`start`'s) as `"pkg.mod:fn"`, called as `fn(args, arrays)`
+   * (chunkmirage.calls); it answers JSON, one array (an ArrayBuffer), or JSON with arrays
+   * (`{value, arrays}`). The workers take turns, so a call carries its own state. */
   call<T>(fn: string, args: Record<string, unknown>, arrays: ArrayBuffer[] = []): Promise<T> {
     return this.worker().call<T>({ type: "call", fn, args: JSON.stringify(args), arrays }, arrays);
   }

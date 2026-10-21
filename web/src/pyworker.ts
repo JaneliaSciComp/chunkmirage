@@ -1,7 +1,9 @@
 // A pipeline worker: chunkmirage's own Python (its ops and chunkmirage.fused, the code a
 // server's pipeline stage runs) in Pyodide. The page has it plan the views it serves, then
 // hands it each chunk's input region (read by the page's reader) and gets back the bytes a
-// zarr v3 chunk holds, computed as the Python server computes it.
+// zarr v3 chunk holds, computed as the Python server computes it. A page of another project
+// writes its own Python beside the package's (Engine.start's `modules`) and calls it by module
+// path (chunkmirage.calls).
 /// <reference types="vite/client" />
 import type { Answer, Plan, Printed, ToPyWorker } from "./types";
 
@@ -11,7 +13,7 @@ export const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/";
 // ops and computed sources, so a module added there is picked up here. The two packages'
 // __init__s are stubs: the real ones import the server and tensorstore.
 const PY = import.meta.glob([
-  "../../src/chunkmirage/{core,fused,cache,demand,meshes}.py",
+  "../../src/chunkmirage/{core,fused,cache,demand,meshes,calls}.py",
   "../../src/chunkmirage/ops/*.py",
   "../../src/chunkmirage/sources/base.py",
   "../../src/chunkmirage_contrib/**/*.py",
@@ -134,7 +136,11 @@ const STEPS = `
 def call(fn, args, arrays):
     """One step of a page's work in chunkmirage_contrib.stitching (the stitch page) or
     chunkmirage_contrib.tracking (track_*: the track page): JSON in, JSON (or a chunk's bytes) out,
-    arrays as raw bytes."""
+    arrays as raw bytes. Or, named pkg.mod:fn, a function of the page's own modules (Engine.start's
+    modules), called as chunkmirage.calls says: JSON, bytes, or JSON with arrays out."""
+    if ":" in fn:
+        from chunkmirage import calls
+        return calls.call(fn, args, [a.to_py() for a in arrays])
     if fn.startswith("track_"):
         return _track(fn, json.loads(args), arrays)
     from chunkmirage_contrib import stitching as S
@@ -192,14 +198,15 @@ let py: any = null;
 let loaded: Promise<void> | null = null;
 let computing: Omit<Printed, "print"> | null = null;  // the chunk being computed, for what it prints
 
-async function load(packages: string[] = []) {
+async function load(packages: string[] = [], modules: Record<string, string> = {}) {
   const mod = await import(/* @vite-ignore */ `${PYODIDE}pyodide.mjs`);
   py = await mod.loadPyodide({ indexURL: PYODIDE });
   // what a view's Python prints, to the page, with the chunk it was computing
   py.setStdout({ batched: (line: string) => { if (computing) ctx.postMessage({ print: line, ...computing } satisfies Printed); } });
   // with the packages the page's ops declare; any other when first imported (withPackages)
   await py.loadPackage(["numpy", "pydantic", ...packages]);
-  for (const [path, text] of Object.entries(FILES)) {
+  // and the page's own modules beside them, on the same path (a package's __init__.py among them)
+  for (const [path, text] of Object.entries({ ...FILES, ...modules })) {
     py.FS.mkdirTree(`/chunkmirage/${path.slice(0, path.lastIndexOf("/"))}`);
     py.FS.writeFile(`/chunkmirage/${path}`, text);
   }
@@ -208,8 +215,8 @@ async function load(packages: string[] = []) {
 
 /** Each view's output dtype, the leading axes its ops consume and the halo they need, and
  * the leading axes they add (channels). */
-async function plan(views: Extract<ToPyWorker, { type: "plan" }>["views"], packages?: string[]) {
-  if (!py) await (loaded ??= load(packages));
+async function plan(views: Extract<ToPyWorker, { type: "plan" }>["views"], packages?: string[], modules?: Record<string, string>) {
+  if (!py) await (loaded ??= load(packages, modules));
   const out: Record<string, Plan> = {};
   for (const [id, v] of Object.entries(views)) {
     // what a python op's code imports (scipy, scikit-image, ...), as Pyodide has it
@@ -223,15 +230,19 @@ async function plan(views: Extract<ToPyWorker, { type: "plan" }>["views"], packa
   return out;
 }
 
-/** A page's step (stitching, tracking): JSON back, or a chunk's bytes. */
-async function step(m: Extract<ToPyWorker, { type: "call" }>): Promise<unknown> {
+/** A page's step (stitching, tracking, or its own Python by module path): JSON back, a
+ * chunk's bytes, or JSON with arrays (`{value, arrays}`), the buffers to transfer beside it. */
+async function step(m: Extract<ToPyWorker, { type: "call" }>): Promise<{ value: unknown; transfer: ArrayBuffer[] }> {
   if (!py) await (loaded ??= load());
   const arrays = (m.arrays ?? []).map((b) => new Uint8Array(b));
   const out = await withPackages(() => py.globals.get("call")(m.fn, m.args, arrays));
-  if (typeof out === "string") return JSON.parse(out);
-  const bytes = out.toJs() as Uint8Array;
+  if (typeof out === "string") return { value: JSON.parse(out), transfer: [] };
+  const js = out.toJs() as Uint8Array | [string, Uint8Array[]];
   out.destroy();
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const buffer = (b: Uint8Array) => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
+  if (js instanceof Uint8Array) { const body = buffer(js); return { value: body, transfer: [body] }; }
+  const bodies = js[1].map(buffer);
+  return { value: { value: JSON.parse(js[0]), arrays: bodies }, transfer: bodies };
 }
 
 /** Pyodide packages the ops import inside their functions, loaded the first time one does:
@@ -308,7 +319,7 @@ async function compute(m: Extract<ToPyWorker, { type: "compute" }>): Promise<Arr
 ctx.onmessage = async ({ data: m }: MessageEvent<ToPyWorker>) => {
   try {
     if (m.type === "describe") { if (!py) await (loaded ??= load()); ctx.postMessage({ reqId: m.reqId, value: JSON.parse(py.globals.get("describe")(m.source)) } satisfies Answer); }
-    else if (m.type === "plan") ctx.postMessage({ reqId: m.reqId, value: await plan(m.views, m.packages) } satisfies Answer);
+    else if (m.type === "plan") ctx.postMessage({ reqId: m.reqId, value: await plan(m.views, m.packages, m.modules) } satisfies Answer);
     else if (m.type === "octree") {
       const out = await withPackages(() => py.globals.get("octree")(new Uint8Array(m.band), m.shape, JSON.stringify(m.mesh), m.chunk, m.unit));
       const bytes = out.toJs() as Uint8Array;
@@ -316,7 +327,7 @@ ctx.onmessage = async ({ data: m }: MessageEvent<ToPyWorker>) => {
       const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
       ctx.postMessage({ reqId: m.reqId, value: body } satisfies Answer, [body]);
     }
-    else if (m.type === "call") { const v = await step(m); ctx.postMessage({ reqId: m.reqId, value: v } satisfies Answer, v instanceof ArrayBuffer ? [v] : []); }
+    else if (m.type === "call") { const { value, transfer } = await step(m); ctx.postMessage({ reqId: m.reqId, value } satisfies Answer, transfer); }
     else if (m.type === "compute") { const body = await compute(m); ctx.postMessage({ reqId: m.reqId, value: body } satisfies Answer, [body]); }
   } catch (e) {
     // Pyodide's file-system errors are objects without a message: say what they are
