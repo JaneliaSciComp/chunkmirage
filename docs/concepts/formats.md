@@ -768,7 +768,9 @@ chunkmirage serve 'https://astrogeo-ard.s3.us-west-2.amazonaws.com/moon/lro/lola
 
 ### Stored sources
 
-Sources are detected by content, not extension: `zarr.json` → zarr v3, `.zarray` → zarr v2,
+Stored arrays are opened and placed by [worldarray](https://github.com/JaneliaSciComp/worldarray),
+whose specification states the rules below in full; chunkmirage adds xarray coordinates, CF
+packing, the spec's overrides and `kind`. Sources are detected by content, not extension: `zarr.json` → zarr v3, `.zarray` → zarr v2,
 `attributes.json` → N5, `info` → precomputed. A group's levels are the paths in its
 `multiscales[0].datasets` (OME-NGFF, COSEM N5), in that order; without that, `s0, s1, ...`
 are probed. N5 and precomputed data are transposed to C order `(z, y, x)` on read.

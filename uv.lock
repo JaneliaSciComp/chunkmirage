@@ -362,6 +362,7 @@ dependencies = [
     { name = "threadpoolctl" },
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "worldarray" },
 ]
 
 [package.optional-dependencies]
@@ -463,6 +464,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'gpu'", specifier = ">=2.6", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "chunkmirage", extra = "gpu" } },
     { name = "typer", specifier = ">=0.12" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
+    { name = "worldarray", specifier = ">=0.1,<1" },
 ]
 provides-extras = ["hdf5", "tiff", "ops", "mesh", "mcp", "viewer", "https", "gpu", "cpu", "cupy", "all"]
 
@@ -3576,6 +3578,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c4/b1/37fe0c96c206b4208a072c3a74add6a72af4b8228be3f5435163c5a6d099/websockets-17.1-pp311-pypy311_pp73-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:a62d8c424383c9dc769ff3672018df822603117e32686e567d452ed035b6fb2e", size = 216608, upload-time = "2026-08-26T17:25:28.134Z" },
     { url = "https://files.pythonhosted.org/packages/be/7e/75a0a491b512412e08333b9f8412757af6186fe1c598186261002de1a793/websockets-17.1-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:8196d217eeca52b9235ee1f8a684a09885a5f953d5a31e80ef915bf2c5c94f9d", size = 217870, upload-time = "2026-08-26T17:25:29.745Z" },
     { url = "https://files.pythonhosted.org/packages/41/63/23572870e01836a98346075b9e17a8bc24a6ddd9800a3204ceee58677f3c/websockets-17.1-py3-none-any.whl", hash = "sha256:f221081107b8c48184d99f7019604486376e7ef826037e70aad6b02540732c23", size = 211134, upload-time = "2026-08-26T17:25:31.397Z" },
+]
+
+[[package]]
+name = "worldarray"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
+    { name = "tensorstore" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2d/1d/b46c69a9ec7589797f7dbb9262933916f72db55b6580f93c515c335dc074/worldarray-0.1.0.tar.gz", hash = "sha256:7d0bec45b5af0bb58510f84abefa8f299d6185a992b8c3ab05abf382000ba1e6", size = 160094, upload-time = "2026-10-21T22:20:25.783Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/41/ed/6bde11ecc2756cb5e4cb57b0c5ac7594d7b93e24863aa1d5a96576e34ec7/worldarray-0.1.0-py3-none-any.whl", hash = "sha256:8fbfda0a9f3258746f771b848dc5638c30ae410c5a73a861d75f46705d7d84ed", size = 45910, upload-time = "2026-10-21T22:20:24.364Z" },
 ]
 
 [[package]]

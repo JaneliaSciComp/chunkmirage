@@ -6,7 +6,7 @@ import threading
 
 import numpy as np
 
-from chunkmirage.core import ArrayInfo, Box, kind_for_dtype
+from chunkmirage.core import ArrayInfo, Box, corner_to_centre, kind_for_dtype
 from chunkmirage.sources.base import MultiscaleSource, Source
 
 
@@ -35,10 +35,8 @@ class HDF5Source(Source):
         given = self._d.attrs.get("offset")
         if offset is None and (given is not None or "resolution" in self._d.attrs or "voxel_size" in self._d.attrs):
             # funlib's offset is voxel 0's corner (0 if absent while a resolution is given)
-            from chunkmirage.sources.tensorstore_source import corner_to_centre
-
             corner = list(given) if given is not None else [0.0] * ndim
-            offset = corner_to_centre(corner, vs, tuple(axes) if axes else None)
+            offset = corner_to_centre(corner, vs, tuple(axes) if axes else ArrayInfo.default_axes(ndim))
         self._info = ArrayInfo(
             shape=self._d.shape,
             dtype=self._d.dtype,

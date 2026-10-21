@@ -19,12 +19,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from chunkmirage.sources.tensorstore_source import (
-    _detect_driver,
-    _node_attrs,
-    _open_kvstore,
-    open_tensorstore,
-)
+from chunkmirage.sources.tensorstore_source import detect, node_attrs, open_tensorstore
 from chunkmirage.transforms import (
     Affine,
     Bijection,
@@ -235,10 +230,9 @@ def _to_affine(cts, ndim: int, base: str) -> Affine:
 def open_field(url: str, order: int = 1, fields: FieldOptions = DEFAULT_FIELDS) -> VectorField:
     """A displacement or coordinate field: an OME-Zarr multiscale image (0.6), or a bare
     array whose own ``ome`` attributes carry the axes and grid transform (0.6 drafts)."""
-    kv = _open_kvstore(url)
-    driver = _detect_driver(kv)
-    attrs = _node_attrs(kv)
-    if driver is not None and driver.endswith("-group"):
+    node = detect(url)
+    attrs = node_attrs(node)
+    if node is not None and node.kind == "group":
         ms = (_multiscales(attrs) or [None])[0]
         if ms is None or not ms.get("datasets"):
             raise ValueError(f"{url}: field group has no multiscales datasets")
@@ -307,7 +301,7 @@ class Image:
 def read_image(root: str, path: str, fields: FieldOptions = DEFAULT_FIELDS) -> Image | None:
     """The multiscale image at ``root/path`` (``path=""``: the root itself), or None."""
     url = _join(root, path)
-    attrs = _node_attrs(_open_kvstore(url))
+    attrs = node_attrs(detect(url))
     ms_list = _multiscales(attrs)
     if not ms_list:
         return None
@@ -359,7 +353,7 @@ class Scene:
     def __init__(self, url: str, *, fields: FieldOptions = DEFAULT_FIELDS):
         self.url = url.rstrip("/")
         self.fields = fields
-        attrs = _node_attrs(_open_kvstore(self.url))
+        attrs = node_attrs(detect(self.url))
         scene = attrs.get("scene")
         if not isinstance(scene, dict) and "coordinateTransformations" in attrs:
             scene = attrs  # 0.6 drafts kept the scene graph at the top level

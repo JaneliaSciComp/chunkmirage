@@ -209,6 +209,15 @@ file, S3, GCS and HTTP; async C++ I/O; a built-in byte cache; and future `virtua
 interop. It does not read HDF5; h5py covers that (serialised behind a lock, since HDF5 is
 not thread-safe).
 
+**Why worldarray for placing them.** Where a stored array sits (its voxel size, the centre
+of voxel 0, units, axes) is read by [worldarray](https://github.com/JaneliaSciComp/worldarray),
+one tensorstore reader shared with cellmap-flow, cellmap-analyze and mesh-n-bone, which
+had each drifted to their own half-voxel rules. Its specification and its fixture of
+metadata layouts are the contract; chunkmirage keeps what only it needs on top: xarray
+coordinate arrays and CF packing, the spec's overrides and `kind`
+(`sources/tensorstore_source.py`). The browser engine's TypeScript readers place arrays
+by the same rules.
+
 **Packaging: uv.** Everything the core needs is on PyPI. cellmap-flow can keep pixi for
 CUDA/torch and depend on chunkmirage as a normal PyPI/git dependency.
 
