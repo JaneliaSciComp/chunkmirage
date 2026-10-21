@@ -462,9 +462,19 @@ as text). What such a page gets, in the order it uses it:
   served from the reader, each chunk the region as read placed whole in the chunk
   (`web/src/asread.ts`), and a view whose chunks the page computes itself needs none
   either. So a page that serves only such views never loads Python; one that will `call()`
-  the package's Python (`chunkmirage_contrib.stitching`, `tracking`) passes `python: "always"`, so
-  it loads while the data opens. `ready` resolves once every view given to `start` is
-  planned, Python loaded if it was started.
+  Python passes `python: "always"`, so it loads while the data opens. `ready` resolves once
+  every view given to `start` is planned, Python loaded if it was started.
+  `Engine.call(fn, args, arrays)` runs one step of a page's work in the next worker (JSON
+  arguments, arrays as bytes): the package's own steps (`chunkmirage_contrib.stitching`,
+  `tracking`), or the page's own Python, which `start`'s `modules` writes into the workers
+  beside the package's (`"pkg/mod.py"` to its text) and `call("pkg.mod:fn", args, arrays)`
+  reaches by module path: `fn(args, arrays)` answers JSON, one array (bytes or a numpy
+  array) or JSON with arrays (`chunkmirage.calls`, which runs natively too, so the page's
+  Python is tested with pytest). A module under `chunkmirage/` or `chunkmirage_contrib/`
+  is refused: the package's own files are not a page's to replace. The workers take turns,
+  so a call carries its own state; `workers` sets how many start, one at least (one does
+  for a page that only calls). cellmap-flow's rank score is such Python, written once and
+  run by its server and its page alike.
 * `Engine.serve(view, info, chunk, produce)` serves a view whose chunks the page computes
   (a model run by ONNX Runtime Web, say): `produce(level, index)` gives each chunk as zarr
   v3 bytes, the engine queues, shares and drops the work as its own (finest level first,

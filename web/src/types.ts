@@ -115,12 +115,14 @@ export type ToReader =
 /** What the page asks a Pyodide worker. */
 export type ToPyWorker =
   | { type: "describe"; reqId: number; source: string }  // a source computed in the worker (synthetic://)
-  | { type: "plan"; reqId: number; packages?: string[]; views: Record<string, { ops: Record<string, unknown>[]; shape: number[]; dtype: string; chunk: number[]; voxel: number[]; source?: string }> }
+  // packages and modules: what Python loads when it starts (Engine.start's), with the first plan
+  | { type: "plan"; reqId: number; packages?: string[]; modules?: Record<string, string>; views: Record<string, { ops: Record<string, unknown>[]; shape: number[]; dtype: string; chunk: number[]; voxel: number[]; source?: string }> }
   // data: the input region read by the reader, or null for a source the worker computes
   | { type: "compute"; reqId: number; view: string; level: number; data: ArrayBuffer | null; readShape: number[]; inLo: number[]; inHi: number[]; outLo: number[]; outHi: number[]; full: number[]; voxel: number[]; origin: number[]; unit?: string; mesh?: MeshCall }
   // a multi-resolution mesh's octree and index, from its coarsest level's surface band (`mesh.levels` the view's)
   | { type: "octree"; reqId: number; band: ArrayBuffer; shape: number[]; mesh: MeshCall; chunk: number[]; unit: string }
-  // a step of a page's work (chunkmirage_contrib.stitching, chunkmirage_contrib.tracking): JSON arguments, arrays as raw bytes
+  // a step of a page's work (chunkmirage_contrib.stitching, chunkmirage_contrib.tracking, or the page's own
+  // Python as "pkg.mod:fn", chunkmirage.calls): JSON arguments, arrays as raw bytes
   | { type: "call"; reqId: number; fn: string; args: string; arrays?: ArrayBuffer[] };
 /** Either's answer to request `reqId`. */
 /** A line a view's Python printed while a worker computed one of its chunks (`at`: the
