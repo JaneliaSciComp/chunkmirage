@@ -135,6 +135,8 @@ export class Engine {
   async start(views: Record<string, PipelineView>, status: (s: string) => void, { packages = [], python = "auto", modules = {}, workers: poolSize = workers() }: StartOptions = {}): Promise<void> {
     if (!window.isSecureContext) throw new Error("This page needs a secure context: open it over https, or through localhost.");
     if (!navigator.serviceWorker) throw new Error("This browser has no service workers (a private window?).");
+    const taken = Object.keys(modules).filter((p) => /^\/?(chunkmirage|chunkmirage_contrib)\//.test(p));
+    if (taken.length) throw new Error(`a page's modules cannot replace the package's own files: ${taken.join(", ")}`);
     this.stopped = false;
     this.status = status;
     status("Starting the service worker…");
@@ -144,8 +146,6 @@ export class Engine {
     this.reader = new Rpc<ToReader>(new Worker(new URL("./reader.ts", import.meta.url), { type: "module" }));
     this.chunks = new Queue<ArrayBuffer>(workers());
     this.packages = [...packages];
-    const taken = Object.keys(modules).filter((p) => /^\/?(chunkmirage|chunkmirage_contrib)\//.test(p));
-    if (taken.length) throw new Error(`a page's modules cannot replace the package's own files: ${taken.join(", ")}`);
     this.modules = { ...modules };
     this.poolSize = Math.max(1, Math.floor(poolSize) || 0);
     this.wants(views);
