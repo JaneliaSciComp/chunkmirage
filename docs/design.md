@@ -39,8 +39,14 @@ computation:
 cellmap-flow is the first consumer, and a realistic test of the design: its server mode
 serves a model's predictions through chunkmirage's server, and its browser mode is a page
 on the browser engine ([another page on the engine](#another-page-on-the-engine)), the
-last card of the [gallery](demos.md), the one not built here. But chunkmirage is not built around it or any one
-project.
+last card of the [gallery](demos.md), the one not built here. Its own inference server is
+gone: each model is an `Op` of its own package, with the model's context as its `halo`,
+`slots` for the GPU and a `cache_token` for the weights, its output cached so that changing
+the post-processing after it does not run the model again; model configs, warmup, weight
+swaps, job launching and the dashboard stayed in cellmap-flow. What chunkmirage gained for
+it is stated without models (ops that shave their halo or add axes, ops at one resolution,
+`kind`, sources and routes from other packages, resolvers, `--ready-file`, `cache_token`,
+`slots`). But chunkmirage is not built around it or any one project.
 
 ### Where it does *not* add value
 
@@ -217,7 +223,7 @@ Three layers, from most to least structured:
    Planned: distance transform, a `Combine` op taking another pipeline as input. Registration is a source,
    not an op (see below).
 2. **Plugins**: subclass `Op`, declare `name`, `halo`, `cache`, register via the
-   `chunkmirage.ops` entry point. cellmap-flow's models become one plugin package.
+   `chunkmirage.ops` entry point. cellmap-flow's models are one plugin package.
    Params are pydantic fields, so every op ships a JSON schema the UI/MCP can render.
    Source schemes come through `chunkmirage.sources`, and endpoints of a plugin's own
    through `chunkmirage.routes` ([API](reference/api.md#routes-of-your-own)); the app can
@@ -564,7 +570,7 @@ as text). What such a page gets, in the order it uses it:
   those waiting for their turn, lets the writes under way end and resolves at once with
   `aborted`; a chunk that fails to compute or be written rejects it with the chunk's key
   and why, once the writes under way have ended. This is a first piece of
-  [roadmap](roadmap.md) item 2: an explicit write of a box, asked for by the page, not yet
+  [roadmap](roadmap.md) item 1: an explicit write of a box, asked for by the page, not yet
   the cache on disk that browsing fills. The parts that need no engine (the chunks of a
   box, the files, gzip, the stitching, the loop over any producer, the stores) run in
   `npm test`, the result read back by zarrita (`web/test/materialize.test.ts`).
