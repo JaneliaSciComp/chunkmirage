@@ -204,7 +204,7 @@ def test_a_whole_factor_is_resampled_as_the_mean_of_each_block():
     expected = np.rint(raw.reshape(8, 3, 10, 3, 12, 3).mean((1, 3, 5))).astype(np.uint8)
     p = Pipeline(src, [AtVoxel()])
     out = p.levels[0]
-    assert out.info.voxel_size == (12.0, 12.0, 12.0) and out.info.translation == (4.0, 4.0, 4.0)
+    assert out.info.voxel_size == (12.0, 12.0, 12.0) and out.info.translation == (6.0, 6.0, 6.0)
     np.testing.assert_array_equal(out.read(Box((0, 0, 0), out.info.shape)), expected)
 
 

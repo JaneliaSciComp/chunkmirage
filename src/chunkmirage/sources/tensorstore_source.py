@@ -24,6 +24,7 @@ from typing import Any, TypeVar
 import numpy as np
 import tensorstore as ts
 
+from chunkmirage import core
 from chunkmirage.core import ArrayInfo, Box, kind_for_dtype
 from chunkmirage.sources.base import MultiscaleSource, Source
 
@@ -236,19 +237,13 @@ def open_tensorstore(
 # ``translation`` is where voxel 0's centre is, as in OME-Zarr (and as Neuroglancer reads
 # OME-Zarr: it moves each voxel back by half to its corner). Conventions that give voxel 0's
 # corner are moved by half a voxel on reading: precomputed's ``voxel_offset`` and funlib's
-# ``offset`` (a region's start), as Neuroglancer and funlib place them.
+# ``offset`` (a region's start), as Neuroglancer and funlib place them. An array nothing
+# places has its corner at the origin (ArrayInfo's default).
 
 
 def corner_to_centre(corner, voxel_size, axes=None) -> tuple[float, ...]:
-    """Voxel 0's centre from its corner, both C order and one entry per axis: half a voxel on
-    along the spatial axes (those named z, y or x, else the last three), not along channels
-    or time."""
-    n = len(corner)
-    spatial = {a for a in range(n) if (axes[a] in ("z", "y", "x") if axes else a >= n - 3)}
-    return tuple(
-        float(c) + (float(v) / 2 if a in spatial else 0.0)
-        for a, (c, v) in enumerate(zip(corner, voxel_size))
-    )
+    """``core.corner_to_centre``, unnamed axes called as ``ArrayInfo.default_axes`` calls them."""
+    return core.corner_to_centre(corner, voxel_size, axes or ArrayInfo.default_axes(len(corner)))
 
 
 def _per_axis(vals, ndim: int, fill, reverse: bool = False) -> tuple | None:
@@ -338,7 +333,8 @@ def _n5_scale_metadata(attrs: dict, ndim: int, group_attrs: dict, name: str) -> 
         if corner is not None:
             sizes = meta.get("voxel_size") or (1.0,) * ndim
             meta["translation"] = corner_to_centre(corner, sizes, meta["axes"])
-    elif factors is not None:  # BigDataViewer's levels: centred on their blocks
+    elif isinstance(res, list):  # BigDataViewer's levels: centred on their blocks
+        factors = factors or [1] * len(res)
         centre = [(float(f) - 1) / 2 * float(r) for r, f in zip(res, factors)]
         meta["translation"] = _floats(_per_axis(centre, ndim, 0.0, reverse=True))
     return {k: v for k, v in meta.items() if v is not None}
@@ -448,7 +444,8 @@ def _cf_coordinates(parent: str, dims: list[str], shape: tuple[int, ...]) -> dic
     the 1-D array named after each dimension, where it is evenly spaced and increasing
     (checked end to end from its first two and last values, so a long one costs two chunk
     reads). Other dimensions keep the defaults."""
-    vs, tr, un = [1.0] * len(dims), [0.0] * len(dims), [""] * len(dims)
+    vs, un = [1.0] * len(dims), [""] * len(dims)
+    tr = list(corner_to_centre((0.0,) * len(dims), vs, dims))  # unplaced: a corner at 0
     for a, (dim, n) in enumerate(zip(dims, shape)):
         try:
             kv = _open_kvstore(f"{parent}/{dim}")
@@ -605,7 +602,7 @@ class TensorStoreSource(Source):
             voxel_size=pick(voxel_size, "voxel_size", (1.0,) * ndim),
             units=pick(units, "units", ("",) * ndim),
             axes=pick(axes, "axes", ArrayInfo.default_axes(ndim)),
-            translation=pick(translation, "translation", (0.0,) * ndim),
+            translation=pick(translation, "translation", None),  # None: ArrayInfo's default
             kind=None if decode else kind_for_dtype(dtype),  # override: open_source(kind=)
         )
         return cls(store, info, key=f"ts:{path}", decode=decode)

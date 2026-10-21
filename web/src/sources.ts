@@ -84,9 +84,10 @@ function cfUnit(units: string): [string, number] {
 const num = (v: unknown) => Number(v as number | bigint);
 
 /** Spacing, origin and unit of the coordinate array named `dim` beside the array, where it
- * is evenly spaced and increasing (from its first two and last values); else 1, 0, "". */
+ * is evenly spaced and increasing (from its first two and last values); else unplaced:
+ * voxels of 1 with the corner at the origin, so the first centre at 0.5. */
 async function coordinate(parent: string, dim: string, n: number): Promise<{ step: number; first: number; unit: string }> {
-  const none = { step: 1, first: 0, unit: "" };
+  const none = { step: 1, first: 0.5, unit: "" };
   try {
     const c = await zarr.open(zarr.root(fetchStore(`${parent}/${dim}`)), { kind: "array" });
     if (c.shape.length !== 1 || c.shape[0] !== n || n < 2) return none;
@@ -212,9 +213,11 @@ async function n5Source(url: string): Promise<Source> {
       const order = ["z", "y", "x"].map((n) => t.axes!.indexOf(n));
       voxel = order.map((k) => t.scale![k]); origin = order.map((k) => t.translate?.[k] ?? 0);
     } else {
-      const res = Array.isArray(a.pixelResolution) ? a.pixelResolution : a.pixelResolution?.dimensions ?? a.resolution ?? [1, 1, 1];
-      const f = a.downsamplingFactors ?? root.scales?.[i] ?? [1, 1, 1];
-      voxel = [2, 1, 0].map((k) => res[k] * f[k]); origin = voxel.map((v, k) => (v - [2, 1, 0].map((j) => res[j])[k]) / 2);
+      const given = Array.isArray(a.pixelResolution) ? a.pixelResolution : a.pixelResolution?.dimensions ?? a.resolution;
+      const res = given ?? [1, 1, 1], f = a.downsamplingFactors ?? root.scales?.[i] ?? [1, 1, 1];
+      voxel = [2, 1, 0].map((k) => res[k] * f[k]);
+      // BigDataViewer's levels are centred on their blocks; one nothing places has its corner at 0
+      origin = given ? voxel.map((v, k) => (v - [2, 1, 0].map((j) => res[j])[k]) / 2) : voxel.map((v) => v / 2);
     }
     return { path: p, dims: [...a.dimensions].reverse(), block: [...a.blockSize].reverse(), dtype: a.dataType, gzip: kind === "gzip", voxel, origin };
   }));

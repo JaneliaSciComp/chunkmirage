@@ -89,6 +89,15 @@ The first release, an alpha: the plugin API can still change before 0.1.0.
   tensorstore rejects.
 - Voxels placed as Neuroglancer places them: precomputed `voxel_offset` and funlib `offset`
   are corners.
+- An array nothing places has its corner at the origin, voxel 0's centre half a voxel on
+  along its spatial axes, as Neuroglancer draws a plain array and worldarray places one: a
+  stored array without placement metadata, an xarray dimension without an even
+  coordinate, and every array made from nothing (`synthetic://`, an `ArrayInfo` given no
+  translation, the browser engine's alike). It was voxel 0's centre at the origin, so
+  these move by half a voxel; `synthetic://` levels now cover the same extent, and served
+  as precomputed their `voxel_offset` is 0 rather than a rounded half voxel. Explicit
+  translations, and arrays that take their input's, are unchanged
+  ([formats](docs/concepts/formats.md#stored-sources)).
 - Stored integers of 32 bits or more read as labels, booleans as masks, unless the spec's
   `kind` says otherwise.
 

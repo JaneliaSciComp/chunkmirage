@@ -133,10 +133,11 @@ def test_flip_mirrors_every_level_in_place(centred):
 
 
 def test_flip_refuses_levels_that_would_disagree_and_bad_axes():
-    # synthetic:// levels share their corner, not their centre: each mirrored in place would
-    # put coarse voxels half a voxel away from the fine ones they summarise
+    # along an odd extent a synthetic:// level covers one fine voxel more than the level
+    # below: each mirrored in place would put coarse voxels half a voxel away from the fine
+    # ones they summarise
     with pytest.raises(ValueError, match="move them apart"):
-        open_source(f"flip://{A}?axes=y")
+        open_source(f"flip://{A.replace('shape=128,128,128', 'shape=128,127,128')}?axes=y")
     one = A.replace("levels=2", "levels=1")
     with pytest.raises(ValueError, match="axes"):
         open_source(f"flip://{one}")

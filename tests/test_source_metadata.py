@@ -191,6 +191,15 @@ def test_zarr_legacy_array_attrs(tmp_path):
     assert info.translation == (84.0, 42.0, 42.0)  # funlib's offset is voxel 0's corner
 
 
+def test_an_array_nothing_places_has_its_corner_at_the_origin(tmp_path):
+    from chunkmirage.core import ArrayInfo
+
+    _zarr2(tmp_path / "plain.zarr", DATA)
+    assert TensorStoreSource.from_path(str(tmp_path / "plain.zarr")).info.translation == (0.5,) * 3
+    info = ArrayInfo((2, 4, 4, 4), np.uint8, (2, 4, 4, 4), (1.0, 8.0, 4.0, 4.0), ("",) * 4, ("c", "z", "y", "x"))
+    assert info.translation == (0.0, 4.0, 2.0, 2.0)  # half a voxel along z, y, x; none along c
+
+
 def test_zarr3_ome_group(tmp_path):
     root = tmp_path / "v3.zarr"
     ome = _ome(["0"], [[2, 3, 4]])["multiscales"]
@@ -275,7 +284,7 @@ def _xarray_array(path, arr, dims, attrs=None, fill=None, chunks=None):
 def test_xarray_dimensions_coordinates_and_packing(tmp_path):
     """Geo and climate zarr (xarray, CF conventions): axes from the dimension names, an
     evenly spaced coordinate as voxel size and translation (time in seconds, degrees
-    unitless), an uneven one left alone, and packed integers read as float32 in their
+    unitless), an uneven one left unplaced, and packed integers read as float32 in their
     units with the fill value as NaN."""
     root = tmp_path / "sst.zarr"
     _zgroup(root, {"title": "sea surface temperature"})
@@ -300,7 +309,7 @@ def test_xarray_dimensions_coordinates_and_packing(tmp_path):
     assert i.axes == ("time", "lat", "lon")
     assert i.dtype == np.float32
     assert i.voxel_size == pytest.approx((86400.0, 0.25, 1.0))
-    assert i.translation == pytest.approx((10 * 86400.0, -1.5, 0.0))
+    assert i.translation == pytest.approx((10 * 86400.0, -1.5, 0.5))  # lon unplaced: corner at 0
     assert i.units == ("s", "", "")
     data = src.read(Box((0, 0, 0), (3, 4, 5)))
     assert np.isnan(data[0, 0, 0])

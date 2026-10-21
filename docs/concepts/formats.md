@@ -700,8 +700,8 @@ upside down in y relative to its EM, zarr and N5 alike (with the flip, every pre
 mitochondrion voxel of a coarse slice lies on cell; without it a fifth do), though nothing
 in their attributes says so. The levels must share their centre, as OME-Zarr and COSEM
 pyramids whose extents halve evenly do, since a level mirrored about its own centre would
-otherwise drift from the others; `flip://` refuses a pyramid whose levels share their
-corner instead (as `synthetic://` levels do).
+otherwise drift from the others; `flip://` refuses a pyramid whose levels do not (as
+`synthetic://` levels along an odd extent, where a coarse level covers one fine voxel more).
 
 ### Stitch sources (tiles stitched by interest points and RANSAC)
 
@@ -811,9 +811,14 @@ units, so beside a time axis in seconds a zoom of 1 is not one pixel per voxel:
 OME-Zarr, COSEM's `transform` and CF coordinates. Formats that give voxel 0's corner are
 moved half a voxel along their spatial axes on reading: precomputed's `voxel_offset`, and
 funlib's `offset` (0 when only a `resolution` is given), which is how Neuroglancer and
-funlib place them. N5 levels with `pixelResolution` and `downsamplingFactors` and no
-offset follow BigDataViewer: a downsampled voxel's centre is the centre of the block it
-covers. Served as precomputed, `voxel_offset` is the translation less half a voxel,
+funlib place them. N5 levels with `pixelResolution` and no offset follow BigDataViewer: a
+downsampled voxel's centre is the centre of the block it covers (a level with no
+`downsamplingFactors` is the full resolution). An array nothing places, a stored one
+without placement metadata, an xarray dimension without an even coordinate, and every
+array made from nothing (`synthetic://`, an `ArrayInfo` given no translation), has its
+corner at the origin, as Neuroglancer draws a plain array: voxel 0's centre is half a
+voxel on along its spatial axes (those named `z`, `y` or `x`, else the last three),
+worldarray's rule. Served as precomputed, `voxel_offset` is the translation less half a voxel,
 rounded to whole voxels, so a precomputed source served again keeps its offset. Served as
 OME-Zarr, the translation is written as is, and Neuroglancer moves it back half a voxel to
 the corner. So a volume shows in the same place whichever format serves it, except that

@@ -85,6 +85,22 @@ def kind_for_dtype(dtype) -> str | None:
     return None
 
 
+def spatial_axes(axes: Sequence[str]) -> tuple[int, ...]:
+    """The axes named z, y or x; without any, the last three (worldarray's rule)."""
+    named = tuple(i for i, a in enumerate(axes) if a in ("z", "y", "x"))
+    return named or tuple(range(max(0, len(axes) - 3), len(axes)))
+
+
+def corner_to_centre(corner, voxel_size, axes) -> tuple[float, ...]:
+    """Voxel 0's centre from its corner, both C order and one entry per axis: half a voxel on
+    along the spatial axes (``spatial_axes``), not along channels or time."""
+    spatial = set(spatial_axes(axes))
+    return tuple(
+        float(c) + (float(v) / 2 if a in spatial else 0.0)
+        for a, (c, v) in enumerate(zip(corner, voxel_size))
+    )
+
+
 @dataclass(frozen=True)
 class ArrayInfo:
     """Static description of one scale level of a chunked array (C-order axes). ``kind`` is
@@ -94,7 +110,9 @@ class ArrayInfo:
     their own grid, as an op writing one vector per lattice node sets it in ``output_info``:
     its values were fitted on the input's voxels, not its nodes'. ``warp://`` then takes a
     field's level by the voxels it was fitted on, and the op's ``for_level`` sees the
-    input's exact extent (the output's shape is rounded up). ``None``: its own grid."""
+    input's exact extent (the output's shape is rounded up). ``None``: its own grid.
+    ``translation`` is voxel 0's centre; an array nothing places has its corner at the
+    origin (``voxel_size / 2`` along the spatial axes), as Neuroglancer draws one."""
 
     shape: tuple[int, ...]
     dtype: np.dtype
@@ -111,11 +129,14 @@ class ArrayInfo:
         object.__setattr__(self, "shape", tuple(int(s) for s in self.shape))
         object.__setattr__(self, "chunk_shape", tuple(int(s) for s in self.chunk_shape))
         n = len(self.shape)
-        if self.translation is None:
-            object.__setattr__(self, "translation", (0.0,) * n)
-        for name in ("chunk_shape", "voxel_size", "units", "axes", "translation"):
+        for name in ("chunk_shape", "voxel_size", "units", "axes"):
             if len(getattr(self, name)) != n:
                 raise ValueError(f"{name} must have length {n}, got {getattr(self, name)}")
+        if self.translation is None:
+            centre = corner_to_centre((0.0,) * n, self.voxel_size, self.axes)
+            object.__setattr__(self, "translation", centre)
+        if len(self.translation) != n:
+            raise ValueError(f"translation must have length {n}, got {self.translation}")
         if self.kind not in KINDS:
             raise ValueError(f"kind must be one of {KINDS}, got {self.kind!r}")
 
