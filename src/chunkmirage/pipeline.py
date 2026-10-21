@@ -218,15 +218,22 @@ def _fused_stage(
         run = lambda: fused.run(ops, block, in_box, out_box, info, total_halo, scale)  # noqa: E731
         return run() if queue is None else queue.run((stage_key, idx), level, run)
 
+    def reads(box_of):  # what a chunk's computation reads, for Pipeline.plan
+        return prev, lambda idx: fused.input_box(prev_info, box_of(idx), lead, total_halo, scale)
+
     if not any(overlap):
-        return ChunkedSource(info, lambda idx: compute(info.chunk_box(idx), idx, key), cache, key)
+        stage = ChunkedSource(info, lambda idx: compute(info.chunk_box(idx), idx, key), cache, key)
+        stage.reads = reads(info.chunk_box)
+        return stage
     # the blocks, chunk plus overlap, each from its inputs alone; the chunk is their blend
     bkey = f"blocks:{key}"
     blocks = BlockSource(
         info, overlap, lambda idx: compute(blocks.chunk_box(idx), idx, bkey), cache if blocks_cache is None else blocks_cache, bkey
     )
+    blocks.reads = reads(blocks.chunk_box)
     stage = ChunkedSource(info, lambda idx: blocks.read(info.chunk_box(idx)), cache, key)
     stage.blocks = blocks
+    stage.reads = blocks, info.chunk_box
     return stage
 
 
@@ -402,6 +409,7 @@ class Pipeline:
             self.cache if cache_source else None,
             f"raw:{h}",
         )
+        stage.reads = raw, stage.chunk_box
         return stage, h
 
     def _chain(
@@ -491,6 +499,34 @@ class Pipeline:
 
     def read(self, level: int, box: Box) -> np.ndarray:
         return self.levels[level].read(box)
+
+    def plan(self, level: int, box: Box) -> list[dict]:
+        """What reading ``box`` of level ``level`` would compute, computing nothing: per
+        stage, from the first to the output, the chunks the read takes from it (``chunks``),
+        those its cache holds now (``held``) and those it would compute (``compute``), whose
+        inputs are what the stage before is asked for; an overlapping op's blocks are a
+        stage of their own (``blocks:``). Through ``dataset://`` the walk goes on into the
+        named dataset's stages; it stops at a source that is not a stage (a stored array, a
+        ``warp://`` whose reads depend on its field's values), whose ``reads`` are the boxes
+        it would be read over. A stage that keeps no chunks computes each as often as it is
+        read; ``compute`` counts them once."""
+        steps: list[dict] = []
+        src: Source = self.levels[level]
+        boxes = [box.clip(src.info.shape)]
+        while isinstance(src, ChunkedSource):
+            needed: set[tuple[int, ...]] = set()
+            for b in boxes:
+                needed.update(src.covering(b))
+            held = {idx for idx in needed if src.in_cache(idx)}
+            todo = sorted(needed - held)
+            steps.append({"stage": src.cache_key(), "keeps": src.cached, "chunks": len(needed),
+                          "held": len(held), "compute": len(todo)})
+            if src.reads is None or not todo:
+                return steps[::-1]
+            src, box_of = src.reads
+            boxes = [b for b in (box_of(idx).clip(src.info.shape) for idx in todo) if not b.empty]
+        steps.append({"source": src.cache_key(), "reads": len(boxes)})
+        return steps[::-1]
 
     def digest(self) -> str:
         return hashlib.sha1("|".join(lvl.cache_key() for lvl in self.levels).encode()).hexdigest()[

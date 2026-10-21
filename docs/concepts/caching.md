@@ -247,6 +247,24 @@ level, saying whether that chunk is in the cache and whether every finest-level 
 it is, read afresh at every request; `GET /api/datasets/{name}/coverage` gives the counts
 per level. Both read the cache as it is, so what was evicted counts as not computed.
 
+What a read would compute, before it does, is `Pipeline.plan(level, box)`: per stage, from
+the first to the output, the chunks the read takes from it (`chunks`), those the cache
+holds now (`held`) and those it would compute (`compute`), whose inputs, padded by the
+ops' halos, are what the stage before is asked for. An op with `overlap` has its blocks
+as a stage of their own (`blocks:...`). The walk stops at a stage holding all it is asked
+for; it goes on through `dataset://` into the named dataset's stages, and stops at a source
+that is not a stage (a stored array, a `warp://` whose reads depend on its field's values),
+whose `reads` are the boxes it would be read over. A stage that keeps no chunks computes
+one as often as it is read; `compute` counts it once.
+
+```python
+>>> pipeline.plan(0, Box((0, 0, 0), (64, 64, 64)))
+[{'source': ..., 'reads': 12},
+ {'stage': 'raw:...', 'keeps': True, 'chunks': 12, 'held': 0, 'compute': 12},
+ {'stage': 'blocks:match:...', 'keeps': True, 'chunks': 8, 'held': 0, 'compute': 8},
+ {'stage': 'match:...', 'keeps': False, 'chunks': 1, 'held': 0, 'compute': 1}]
+```
+
 ## Inspecting and clearing
 
 ```bash

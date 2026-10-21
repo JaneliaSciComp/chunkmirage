@@ -79,3 +79,19 @@ def test_an_op_with_overlap_is_a_stage_of_its_own_and_keeps_integer_dtypes():
         assert (out == np.round(out)).all(), "rounded after the mean, as the op's uint8 output asks"
     finally:
         del base._REGISTRY[Rounded.name]
+
+
+def test_a_plan_says_what_a_read_would_compute_and_computes_nothing():
+    p = Pipeline(open_source(SRC), [{"op": "block_centre_test"}])
+    BlockCentre.calls = 0
+    box = Box((0, 0, 0), (8, 8, 8))  # one chunk, which 8 blocks reach
+    plan = p.plan(0, box)
+    assert BlockCentre.calls == 0
+    source, raw, blocks, out = plan
+    assert "source" in source and source["reads"] == raw["compute"] == 12, "the blocks' inputs: 2 x 2 x 3 chunks"
+    assert blocks["stage"].startswith("blocks:") and (blocks["chunks"], blocks["compute"]) == (8, 8)
+    assert out["stage"] == p.levels[0].cache_key() and not out["keeps"] and out["compute"] == 1
+    p.read(0, box)
+    blocks, out = p.plan(0, box)
+    assert (blocks["held"], blocks["compute"]) == (8, 0), "held now: the walk stops there"
+    assert out["compute"] == 1, "a stage that keeps nothing computes again"

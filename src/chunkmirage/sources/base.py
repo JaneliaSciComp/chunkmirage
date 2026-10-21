@@ -87,6 +87,9 @@ class ChunkedSource(Source):
         self._key = key
         #: the overlapping blocks this stage is blended from, if any (an op with ``overlap``)
         self.blocks: BlockSource | None = None
+        #: what computing a chunk reads, if said: the source and the box of it for a chunk's
+        #: index (``Pipeline.plan`` follows it)
+        self.reads: tuple[Source, Callable[[tuple[int, ...]], Box]] | None = None
         # In-flight computations keyed by chunk index: concurrent requests for the same chunk
         # (a viewer retrying, or two clients) wait for one computation instead of duplicating it.
         self._inflight: dict[tuple[int, ...], threading.Event] = {}
@@ -111,6 +114,10 @@ class ChunkedSource(Source):
     def chunk_box(self, index: Sequence[int]) -> Box:
         """What chunk ``index`` covers: ``compute_chunk`` returns an array of its shape."""
         return self._info.chunk_box(index)
+
+    def covering(self, box: Box) -> list[tuple[int, ...]]:
+        """The chunks a read of ``box`` (within the array) takes data from."""
+        return list(self._info.chunks_covering(box))
 
     def chunk(self, index: Sequence[int]) -> np.ndarray:
         """Chunk ``index`` as an array of shape ``chunk_box(index).shape`` (edge-clipped)."""
@@ -221,19 +228,25 @@ class BlockSource(ChunkedSource):
             whole.stop[:lead] + tuple(b + o for b, o in zip(core.stop[lead:], self.overlap)),
         )
 
-    def read(self, box: Box) -> np.ndarray:
+    def covering(self, box: Box) -> list[tuple[int, ...]]:
+        """The blocks whose extent reaches ``box``."""
         info, k = self._info, len(self.overlap)
         lead = info.ndim - k
         chunks, grid = info.chunk_shape[lead:], info.chunk_grid[lead:]
-        acc = np.zeros(box.shape, np.float64)
-        total = np.zeros(box.shape[lead:], np.float64)
-        # the blocks whose extent reaches the box
         first = [max((a - o) // c, 0) for a, o, c in zip(box.start[lead:], self.overlap, chunks)]
         last = [min((b - 1 + o) // c, g - 1) for b, o, c, g in zip(box.stop[lead:], self.overlap, chunks, grid)]
         ahead = tuple(a // c for a, c in zip(box.start[:lead], info.chunk_shape[:lead]))
+        return [ahead + tuple(int(lo + r) for lo, r in zip(first, rel))
+                for rel in np.ndindex(*[hi - lo + 1 for lo, hi in zip(first, last)])]
+
+    def read(self, box: Box) -> np.ndarray:
+        info, k = self._info, len(self.overlap)
+        lead = info.ndim - k
+        chunks = info.chunk_shape[lead:]
+        acc = np.zeros(box.shape, np.float64)
+        total = np.zeros(box.shape[lead:], np.float64)
         parts = []
-        for rel in np.ndindex(*[hi - lo + 1 for lo, hi in zip(first, last)]):
-            index = ahead + tuple(int(lo + r) for lo, r in zip(first, rel))
+        for index in self.covering(box):
             extent = self.chunk_box(index)
             inter = Box(
                 tuple(max(a, b) for a, b in zip(box.start, extent.start)),
