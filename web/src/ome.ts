@@ -3,7 +3,7 @@
 // sharded or not, with the usual codecs (zstd and blosc through numcodecs).
 import * as zarr from "zarrita";
 import { asReals, TYPED, type Numbers, type Reals, type Settable, type TypedCtor } from "./asread";
-import { multiscalesOf, placement, placeZarr, type Attrs, type Placement } from "./placement";
+import { axisTypes, multiscalesOf, placement, placeZarr, type Attrs, type Placement } from "./placement";
 import type { ControlGrid } from "./types";
 import { fetchUrl } from "./urls";
 
@@ -46,7 +46,7 @@ export function fetchStore(url: string): zarr.FetchStore {
  * worldarray places it (placement.ts). */
 export async function openImage(url: string): Promise<Image> {
   const root = zarr.root(fetchStore(url.replace(/\/+$/, "")));
-  const attrs = (await zarr.open(root, { kind: "group" })).attrs as Attrs;
+  const attrs = ((await zarr.open(root, { kind: "group" })).attrs ?? {}) as Attrs;
   const ms = multiscalesOf(attrs)[0];
   if (!ms) throw new Error(`${url}: no OME-Zarr multiscales metadata`);
   const levels = await Promise.all((ms.datasets as { path: string }[]).map(async (d) => {
@@ -58,13 +58,13 @@ export async function openImage(url: string): Promise<Image> {
   return img;
 }
 
-/** An image of `levels`, each an array and where it is placed; its axes and units are the
- * first level's. */
+/** An image of `levels`, each an array and where it is placed; its axes, their units and
+ * OME types (which pages writing OME metadata for it keep) are the first level's. */
 export function image(url: string, levels: { arr: zarr.Array<zarr.DataType, zarr.Readable>; placed: Placement }[]): Image {
-  const { axes: names, units } = levels[0].placed;
+  const { axes: names, units } = levels[0].placed, types = axisTypes(names, units);
   return {
     url: url.replace(/\/+$/, ""), names, dtype: levels[0].arr.dtype, lead: names.length - 3,
-    axes: names.map((name, a) => (units[a] ? { name, unit: units[a] } : { name })),
+    axes: names.map((name, a) => ({ name, ...(types[a] ? { type: types[a] } : {}), ...(units[a] ? { unit: units[a] } : {}) })),
     levels: levels.map(({ arr, placed: { voxel, origin } }) => ({
       arr, fullShape: arr.shape, scale: voxel, shift: origin, shape: arr.shape.slice(-3), voxel: voxel.slice(-3), origin: origin.slice(-3),
     })),

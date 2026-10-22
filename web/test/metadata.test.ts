@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { attrs2, group3 } from "../src/layout.ts";
-import { placement, placeN5, placePrecomputed, placeZarr, type Attrs } from "../src/placement.ts";
+import { axisTypes, placement, placeN5, placePrecomputed, placeZarr, type Attrs } from "../src/placement.ts";
 import type { ViewInfo } from "../src/types.ts";
 
 const fixture = (name: string): Attrs[] => JSON.parse(readFileSync(new URL(`fixtures/worldarray/${name}`, import.meta.url), "utf8")).cases;
@@ -54,3 +54,10 @@ for (const c of fixture("write.json").filter((c) => !c.multiscale_type && !c.met
     assert.deepEqual(JSON.parse(JSON.stringify(got)), c.expect);
   });
 }
+
+test("an array with no attributes of its own is placed by its group, its axes typed for OME", () => {
+  const group = { multiscales: [{ axes: ["t", "c", "z", "y", "x"], datasets: [{ path: "0", coordinateTransformations: [{ type: "scale", scale: [1, 1, 4, 2, 2] }] }] }] };
+  const p = placement(placeZarr(undefined, group, "0", 5), 5);  // zarrita gives an array without .zattrs no attrs
+  assert.deepEqual([p.voxel, p.placedBy], [[1, 1, 4, 2, 2], "ome"]);
+  assert.deepEqual(axisTypes(p.axes, p.units), ["time", "channel", "space", "space", "space"]);  // the register page writes them
+});
