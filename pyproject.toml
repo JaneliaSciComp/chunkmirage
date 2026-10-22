@@ -1,6 +1,6 @@
 [project]
 name = "chunkmirage"
-version = "0.1.0a1"
+version = "0.1.0a2"
 description = "Spoof chunked array formats (zarr, n5, neuroglancer precomputed) over HTTP with on-the-fly processing, caching, and pluggable ops."
 readme = "README.md"
 license = { file = "LICENSE" }

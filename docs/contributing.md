@@ -135,4 +135,6 @@ to the stable API waits for a major release.
    `pyproject.toml` and `chunkmirage/__init__.py` (`tests/test_docs.py` checks the three
    agree).
 2. Merge to `main` with CI green.
-3. Publish to PyPI only when the owners say so: `uv build && uv publish`.
+3. Publish to PyPI only when the owners say so: a GitHub release tagged `v<version>` runs
+   `.github/workflows/publish.yml`, which builds the wheel and uploads it (a manual run of
+   the workflow uploads to TestPyPI instead).
