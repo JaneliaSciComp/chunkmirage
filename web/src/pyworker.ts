@@ -245,9 +245,12 @@ async function step(m: Extract<ToPyWorker, { type: "call" }>): Promise<{ value: 
   return { value: { value: JSON.parse(js[0]), arrays: bodies }, transfer: bodies };
 }
 
-/** Pyodide packages the ops import inside their functions, loaded the first time one does:
- * most demos never need scipy's 30 MB, nor a mesh scikit-image's. */
-const LAZY: Record<string, string> = { scipy: "scipy", skimage: "scikit-image" };
+/** The Pyodide package that provides the module `name`, by Pyodide's lockfile: what the ops
+ * and a page's own Python import inside their functions is loaded the first time they do,
+ * so most demos never load scipy's 30 MB, nor a mesh scikit-image's. */
+function provider(name: string): string | undefined {
+  return (Object.values(py.lockfile.packages) as { name: string; imports: string[] }[]).find((p) => p.imports.includes(name))?.name;
+}
 const loading = new Map<string, Promise<void>>();
 
 /** `call()`, again after loading what it failed to import: a package not loaded yet, or one
@@ -257,8 +260,9 @@ async function withPackages<T>(call: () => T): Promise<T> {
     try { return call(); } catch (e) {
       const text = String((e as Error)?.message ?? "");
       const name = (/No module named '(\w+)/.exec(text) ?? /`(\w+)` install you are using seems to be broken/.exec(text))?.[1];
-      if (!name || !LAZY[name] || tries > 1) throw e;
-      if (!loading.has(name)) loading.set(name, py.loadPackage([LAZY[name]]));
+      const pkg = name && provider(name);
+      if (!name || !pkg || tries > 1) throw e;
+      if (!loading.has(name)) loading.set(name, py.loadPackage([pkg]));
       await loading.get(name);
       py.runPython(`import sys\nfor m in [m for m in sys.modules if m == "${name}" or m.startswith("${name}.")]: del sys.modules[m]`);
     }

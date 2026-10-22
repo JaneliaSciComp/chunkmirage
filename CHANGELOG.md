@@ -4,6 +4,15 @@ Notable changes per release. Versions follow the rules in
 [contributing](docs/contributing.md#plugin-api-and-versioning): the plugin API is stable,
 and a release that breaks it says so here.
 
+## Unreleased
+
+### Browser engine
+
+- Any package Pyodide ships is loaded the first time the Pyodide workers' Python imports it
+  (a page's own modules, the ops), found by its module in Pyodide's lockfile: Pillow for
+  `from PIL import Image` inside a page's function, say. Only scipy and scikit-image were
+  ([design](docs/design.md#another-page-on-the-engine)).
+
 ## 0.1.0a2 (2026-10-21)
 
 The second alpha. The plugin API only grew (`overlap`, `computed_from`,
