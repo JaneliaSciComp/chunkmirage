@@ -122,8 +122,8 @@ async function arraySource(url: string, select: Record<string, number>): Promise
   const base = url.replace(/\/+$/, ""), cut = base.lastIndexOf("/"), parent = base.slice(0, cut);
   const arr = await zarr.open(zarr.root(fetchStore(base)), { kind: "array" }), n = arr.shape.length;
   if (n < 3) throw new Error(`${url}: an array of ${n} axes; three or more are read`);
-  const group = await zarr.open(zarr.root(fetchStore(parent)), { kind: "group" }).then((g) => g.attrs as Attrs, () => ({}));
-  const attrs = arr.attrs as Attrs, placed = placement(placeZarr(attrs, group, base.slice(cut + 1), n, arr.dimensionNames), n);
+  const group = await zarr.open(zarr.root(fetchStore(parent)), { kind: "group" }).then((g) => (g.attrs ?? {}) as Attrs, () => ({}));
+  const attrs = (arr.attrs ?? {}) as Attrs, placed = placement(placeZarr(attrs, group, base.slice(cut + 1), n, arr.dimensionNames), n);
   if (!placed.placedBy && placed.named) {
     const coords = await Promise.all(placed.axes.map((d, a) => (a < n - 3 ? null : coordinate(parent, d, arr.shape[a]))));
     coords.forEach((c, a) => { if (c) { placed.voxel[a] = c.step; placed.origin[a] = c.first; placed.units[a] = c.unit; } });

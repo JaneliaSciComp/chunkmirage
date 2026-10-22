@@ -27,6 +27,17 @@ export function spatialAxes(axes: string[]): number[] {
   return named.length ? named : axes.map((_, i) => i).slice(-3);
 }
 
+/** Seconds in each time unit the browser knows. */
+export const TO_SECONDS: Record<string, number> = { s: 1, second: 1, millisecond: 1e-3, ms: 1e-3, minute: 60, hour: 3600, day: 86400 };
+
+/** Each axis's OME type, as worldarray types it: time when named t or time or in a time
+ * unit, channel when named c, space when spatial (named z, y or x, else the last three),
+ * else none. */
+export function axisTypes(names: string[], units: string[]): (string | undefined)[] {
+  const spatial = new Set(spatialAxes(names));
+  return names.map((a, i) => (a === "t" || a === "time" || units[i] in TO_SECONDS ? "time" : a === "c" ? "channel" : spatial.has(i) ? "space" : undefined));
+}
+
 /** Voxel 0's centre from its corner: half a voxel on along the spatial axes. */
 export function cornerToCentre(corner: number[], voxel: number[], axes: string[] | null): number[] {
   const sp = new Set(spatialAxes(axes ?? defaultAxes(corner.length)));
@@ -124,7 +135,8 @@ function arrayAttrs(attrs: Attrs, n: number): Found {
 /** A zarr array: the parent group's OME multiscales listing it, else its own funlib or COSEM
  * attributes, else funlib's keys on the parent; its axes named by _ARRAY_DIMENSIONS or zarr
  * v3's dimension_names where nothing else names them. */
-export function placeZarr(attrs: Attrs, group: Attrs, name: string, n: number, dimensionNames?: (string | null)[] | null): Found {
+export function placeZarr(attrs: Attrs | undefined, group: Attrs, name: string, n: number, dimensionNames?: (string | null)[] | null): Found {
+  attrs ??= {};  // an array with no attributes of its own
   const hit = datasetFor(group, name);
   let found = hit ? ome(hit[0], hit[1], n) : none();
   if (!found.voxel) {
