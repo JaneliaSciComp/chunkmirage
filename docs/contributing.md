@@ -131,7 +131,7 @@ to the stable API waits for a major release.
 
 ## Releasing
 
-1. Move the changelog's unreleased entries under the new version, and set that version in
+1. Move the changelog's entries under `Unreleased` to the new version, and set that version in
    `pyproject.toml` and `chunkmirage/__init__.py` (`tests/test_docs.py` checks the three
    agree).
 2. Merge to `main` with CI green.

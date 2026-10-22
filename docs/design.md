@@ -479,7 +479,10 @@ as text). What such a page gets, in the order it uses it:
   beside the package's (`"pkg/mod.py"` to its text) and `call("pkg.mod:fn", args, arrays)`
   reaches by module path: `fn(args, arrays)` answers JSON, one array (bytes or a numpy
   array) or JSON with arrays (`chunkmirage.calls`, which runs natively too, so the page's
-  Python is tested with pytest). A module under `chunkmirage/` or `chunkmirage_contrib/`
+  Python is tested with pytest). A package Pyodide ships (Pillow, scipy, scikit-image) is
+  loaded the first time the page's Python or an op imports it, as Pyodide's lockfile says
+  which package provides the module, so a page imports it inside its function and lists
+  nothing. A module under `chunkmirage/` or `chunkmirage_contrib/`
   is refused: the package's own files are not a page's to replace. The workers take turns,
   so a call carries its own state; `workers` sets how many start, one at least (one does
   for a page that only calls). cellmap-flow's rank score is such Python, written once and

@@ -58,5 +58,5 @@ def test_the_version_is_the_same_everywhere():
     root = DOCS.parent
     version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
     assert chunkmirage.__version__ == version
-    first = re.search(r"^## (\S+)", (root / "CHANGELOG.md").read_text(), re.M).group(1)
+    first = re.search(r"^## (?!Unreleased)(\S+)", (root / "CHANGELOG.md").read_text(), re.M).group(1)
     assert first == version, f"CHANGELOG.md's latest entry is {first}, the package {version}"
