@@ -3,16 +3,27 @@
 // OME-Zarr 0.5, and zarr v2 with OME-Zarr 0.4. The group's metadata, a level's array
 // metadata (or a box of the level's, which materialize writes) and a chunk's key, as
 // objects ready for JSON. A channel axis the view's ops add (`added`) comes first and is
-// one chunk, as the routes serve it. Nothing here imports a value, so Node's tests run it.
+// one chunk, as the routes serve it. Its OME metadata follows worldarray's ome_multiscales
+// (web/test/metadata.test.ts runs worldarray's fixture of it), and it imports only what
+// Node's tests can run.
+import { spatialAxes } from "./placement.ts";
 import type { ViewAxis, ViewInfo } from "./types.ts";
 
 export const TO_SECONDS: Record<string, number> = { s: 1, second: 1, millisecond: 1e-3, ms: 1e-3, minute: 60, hour: 3600, day: 86400 };
-const OME_UNIT: Record<string, string> = { nm: "nanometer", um: "micrometer", m: "meter", s: "second" };
+const OME_UNIT: Record<string, string> = { nm: "nanometer", um: "micrometer", "µm": "micrometer", m: "meter", s: "second" };
 /** zarr v2's dtypes, by numpy's name (the engine's dtypes); little endian. */
 export const V2_DTYPE: Record<string, string> = {
   uint8: "|u1", int8: "|i1", uint16: "<u2", int16: "<i2", uint32: "<u4", int32: "<i4", uint64: "<u8", int64: "<i8", float32: "<f4", float64: "<f8",
 };
 export const isTime = (a: ViewAxis) => a.unit in TO_SECONDS;
+
+/** Each axis's OME type, as worldarray types it: time when named so or in a time unit,
+ * channel when named c, space when spatial (named z, y or x, else the last three), else
+ * none. */
+function axisTypes(axes: ViewAxis[]): (string | undefined)[] {
+  const spatial = new Set(spatialAxes(axes.map((a) => a.name)));
+  return axes.map((a, i) => (a.name === "t" || a.name === "time" || isTime(a) ? "time" : a.name === "c" ? "channel" : spatial.has(i) ? "space" : undefined));
+}
 
 /** A level of a view as one of a group's datasets: its path in the group, and which of the
  * view's levels it is; `lo` (a box of the level, materialize.ts): the level's voxel that is
@@ -35,11 +46,11 @@ export const translation = (v: ViewInfo, level: number, lo?: number[]) => {
  * lands where the view does; a dataset that starts at voxel `lo` of its level is translated
  * by `lo` voxels more, so its voxel 0 lands on the level's voxel `lo`. */
 export function multiscale(name: string, v: ViewInfo, datasets: Dataset[]) {
-  const added = (v.added ?? []).map(() => 0);
+  const added = (v.added ?? []).map(() => 0), types = axisTypes(v.axes);
   return {
     name,
     axes: [...added.map(() => ({ name: "c", type: "channel" })),
-      ...v.axes.map((a) => ({ name: a.name, type: isTime(a) ? "time" : "space", unit: OME_UNIT[a.unit] ?? (a.unit || undefined) }))],
+      ...v.axes.map((a, i) => ({ name: a.name, type: types[i], unit: types[i] === "channel" ? undefined : OME_UNIT[a.unit] ?? (a.unit || undefined) }))],
     datasets: datasets.map(({ path, level, lo }) => ({ path, coordinateTransformations: [
       { type: "scale", scale: [...added.map(() => 1), ...v.levels[level].voxel] },
       { type: "translation", translation: [...added, ...translation(v, level, lo)] },

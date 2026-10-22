@@ -108,8 +108,8 @@ def test_n5_group_metadata_and_downsampling_factors(tmp_path):
     _n5(root / "s1", {"downsamplingFactors": [2, 2, 1]})
     ms = open_source(str(root))
     assert [lvl.info.voxel_size for lvl in ms] == [(8.0, 4.0, 4.0), (8.0, 8.0, 8.0)]
-    # BigDataViewer's levels: a downsampled voxel's centre is that of the block it covers
-    assert [lvl.info.translation for lvl in ms] == [(0.0, 0.0, 0.0), (0.0, 2.0, 2.0)]
+    # no offset: the corner at the origin at every level, as Neuroglancer draws N5
+    assert [lvl.info.translation for lvl in ms] == [(4.0, 2.0, 2.0), (4.0, 4.0, 4.0)]
 
 
 def test_n5_group_multiscales_transform_matched_by_path(tmp_path):
@@ -244,8 +244,12 @@ def test_precomputed_voxel_offset_becomes_translation(tmp_path):
     from chunkmirage.frontends import get_frontend
 
     p = Pipeline(open_source(str(tmp_path / "vol")), [])
-    info = json.loads(get_frontend("precomputed").resolve(p, "info").body)
+    fe = get_frontend("precomputed")
+    info = json.loads(fe.resolve(p, "info").body)
     assert info["scales"][0]["voxel_offset"] == [3, 2, 1]
+    # its chunks keyed from that offset, as Neuroglancer and tensorstore ask for them
+    assert fe.resolve(p, "s0/3-19_2-18_1-9").index == (0, 0, 0, 0)
+    assert fe.resolve(p, "s0/0-16_0-16_0-8") is None
     zattrs = json.loads(get_frontend("zarr").resolve(p, ".zattrs").body)
     cts = zattrs["multiscales"][0]["datasets"][0]["coordinateTransformations"]
     assert cts[1] == {"type": "translation", "translation": [0.0, 9.0, 12.5, 14.0]}

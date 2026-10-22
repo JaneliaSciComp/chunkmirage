@@ -7,13 +7,13 @@ import re
 import struct
 
 import numpy as np
+import worldarray as wa
 
 from chunkmirage.core import ArrayInfo
-from chunkmirage.frontends.base import ChunkRequest, Frontend, Metadata, register_frontend
+from chunkmirage.frontends.base import Frontend, Metadata, register_frontend
 from chunkmirage.frontends.codecs import Compressor
 from chunkmirage.pipeline import Pipeline
 
-_CHUNK_RE = re.compile(r"^s(\d+)/(\d+(?:/\d+)*)$")
 _LEVEL_ATTR_RE = re.compile(r"^s(\d+)/attributes\.json$")
 
 
@@ -38,19 +38,7 @@ class N5Frontend(Frontend):
             if lvl >= pipeline.num_levels:
                 return None
             return Metadata.json(self._level_attrs(pipeline, lvl))
-        if m := _CHUNK_RE.match(path):
-            lvl = int(m.group(1))
-            if lvl >= pipeline.num_levels:
-                return None
-            idx_f = [int(i) for i in m.group(2).split("/")]
-            info = pipeline.info(lvl)
-            if len(idx_f) != info.ndim:
-                return None
-            idx = tuple(idx_f[::-1])
-            if any(i >= g for i, g in zip(idx, info.chunk_grid)):
-                return None
-            return ChunkRequest(lvl, idx)
-        return None
+        return self.chunk_request(pipeline, path, lambda key, info: wa.parse_chunk_key(key, "n5"))
 
     def _root_attrs(self, pipeline: Pipeline) -> dict:
         info = pipeline.info(0)
@@ -89,7 +77,7 @@ class N5Frontend(Frontend):
         }
 
     def chunk_key(self, level: int, index) -> str:
-        return f"s{level}/" + "/".join(str(i) for i in index[::-1])  # N5's axes are x first
+        return f"s{level}/" + wa.chunk_key(index, "n5")  # x first
 
     def encode(self, info: ArrayInfo, index, block: np.ndarray) -> bytes:
         # mode 0 = default; dims are F-order (x first) = reversed C shape; data big-endian.

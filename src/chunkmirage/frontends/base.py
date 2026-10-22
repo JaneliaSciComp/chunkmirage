@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import ClassVar
 
@@ -13,6 +14,7 @@ from chunkmirage.pipeline import Pipeline
 
 JSON_CT = "application/json"
 BIN_CT = "application/octet-stream"
+_LEVEL_KEY = re.compile(r"^s(\d+)/(.+)$")
 
 
 @dataclass
@@ -82,6 +84,23 @@ class Frontend(ABC):
         return None
 
     # Helpers shared by frontends -----------------------------------------------------
+    @staticmethod
+    def chunk_request(
+        pipeline: Pipeline, path: str, parse: Callable[[str, ArrayInfo], tuple[int, ...] | None]
+    ) -> ChunkRequest | None:
+        """``s<level>/<key>`` as a chunk of the pipeline, ``parse`` (worldarray's
+        ``parse_chunk_key`` for the format) giving the index of ``key`` on the level; None
+        for a key that is not a chunk, or a chunk past the level's grid."""
+        m = _LEVEL_KEY.match(path)
+        if not m or int(m.group(1)) >= pipeline.num_levels:
+            return None
+        level = int(m.group(1))
+        info = pipeline.info(level)
+        idx = parse(m.group(2), info)
+        if idx is None or len(idx) != info.ndim or any(i >= g for i, g in zip(idx, info.chunk_grid)):
+            return None
+        return ChunkRequest(level, idx)
+
     @staticmethod
     def relative_scales(pipeline: Pipeline) -> list[list[float]]:
         """Downsampling factor of every level relative to s0, per C-order axis."""

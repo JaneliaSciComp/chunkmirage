@@ -1,9 +1,11 @@
 // The images a pipeline reads, in the browser, as chunkmirage's sources read them in Python:
-// OME-Zarr (v2 or v3) and N5 groups, Neuroglancer precomputed volumes, xarray-style zarr
-// arrays (geo and climate data), and the stack://, flip:// and select wrappers. Each is a pyramid of three-axis levels (z, y, x, or
+// OME-Zarr (v2 or v3) and N5 groups, zarr arrays (funlib's, COSEM's, xarray's geo and climate
+// data) and N5 arrays, Neuroglancer precomputed volumes, each placed as worldarray places it
+// (placement.ts), and the stack://, flip:// and select wrappers. Each is a pyramid of three-axis levels (z, y, x, or
 // an xarray array's own, such as time, lat, lon), with channels only for a stack; reads go
 // through the service worker's store cache like every other fetch on the page.
-import { asReals, fetchStore, openImage, prod, RegionReader, TYPED, zarr, type Image, type Numbers, type Settable, type TypedCtor } from "./ome";
+import { asReals, fetchStore, image, openImage, prod, RegionReader, TYPED, zarr, type Image, type Numbers, type Settable, type TypedCtor } from "./ome";
+import { multiscalesOf, placement, placeN5, placePrecomputed, placeZarr, type Attrs } from "./placement";
 import { chunkName, compressedMorton, compressedSegmentation, Shards, type Fetch, type PrecomputedInfo } from "./precomputed";
 import { fetchUrl } from "./urls";
 import type { ViewAxis } from "./types";
@@ -28,11 +30,11 @@ export interface Source {
 
 const READ_BYTES = 384 * 2 ** 20;  // decoded pieces kept per image (the page's reader holds them all)
 
-/** Any source URL: stack://a|b, flip://image?axes=y, an OME-Zarr or N5 group, a precomputed
- * volume (precomputed://, as Neuroglancer writes it, or found by its info), or an
- * xarray-style zarr array; at gs:// or s3:// as well as https://, fetched as Neuroglancer
- * fetches them (urls.ts). `select` pins non-spatial axes, as a spec's select does
- * ({c: 1, t: 0}). */
+/** Any source URL: stack://a|b, flip://image?axes=y, an OME-Zarr or N5 group, a zarr or N5
+ * array, or a precomputed volume (precomputed://, as Neuroglancer writes it, or found by its
+ * info); at gs:// or s3:// as well as https://, fetched as Neuroglancer fetches them
+ * (urls.ts). Each is placed as worldarray places it (placement.ts). `select` pins
+ * non-spatial axes, as a spec's select does ({c: 1, t: 0}). */
 export async function openSource(url: string, select: Record<string, number> = {}): Promise<Source> {
   if (url.startsWith("stack://")) {
     const parts = url.slice("stack://".length).split("|").filter(Boolean);
@@ -48,29 +50,39 @@ export async function openSource(url: string, select: Record<string, number> = {
   if (url.startsWith("precomputed://")) return precomputedSource(url.slice("precomputed://".length));
   if (/\.tiff?$/i.test(url.split("?")[0])) return geotiffSource(url);
   try {
-    return await zarrSource(url, select);
+    return imageSource(url, await openImage(url), select);
   } catch (zarrError) {
-    try { return await xarraySource(url); } catch { /* not one either */ }
+    try { return await arraySource(url, select); } catch { /* not one either */ }
     try { return await n5Source(url); } catch { /* nor this */ }
     try { return await precomputedSource(url); } catch { throw zarrError; }
   }
 }
 
-async function zarrSource(url: string, select: Record<string, number>): Promise<Source> {
-  const img = await openImage(url);
+/** A zarr image's levels as a source, its leading axes pinned by `select`; integers
+ * CF-packed by `attrs` (scale_factor, add_offset) read as float32, missing ones NaN. */
+function imageSource(url: string, img: Image, select: Record<string, number>, attrs: Attrs = {}): Source {
   for (const [axis, i] of Object.entries(select)) {
     if (!img.names.slice(0, img.lead).includes(axis)) throw new Error(`select ${axis}=${i}: ${url} has axes ${img.names}`);
   }
   const reader = new RegionReader(img, READ_BYTES), channel = select.c ?? 0;
   const pinned = Object.fromEntries(Object.entries(select).filter(([a]) => a !== "c"));
+  const packed = "scale_factor" in attrs || "add_offset" in attrs;
+  const scale = num(attrs.scale_factor ?? 1), offset = num(attrs.add_offset ?? 0);
+  const missing = attrs._FillValue ?? attrs.missing_value ?? img.levels[0].arr.fillValue;
   return {
-    url, dtype: img.dtype, axes: img.axes.slice(-3).map((a) => ({ name: a.name, unit: a.unit ?? "" })), channels: 1,
+    url, dtype: packed ? "float32" : img.dtype, axes: img.axes.slice(-3).map((a) => ({ name: a.name, unit: a.unit ?? "" })), channels: 1,
     levels: img.levels.map((l) => ({ shape: l.shape, voxel: l.voxel, origin: l.origin, chunks: l.arr.chunks.slice(-3) })),
-    read: async (li, _c, lo, hi, at) => (await reader.read(li, channel, lo, hi, { ...pinned, ...at })).data,
+    read: async (li, _c, lo, hi, at) => {
+      const { data } = await reader.read(li, channel, lo, hi, { ...pinned, ...at });
+      if (!packed) return data;
+      const raw = asReals(data), out = new Float32Array(raw.length), m = missing == null ? NaN : num(missing);
+      for (let i = 0; i < raw.length; i++) out[i] = raw[i] === m ? NaN : raw[i] * scale + offset;
+      return out;
+    },
   };
 }
 
-// ------------------------------------------------ xarray-style zarr
+// ------------------------------------------------ zarr arrays, xarray's among them
 const SECONDS: Record<string, number> = { day: 86400, hour: 3600, minute: 60, second: 1 };
 
 /** A CF coordinate's units as [unit, factor to it]: "days since ..." and the like become
@@ -102,37 +114,21 @@ async function coordinate(parent: string, dim: string, n: number): Promise<{ ste
   } catch { return none; }
 }
 
-/** A zarr array as xarray writes it: its axes named by _ARRAY_DIMENSIONS (or zarr v3's
- * dimension_names), voxel size and origin from its coordinate arrays, and CF-packed
- * integers (scale_factor, add_offset) read as float32 in their units, missing ones NaN. */
-async function xarraySource(url: string): Promise<Source> {
-  const base = url.replace(/\/+$/, ""), parent = base.slice(0, base.lastIndexOf("/"));
-  const arr = await zarr.open(zarr.root(fetchStore(base)), { kind: "array" });
-  const attrs = arr.attrs as Record<string, unknown>;
-  const dims = (attrs._ARRAY_DIMENSIONS as string[] | undefined) ?? arr.dimensionNames;
-  if (!dims || dims.length !== 3 || arr.shape.length !== 3) throw new Error(`${url}: not a three-axis array with dimension names`);
-  const coords = await Promise.all(dims.map((d, a) => coordinate(parent, d, arr.shape[a])));
-  const voxel = coords.map((c) => c.step), origin = coords.map((c) => c.first);
-  const img: Image = {
-    url: base, axes: dims.map((name) => ({ name })), names: dims, dtype: arr.dtype, lead: 0,
-    levels: [{ arr, fullShape: arr.shape, scale: voxel, shift: origin, shape: arr.shape, voxel, origin }],
-  };
-  const reader = new RegionReader(img, READ_BYTES);
-  const packed = "scale_factor" in attrs || "add_offset" in attrs;
-  const scale = num(attrs.scale_factor ?? 1), offset = num(attrs.add_offset ?? 0);
-  const missing = attrs._FillValue ?? attrs.missing_value ?? arr.fillValue;
-  return {
-    url, dtype: packed ? "float32" : arr.dtype, channels: 1,
-    axes: dims.map((name, a) => ({ name, unit: coords[a].unit })),
-    levels: [{ shape: arr.shape, voxel, origin, chunks: arr.chunks }],
-    read: async (li, _c, lo, hi) => {
-      const { data } = await reader.read(li, 0, lo, hi);
-      if (!packed) return data;
-      const raw = asReals(data), out = new Float32Array(raw.length), m = missing == null ? NaN : num(missing);
-      for (let i = 0; i < raw.length; i++) out[i] = raw[i] === m ? NaN : raw[i] * scale + offset;
-      return out;
-    },
-  };
+/** A zarr array of three axes or more, outside an OME-Zarr group: placed by its parent's
+ * multiscales listing it, its own funlib or COSEM attributes or funlib's on its parent; an
+ * array nothing places whose axes are named (xarray's _ARRAY_DIMENSIONS, zarr v3's
+ * dimension_names) by its coordinate arrays beside it, CF-packed integers decoded. */
+async function arraySource(url: string, select: Record<string, number>): Promise<Source> {
+  const base = url.replace(/\/+$/, ""), cut = base.lastIndexOf("/"), parent = base.slice(0, cut);
+  const arr = await zarr.open(zarr.root(fetchStore(base)), { kind: "array" }), n = arr.shape.length;
+  if (n < 3) throw new Error(`${url}: an array of ${n} axes; three or more are read`);
+  const group = await zarr.open(zarr.root(fetchStore(parent)), { kind: "group" }).then((g) => g.attrs as Attrs, () => ({}));
+  const attrs = arr.attrs as Attrs, placed = placement(placeZarr(attrs, group, base.slice(cut + 1), n, arr.dimensionNames), n);
+  if (!placed.placedBy && placed.named) {
+    const coords = await Promise.all(placed.axes.map((d, a) => (a < n - 3 ? null : coordinate(parent, d, arr.shape[a]))));
+    coords.forEach((c, a) => { if (c) { placed.voxel[a] = c.step; placed.origin[a] = c.first; placed.units[a] = c.unit; } });
+  }
+  return imageSource(url, image(base, [{ arr, placed }]), select, attrs);
 }
 
 // ------------------------------------------------ GeoTIFF
@@ -179,58 +175,45 @@ async function geotiffSource(url: string): Promise<Source> {
 }
 
 // ------------------------------------------------ N5
-interface N5Attrs {
-  dimensions?: number[]; blockSize?: number[]; dataType?: string; compression?: { type: string };
-  multiscales?: { datasets: { path: string; transform?: { axes?: string[]; scale?: number[]; translate?: number[]; units?: string[] } }[] }[];
-  pixelResolution?: { dimensions: number[]; unit: string } | number[]; resolution?: number[]; units?: string[];
-  downsamplingFactors?: number[]; scales?: number[][];
-}
-
-async function json<T>(url: string): Promise<T | null> {
+async function json<T = Attrs>(url: string): Promise<T | null> {
   const r = await fetch(fetchUrl(url));
   return r.ok ? ((await r.json()) as T) : null;
 }
 
-/** An N5 multiscale group (COSEM's multiscales, or s0, s1, ...); levels in C order. */
+const OME_UNIT: Record<string, string> = { nm: "nanometer", um: "micrometer", "µm": "micrometer" };
+
+/** An N5 multiscale group (COSEM's multiscales, or s0, s1, ...) or one N5 array, of three
+ * axes; levels in C order. */
 async function n5Source(url: string): Promise<Source> {
-  const base = url.replace(/\/+$/, "");
-  const root = await json<N5Attrs>(`${base}/attributes.json`);
+  const base = url.replace(/\/+$/, ""), cut = base.lastIndexOf("/");
+  const root = await json(`${base}/attributes.json`);
   if (!root) throw new Error(`${url}: neither OME-Zarr nor N5`);
-  let paths = root.multiscales?.[0]?.datasets.map((d) => d.path);
+  // an array on its own: its parent's attributes are its group's
+  const group = root.dimensions ? (await json(`${base.slice(0, cut)}/attributes.json`)) ?? {} : root;
+  let paths: string[] = root.dimensions ? [""] : multiscalesOf(root)[0]?.datasets.map((d: Attrs) => String(d.path));
   if (!paths) {
     paths = [];
-    for (let i = 0; ; i++) { if (!(await json<N5Attrs>(`${base}/s${i}/attributes.json`))) break; paths.push(`s${i}`); }
+    for (let i = 0; ; i++) { if (!(await json(`${base}/s${i}/attributes.json`))) break; paths.push(`s${i}`); }
   }
   if (!paths.length) throw new Error(`${url}: an N5 group without levels`);
-  const levels = await Promise.all(paths.map(async (p, i) => {
-    const a = await json<N5Attrs>(`${base}/${p}/attributes.json`);
-    if (!a?.dimensions || !a.blockSize || !a.dataType) throw new Error(`${base}/${p}: not an N5 dataset`);
+  const levels = await Promise.all(paths.map(async (p) => {
+    const dir = p ? `${base}/${p}` : base, a = p ? await json(`${dir}/attributes.json`) : root;
+    if (!a?.dimensions || !a.blockSize || !a.dataType) throw new Error(`${dir}: not an N5 dataset`);
+    if (a.dimensions.length !== 3) throw new Error(`${dir}: ${a.dimensions.length} axes; N5 of three is read here`);
     const kind = a.compression?.type ?? "raw";
-    if (kind !== "gzip" && kind !== "raw") throw new Error(`${base}/${p}: ${kind} compression is not read here (gzip or raw)`);
-    const t = root.multiscales?.[0]?.datasets[i]?.transform;
-    let voxel: number[], origin: number[];
-    if (t?.scale && t.axes) {  // COSEM: axes named, z, y, x here
-      const order = ["z", "y", "x"].map((n) => t.axes!.indexOf(n));
-      voxel = order.map((k) => t.scale![k]); origin = order.map((k) => t.translate?.[k] ?? 0);
-    } else {
-      const given = Array.isArray(a.pixelResolution) ? a.pixelResolution : a.pixelResolution?.dimensions ?? a.resolution;
-      const res = given ?? [1, 1, 1], f = a.downsamplingFactors ?? root.scales?.[i] ?? [1, 1, 1];
-      voxel = [2, 1, 0].map((k) => res[k] * f[k]);
-      // BigDataViewer's levels are centred on their blocks; one nothing places has its corner at 0
-      origin = given ? voxel.map((v, k) => (v - [2, 1, 0].map((j) => res[j])[k]) / 2) : voxel.map((v) => v / 2);
-    }
-    return { path: p, dims: [...a.dimensions].reverse(), block: [...a.blockSize].reverse(), dtype: a.dataType, gzip: kind === "gzip", voxel, origin };
+    if (kind !== "gzip" && kind !== "raw") throw new Error(`${dir}: ${kind} compression is not read here (gzip or raw)`);
+    const placed = placement(placeN5(a, group, p || base.slice(cut + 1), 3), 3);
+    return { dir, dims: [...a.dimensions].reverse(), block: [...a.blockSize].reverse(), dtype: a.dataType as string, gzip: kind === "gzip", placed };
   }));
-  const u = root.multiscales?.[0]?.datasets[0]?.transform?.units?.[0] ?? root.units?.[0] ?? "";
-  const unit = u === "nm" ? "nanometer" : u === "um" ? "micrometer" : u;
+  const { axes, units } = levels[0].placed;
   const cache = new Blocks(READ_BYTES);
   return {
-    url, dtype: levels[0].dtype, axes: ["z", "y", "x"].map((name) => ({ name, unit })), channels: 1,
-    levels: levels.map((l) => ({ shape: l.dims, voxel: l.voxel, origin: l.origin, chunks: l.block })),
+    url, dtype: levels[0].dtype, axes: axes.map((name, a) => ({ name, unit: OME_UNIT[units[a]] ?? units[a] })), channels: 1,
+    levels: levels.map((l) => ({ shape: l.dims, voxel: l.placed.voxel, origin: l.placed.origin, chunks: l.block })),
     read: (li, _c, lo, hi) => {
       const l = levels[li];
       return assemble(TYPED[l.dtype] ?? Float32Array, l.block, lo, hi, (b) =>
-        cache.get(`${li}/${b.join(",")}`, () => n5Block(`${base}/${l.path}/${[...b].reverse().join("/")}`, l.dtype, l.gzip, l.block)));
+        cache.get(`${li}/${b.join(",")}`, () => n5Block(`${l.dir}/${[...b].reverse().join("/")}`, l.dtype, l.gzip, l.block)));
     },
   };
 }
@@ -332,10 +315,10 @@ async function precomputedSource(url: string): Promise<Source> {
     const dir = `${base}/${s.key.replace(/^\/+|\/+$/g, "")}`;
     return { s, encoding, chunk, off, dir, shards: s.sharding ? new Shards(dir, s.sharding, bytesAt) : null };
   });
-  const levels = scales.map(({ s, chunk, off }) => ({
-    shape: [...s.size].reverse(), voxel: [...s.resolution].reverse(),
-    origin: off.map((o, a) => (o + 0.5) * s.resolution[a]).reverse(), chunks: [...chunk].reverse(),
-  }));
+  const levels = scales.map(({ s, chunk }) => {
+    const { voxel, origin } = placePrecomputed(s);
+    return { shape: [...s.size].reverse(), voxel: voxel!, origin: origin!, chunks: [...chunk].reverse() };
+  });
   /** Chunk `b` (z, y, x in the grid) of scale `li`, all its channels (c, z, y, x). */
   const chunkAt = async (li: number, b: number[]): Promise<{ data: Numbers; shape: number[] }> => {
     const { s, encoding, chunk, off, dir, shards } = scales[li];
