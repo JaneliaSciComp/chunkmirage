@@ -3,15 +3,15 @@ from __future__ import annotations
 import re
 
 import numpy as np
+import worldarray as wa
 
 from chunkmirage.core import ArrayInfo
-from chunkmirage.frontends._ome import multiscales
-from chunkmirage.frontends.base import ChunkRequest, Frontend, Metadata, register_frontend
+from chunkmirage.frontends._ome import group_attrs
+from chunkmirage.frontends.base import Frontend, Metadata, register_frontend
 from chunkmirage.frontends.codecs import Compressor
 from chunkmirage.pipeline import Pipeline
 
 _LEVEL_RE = re.compile(r"^s(\d+)/(\.zarray|\.zattrs|\.zgroup)$")
-_CHUNK_RE = re.compile(r"^s(\d+)/(\d+(?:[./]\d+)*)$")
 
 
 @register_frontend
@@ -30,7 +30,7 @@ class Zarr2Frontend(Frontend):
         if path == ".zgroup":
             return Metadata.json({"zarr_format": 2})
         if path == ".zattrs":
-            return Metadata.json({"multiscales": [multiscales(pipeline, "0.4")]})
+            return Metadata.json(group_attrs(pipeline, "0.4"))
         if path in ("", ".zmetadata"):
             return Metadata.json(self._consolidated(pipeline))
         if m := _LEVEL_RE.match(path):
@@ -42,16 +42,10 @@ class Zarr2Frontend(Frontend):
             if what == ".zattrs":
                 return Metadata.json({})
             return None  # levels are arrays, not groups
-        if m := _CHUNK_RE.match(path):
-            lvl = int(m.group(1))
-            if lvl >= pipeline.num_levels:
-                return None
-            idx = tuple(int(i) for i in re.split(r"[./]", m.group(2)))
-            info = pipeline.info(lvl)
-            if len(idx) != info.ndim or any(i >= g for i, g in zip(idx, info.chunk_grid)):
-                return None
-            return ChunkRequest(lvl, idx)
-        return None
+        # either separator: a client that ignores dimension_separator still finds the chunk
+        return self.chunk_request(
+            pipeline, path, lambda key, info: wa.parse_chunk_key(key.replace("/", "."), "zarr2")
+        )
 
     def _zarray(self, info: ArrayInfo) -> dict:
         return {
@@ -71,7 +65,7 @@ class Zarr2Frontend(Frontend):
     def _consolidated(self, pipeline: Pipeline) -> dict:
         meta = {
             ".zgroup": {"zarr_format": 2},
-            ".zattrs": {"multiscales": [multiscales(pipeline, "0.4")]},
+            ".zattrs": group_attrs(pipeline, "0.4"),
         }
         for lvl in range(pipeline.num_levels):
             meta[f"s{lvl}/.zarray"] = self._zarray(pipeline.info(lvl))
@@ -79,7 +73,7 @@ class Zarr2Frontend(Frontend):
         return {"zarr_consolidated_format": 1, "metadata": meta}
 
     def chunk_key(self, level: int, index) -> str:
-        return f"s{level}/" + self.separator.join(str(i) for i in index)
+        return f"s{level}/" + wa.chunk_key(index, "zarr2", self.separator)
 
     def encode(self, info: ArrayInfo, index, block: np.ndarray) -> bytes:
         full = self.pad_to_full(info, index, block)

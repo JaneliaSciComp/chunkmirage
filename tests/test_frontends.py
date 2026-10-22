@@ -141,7 +141,7 @@ def test_time_lat_lon_data_shows_the_map_and_scrolls_time():
     """Data without z, y, x axes (an xarray time, lat, lon series) displays its last three
     in their place, x first, and its time axis is typed as time for OME readers."""
     from chunkmirage.core import ArrayInfo
-    from chunkmirage.frontends._ome import multiscales
+    from chunkmirage.frontends._ome import group_attrs
     from chunkmirage.neuroglancer import global_dimensions
 
     info = ArrayInfo(
@@ -164,7 +164,7 @@ def test_time_lat_lon_data_shows_the_map_and_scrolls_time():
         def info(self, level):
             return info
 
-    axes = multiscales(_P(), "0.5")["axes"]
+    axes = group_attrs(_P(), "0.5")["ome"]["multiscales"][0]["axes"]
     assert [a["type"] for a in axes] == ["time", "space", "space"]
     assert axes[0]["unit"] == "second"
 

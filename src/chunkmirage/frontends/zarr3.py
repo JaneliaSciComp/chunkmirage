@@ -3,15 +3,15 @@ from __future__ import annotations
 import re
 
 import numpy as np
+import worldarray as wa
 
 from chunkmirage.core import ArrayInfo
-from chunkmirage.frontends._ome import multiscales
-from chunkmirage.frontends.base import ChunkRequest, Frontend, Metadata, register_frontend
+from chunkmirage.frontends._ome import group_attrs
+from chunkmirage.frontends.base import Frontend, Metadata, register_frontend
 from chunkmirage.frontends.codecs import Compressor
 from chunkmirage.pipeline import Pipeline
 
 _LEVEL_RE = re.compile(r"^s(\d+)/zarr\.json$")
-_CHUNK_RE = re.compile(r"^s(\d+)/c/(\d+(?:/\d+)*)$")
 
 _DTYPES = {
     "bool": "bool",
@@ -46,9 +46,7 @@ class Zarr3Frontend(Frontend):
                 {
                     "zarr_format": 3,
                     "node_type": "group",
-                    "attributes": {
-                        "ome": {"version": "0.5", "multiscales": [multiscales(pipeline, "0.5")]}
-                    },
+                    "attributes": group_attrs(pipeline, "0.5"),
                 }
             )
         if m := _LEVEL_RE.match(path):
@@ -56,16 +54,7 @@ class Zarr3Frontend(Frontend):
             if lvl >= pipeline.num_levels:
                 return None
             return Metadata.json(self._array_meta(pipeline.info(lvl)))
-        if m := _CHUNK_RE.match(path):
-            lvl = int(m.group(1))
-            if lvl >= pipeline.num_levels:
-                return None
-            idx = tuple(int(i) for i in m.group(2).split("/"))
-            info = pipeline.info(lvl)
-            if len(idx) != info.ndim or any(i >= g for i, g in zip(idx, info.chunk_grid)):
-                return None
-            return ChunkRequest(lvl, idx)
-        return None
+        return self.chunk_request(pipeline, path, lambda key, info: wa.parse_chunk_key(key, "zarr3"))
 
     def _array_meta(self, info: ArrayInfo) -> dict:
         return {
@@ -85,7 +74,7 @@ class Zarr3Frontend(Frontend):
         }
 
     def chunk_key(self, level: int, index) -> str:
-        return f"s{level}/c/" + "/".join(str(i) for i in index)
+        return f"s{level}/" + wa.chunk_key(index, "zarr3")
 
     def encode(self, info: ArrayInfo, index, block: np.ndarray) -> bytes:
         full = self.pad_to_full(info, index, block)

@@ -3,6 +3,7 @@
 // sharded or not, with the usual codecs (zstd and blosc through numcodecs).
 import * as zarr from "zarrita";
 import { asReals, TYPED, type Numbers, type Reals, type Settable, type TypedCtor } from "./asread";
+import { multiscalesOf, placement, placeZarr, type Attrs, type Placement } from "./placement";
 import type { ControlGrid } from "./types";
 import { fetchUrl } from "./urls";
 
@@ -34,11 +35,6 @@ export interface Image {
   lead: number;  // axes before z, y, x (time, channel)
 }
 
-interface Multiscale {
-  axes: (string | Axis)[];
-  datasets: { path: string; coordinateTransformations?: { type: string; scale?: number[]; translation?: number[] }[] }[];
-}
-
 /** A zarr store at `url` (https://, gs:// or s3://), each key fetched at the URL a browser
  * reads it from (urls.ts): the store joins key to base as a path, gs://b/x + /.zattrs →
  * gs://b/x/.zattrs, and that is turned into the JSON API's one-segment form on the way out. */
@@ -46,30 +42,33 @@ export function fetchStore(url: string): zarr.FetchStore {
   return new zarr.FetchStore(url, { fetch: (req) => fetch(fetchUrl(req.url), { method: req.method, headers: req.headers, signal: req.signal }) });
 }
 
-/** Multiscale metadata of the image at `url`, and its levels' arrays. */
+/** Multiscale metadata of the image at `url`, and its levels' arrays, each placed as
+ * worldarray places it (placement.ts). */
 export async function openImage(url: string): Promise<Image> {
-  const store = fetchStore(url.replace(/\/+$/, ""));
-  const root = zarr.root(store);
-  const group = await zarr.open(root, { kind: "group" });
-  const attrs = group.attrs as { ome?: { multiscales?: Multiscale[] }; multiscales?: Multiscale[] };
-  const ms = (attrs.ome?.multiscales ?? attrs.multiscales)?.[0];
+  const root = zarr.root(fetchStore(url.replace(/\/+$/, "")));
+  const attrs = (await zarr.open(root, { kind: "group" })).attrs as Attrs;
+  const ms = multiscalesOf(attrs)[0];
   if (!ms) throw new Error(`${url}: no OME-Zarr multiscales metadata`);
-  const axes = ms.axes.map((a) => (typeof a === "string" ? { name: a } : a));
-  const names = axes.map((a) => a.name);
-  if (names.slice(-3).join("") !== "zyx") throw new Error(`${url}: axes ${names} must end in z, y, x`);
-  const levels = await Promise.all(ms.datasets.map(async (d) => {
-    let scale = names.map(() => 1), shift = names.map(() => 0);
-    for (const t of d.coordinateTransformations ?? []) {  // composed in order
-      if (t.type === "scale" && t.scale) { const s = t.scale; scale = scale.map((v, i) => v * s[i]); shift = shift.map((v, i) => v * s[i]); }
-      if (t.type === "translation" && t.translation) { const tr = t.translation; shift = shift.map((v, i) => v + tr[i]); }
-    }
-    const arr = await zarr.open(root.resolve(d.path), { kind: "array" });
-    return {
-      arr, fullShape: arr.shape, scale, shift,
-      shape: arr.shape.slice(-3), voxel: scale.slice(-3), origin: shift.slice(-3),
-    };
+  const levels = await Promise.all((ms.datasets as { path: string }[]).map(async (d) => {
+    const arr = await zarr.open(root.resolve(d.path), { kind: "array" }), n = arr.shape.length;
+    return { arr, placed: placement(placeZarr(arr.attrs as Attrs, attrs, d.path, n, arr.dimensionNames), n) };
   }));
-  return { url: url.replace(/\/+$/, ""), axes, names, levels, dtype: levels[0].arr.dtype, lead: names.length - 3 };
+  const img = image(url, levels);
+  if (img.names.slice(-3).join("") !== "zyx") throw new Error(`${url}: axes ${img.names} must end in z, y, x`);
+  return img;
+}
+
+/** An image of `levels`, each an array and where it is placed; its axes and units are the
+ * first level's. */
+export function image(url: string, levels: { arr: zarr.Array<zarr.DataType, zarr.Readable>; placed: Placement }[]): Image {
+  const { axes: names, units } = levels[0].placed;
+  return {
+    url: url.replace(/\/+$/, ""), names, dtype: levels[0].arr.dtype, lead: names.length - 3,
+    axes: names.map((name, a) => (units[a] ? { name, unit: units[a] } : { name })),
+    levels: levels.map(({ arr, placed: { voxel, origin } }) => ({
+      arr, fullShape: arr.shape, scale: voxel, shift: origin, shape: arr.shape.slice(-3), voxel: voxel.slice(-3), origin: origin.slice(-3),
+    })),
+  };
 }
 
 /** Index of the lead axes (time, channel) to read: `channel` on c, 0 on anything else. */

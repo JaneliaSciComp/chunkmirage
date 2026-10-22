@@ -6,7 +6,36 @@ and a release that breaks it says so here.
 
 ## Unreleased
 
+### Serving
+
+- A precomputed scale with a `voxel_offset` serves its chunks at the keys Neuroglancer and
+  tensorstore ask for, counted from the offset (`3-19_2-18_1-9`); every chunk of one not at
+  0 was a 404. Chunk keys of every format are worldarray's (`wa.chunk_key`,
+  `wa.parse_chunk_key`).
+- The zarr frontends' OME multiscales are written by worldarray (`wa.ome_multiscales`,
+  `worldarray>=0.3,<1`): a translation is written even when it is 0, OME 0.5 has its
+  `version` only beside `multiscales`, an axis with a name that is neither spatial nor a
+  channel nor time is left untyped, and the multiscale no longer carries `"type":
+  "chunkmirage"` or a description.
+
+### Sources
+
+- An N5 level with no `offset` has its corner at the origin at every level, as Neuroglancer
+  draws N5 (worldarray 0.1.1's rule): voxel 0's centre is `downsamplingFactors / 2 ×
+  resolution`. A level with `pixelResolution` followed BigDataViewer, half a voxel of the
+  full resolution lower ([formats](docs/concepts/formats.md#stored-sources)).
+
 ### Browser engine
+
+- Stored arrays are placed by worldarray's rules (`web/src/placement.ts`), checked in `npm
+  test` against worldarray's fixture of metadata layouts, and the engine's OME multiscales
+  against its fixture of written ones (`web/test/metadata.test.ts`). What the browser now
+  reads as the server does: an OME multiscale's own `coordinateTransformations`, OME 0.6's
+  intrinsic coordinate system, N5's `offset`, funlib's `voxel_size` and a COSEM `transform`
+  on an array, `pixelResolution` or `resolution` on an N5 group, N5 without an offset
+  (corner at the origin), a zarr array outside an OME group (funlib, COSEM, or xarray of
+  more than three axes), and a single N5 array. Its OME multiscales type a channel axis as
+  `channel` and a `t` axis as time, as worldarray does; both were `space`.
 
 - Any package Pyodide ships is loaded the first time the Pyodide workers' Python imports it
   (a page's own modules, the ops), found by its module in Pyodide's lockfile: Pillow for

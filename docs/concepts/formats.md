@@ -790,8 +790,8 @@ Voxel size, translation, units and axes are read per level, first match wins:
 
 | Format      | Metadata, in order of precedence                                                   |
 |-------------|------------------------------------------------------------------------------------|
-| zarr v2/v3  | parent OME-NGFF `multiscales` entry whose `path` is this array, composed with the multiscale-level `coordinateTransformations` if present (0.4/0.5; in 0.6 those lead to other coordinate systems and are applied only through a [`scene://`](#scene-sources-ome-zarr-06-transformations) source, and axes come from the intrinsic coordinate system); else, for an array xarray wrote (geo, climate and solar data), its dimension names (`_ARRAY_DIMENSIONS`, or zarr v3 `dimension_names`) as the axes and the 1-D coordinate array named after each dimension as its spacing and origin, where evenly spaced and increasing (`days since …` and other CF time units become seconds, degrees unitless); else the array's own `resolution`/`voxel_size`, `offset`, `units`, `axis_names` (funlib) or `transform` (COSEM), C order |
-| N5          | the array's `transform` (COSEM, C order); the parent's `multiscales[].datasets[].transform` for this path; `pixelResolution`/`resolution` (array, else group) × `downsamplingFactors`, plus `offset`, x-first |
+| zarr v2/v3  | parent OME-NGFF `multiscales` entry whose `path` is this array, composed with the multiscale-level `coordinateTransformations` if present (0.4/0.5; in 0.6 those lead to other coordinate systems and are applied only through a [`scene://`](#scene-sources-ome-zarr-06-transformations) source, and axes come from the intrinsic coordinate system); else, for an array xarray wrote (geo, climate and solar data), its dimension names (`_ARRAY_DIMENSIONS`, or zarr v3 `dimension_names`) as the axes and the 1-D coordinate array named after each dimension as its spacing and origin, where evenly spaced and increasing (`days since …` and other CF time units become seconds, degrees unitless); else the array's own `resolution`/`voxel_size`, `offset`, `units`, `axis_names` (funlib) or `transform` (COSEM), C order; else funlib's keys on the parent group |
+| N5          | the array's `transform` (COSEM, C order); the parent's `multiscales[].datasets[].transform` for this path; funlib's `voxel_size` and `offset` (array, else group, C order); `pixelResolution`/`resolution` (array, else group) × `downsamplingFactors`, plus `offset`, x-first |
 | precomputed | `resolution` (nm) and `voxel_offset` (the first voxel's corner, in voxels)         |
 | HDF5        | `resolution`/`voxel_size` and `offset` attributes, C order                         |
 
@@ -813,17 +813,20 @@ units, so beside a time axis in seconds a zoom of 1 is not one pixel per voxel:
 OME-Zarr, COSEM's `transform` and CF coordinates. Formats that give voxel 0's corner are
 moved half a voxel along their spatial axes on reading: precomputed's `voxel_offset`, and
 funlib's `offset` (0 when only a `resolution` is given), which is how Neuroglancer and
-funlib place them. N5 levels with `pixelResolution` and no offset follow BigDataViewer: a
-downsampled voxel's centre is the centre of the block it covers (a level with no
-`downsamplingFactors` is the full resolution). An array nothing places, a stored one
+funlib place them. An N5 level with no `offset` has its corner at the origin at every
+level, as Neuroglancer draws N5: voxel 0's centre is half a voxel of the level on
+(`downsamplingFactors / 2 × resolution`), where BigDataViewer would centre voxel 0 on the
+origin. An array nothing places, a stored one
 without placement metadata, an xarray dimension without an even coordinate, and every
 array made from nothing (`synthetic://`, an `ArrayInfo` given no translation), has its
 corner at the origin, as Neuroglancer draws a plain array: voxel 0's centre is half a
 voxel on along its spatial axes (those named `z`, `y` or `x`, else the last three),
 worldarray's rule. Served as precomputed, `voxel_offset` is the translation less half a voxel,
-rounded to whole voxels, so a precomputed source served again keeps its offset. Served as
-OME-Zarr, the translation is written as is, and Neuroglancer moves it back half a voxel to
-the corner. So a volume shows in the same place whichever format serves it, except that
+rounded to whole voxels, so a precomputed source served again keeps its offset, and chunks
+are keyed from it (`x0-x1_y0-y1_z0-z1` in the scale's voxels, offset included), as
+Neuroglancer and tensorstore ask for them. Served as OME-Zarr, the translation is written as
+is, always (worldarray's `ome_multiscales` writes the multiscales), and Neuroglancer moves it
+back half a voxel to the corner. So a volume shows in the same place whichever format serves it, except that
 precomputed cannot hold half-voxel offsets. Anything in the spec (`voxel_size`, `units`,
 `axes`, `translation`) overrides what was read. The spec's `select` pins non-spatial axes
 to one index each, `{"c": 1, "t": 0}` (`--select c=1,t=0`), so the ops see one channel of
@@ -831,8 +834,10 @@ one time point as a `z, y, x` volume; only that channel is read. HDF5 uses `file
 the `hdf5` extra.
 
 The browser engine reads the same stored formats in TypeScript (`web/src/sources.ts`), all
-but HDF5, and places them as above: OME-Zarr v2/v3, N5 (gzip or raw), xarray-style zarr
-arrays, and Neuroglancer precomputed volumes, each scale a level, unsharded or sharded
+but HDF5, and places them as above (`web/src/placement.ts`, worldarray's rules in
+TypeScript, which `npm test` runs on worldarray's fixture of metadata layouts): OME-Zarr
+v2/v3, zarr arrays outside an OME group (funlib, COSEM or xarray), N5 groups and arrays of
+three axes (gzip or raw), and Neuroglancer precomputed volumes, each scale a level, unsharded or sharded
 (`neuroglancer_uint64_sharded_v1` with the `identity` hash), encoded `raw`, `jpeg` (a
 chunk's z planes one tall image, decoded by the browser) or `compressed_segmentation`. A
 precomputed URL may keep Neuroglancer's `precomputed://`. `gs://` and `s3://` URLs are

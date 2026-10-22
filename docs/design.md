@@ -215,8 +215,14 @@ one tensorstore reader shared with cellmap-flow, cellmap-analyze and mesh-n-bone
 had each drifted to their own half-voxel rules. Its specification and its fixture of
 metadata layouts are the contract; chunkmirage keeps what only it needs on top: xarray
 coordinate arrays and CF packing, the spec's overrides and `kind`
-(`sources/tensorstore_source.py`). The browser engine's TypeScript readers place arrays
-by the same rules.
+(`sources/tensorstore_source.py`). What chunkmirage serves goes through it too: the OME
+multiscales of the zarr frontends (`wa.ome_multiscales`) and every format's chunk keys
+(`wa.chunk_key`, `wa.parse_chunk_key`), so a served dataset reads back by the rules it was
+written by; N5 attributes and precomputed `info` are chunkmirage's own, as worldarray writes
+neither. The browser engine's TypeScript readers place arrays by the same rules
+(`web/src/placement.ts`) and its OME builder (`web/src/layout.ts`) writes as worldarray
+does; `npm test` runs worldarray's two fixtures, of layouts read and of multiscales written,
+against them (`web/test/metadata.test.ts`).
 
 **Packaging: uv.** Everything the core needs is on PyPI. cellmap-flow can keep pixi for
 CUDA/torch and depend on chunkmirage as a normal PyPI/git dependency.
