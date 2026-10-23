@@ -12,11 +12,12 @@ and a release that breaks it says so here.
   tensorstore ask for, counted from the offset (`3-19_2-18_1-9`); every chunk of one not at
   0 was a 404. Chunk keys of every format are worldarray's (`wa.chunk_key`,
   `wa.parse_chunk_key`).
-- `worldarray>=0.5,<0.6`, one minor series at a time. A tensorstore read stranded by its
+- `worldarray>=0.6,<0.7`, one minor series at a time. A tensorstore read stranded by its
   lost wakeup, which never returned, now runs within a second: worldarray's watchdog kicks
-  the pools of every context it opens a store on. chunkmirage keeps its own context, whose
-  decoding and file I/O pools are tensorstore's own, as wide as the machine; worldarray
-  0.5's shared one sizes them to the job's slots, one decoding thread in a plain `bsub`.
+  the pools of every context it opens a store on. chunkmirage's stores share worldarray's
+  context at tensorstore's own pool sizes (`wa.shared_context(cache_bytes, threads=0)`), as
+  wide as the machine; worldarray's default sizes them to the job's slots, one decoding
+  thread in a plain `bsub`.
 - Neuroglancer links and precomputed's `resolution` convert units by worldarray's table
   (`wa.units`) rather than chunkmirage's own: centimetres, picometres, microns,
   nanoseconds, British spellings, plurals and capitals are converted, where a spatial axis
