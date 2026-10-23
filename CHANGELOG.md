@@ -4,6 +4,17 @@ Notable changes per release. Versions follow the rules in
 [contributing](docs/contributing.md#plugin-api-and-versioning): the plugin API is stable,
 and a release that breaks it says so here.
 
+## Unreleased
+
+### Serving
+
+- `materialize` and the GeoTIFF source open their stores on the context chunkmirage's
+  other stores share (`wa.shared_context(0, threads=0)`), where they had tensorstore's
+  default one: worldarray's watchdog now covers them, so a write or tile read stranded by
+  tensorstore's lost wakeup runs within a second instead of never, and `materialize`
+  writes without fsync or OS file locks, about 10 ms less per chunk on NFS. A chunk is
+  still written whole, to a temporary file renamed into place.
+
 ## 0.1.0a5 (2026-10-23)
 
 A dependency release, on `worldarray>=0.8,<1`: packages beside chunkmirage can now move to
