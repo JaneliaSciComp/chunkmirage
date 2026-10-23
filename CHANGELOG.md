@@ -4,7 +4,12 @@ Notable changes per release. Versions follow the rules in
 [contributing](docs/contributing.md#plugin-api-and-versioning): the plugin API is stable,
 and a release that breaks it says so here.
 
-## Unreleased
+## 0.1.0a3 (2026-10-23)
+
+The third alpha, on `worldarray>=0.6,<0.7`. The plugin API only grew
+(`Frontend.chunk_request`). What moves: an N5 level with no `offset` has its corner at the
+origin (under Sources), and the zarr frontends' OME multiscales are worldarray's (under
+Serving).
 
 ### Serving
 
