@@ -4,6 +4,18 @@ Notable changes per release. Versions follow the rules in
 [contributing](docs/contributing.md#plugin-api-and-versioning): the plugin API is stable,
 and a release that breaks it says so here.
 
+## 0.1.0a4 (2026-10-23)
+
+A dependency release, on `worldarray>=0.7,<0.8`, so chunkmirage installs beside packages
+that need worldarray 0.7 (cellmap-flow). Nothing else changes.
+
+### Serving
+
+- Opening a store and reading its metadata documents time out and retry under worldarray's
+  `Retry` (5 s times the attempt, ten attempts), as chunk reads already did: a source that
+  accepts a connection and never answers raises `TimeoutError` instead of hanging the
+  server. Listings are not covered.
+
 ## 0.1.0a3 (2026-10-23)
 
 The third alpha, on `worldarray>=0.6,<0.7`. The plugin API only grew
