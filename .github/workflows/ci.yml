@@ -3,8 +3,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "0 6 * * 1"  # Mondays: worldarray-latest alone
+  workflow_dispatch:
 jobs:
   test:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -13,7 +17,17 @@ jobs:
       - run: uv run ruff check src tests examples web
       - run: uv run pytest -q
       - run: uv run mkdocs build --strict
+  worldarray-latest:  # the pin takes any worldarray <1, so the newest release is tested too, not only the locked one
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --extra all --extra cpu --group dev --upgrade-package worldarray
+      - run: uv run python -c "import worldarray; print('worldarray', worldarray.__version__)"
+      - run: uv run pytest -q
   web:  # the browser engine: its types follow chunkmirage's schema (tests/test_schema.py keeps that current)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     defaults:
       run:

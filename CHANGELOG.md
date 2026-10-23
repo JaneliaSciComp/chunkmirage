@@ -4,6 +4,18 @@ Notable changes per release. Versions follow the rules in
 [contributing](docs/contributing.md#plugin-api-and-versioning): the plugin API is stable,
 and a release that breaks it says so here.
 
+## 0.1.0a5 (2026-10-23)
+
+A dependency release, on `worldarray>=0.8,<1`: packages beside chunkmirage can now move to
+a new worldarray without a chunkmirage release, and CI tests the newest worldarray every
+Monday ([contributing](docs/contributing.md)). Nothing else changes.
+
+### Serving
+
+- worldarray 0.8 times out the open that creates an array, and the context chunkmirage's
+  stores share (`threads=0`, pools still tensorstore's own) writes without fsync or OS file
+  locks; chunkmirage only reads through it.
+
 ## 0.1.0a4 (2026-10-23)
 
 A dependency release, on `worldarray>=0.7,<0.8`, so chunkmirage installs beside packages
