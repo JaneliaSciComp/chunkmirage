@@ -40,15 +40,12 @@ def open_tensorstore(
     return wa.open_tensorstore(path, level=scale_index, context=ctx)
 
 
-_SECONDS = {"day": 86400.0, "hour": 3600.0, "minute": 60.0, "second": 1.0}
-
-
 def _cf_unit(units: str) -> tuple[str, float]:
     """A CF coordinate's ``units`` as (unit, factor to it): ``days since ...`` and the like
     become seconds, degrees of latitude or longitude unitless (no viewer has degrees)."""
     u = units.strip().lower()
     if m := re.match(r"(day|hour|minute|second)s?\s+since\b", u):
-        return "s", _SECONDS[m.group(1)]
+        return "s", wa.units.factor(m.group(1), "second")
     if u.startswith("degree"):
         return "", 1.0
     return units.strip(), 1.0

@@ -13,7 +13,7 @@ import worldarray as wa
 
 from chunkmirage.core import ArrayInfo
 from chunkmirage.frontends.base import Frontend, Metadata, register_frontend
-from chunkmirage.neuroglancer import _UNIT_TO_M
+from chunkmirage.neuroglancer import metres
 from chunkmirage.pipeline import Pipeline
 
 _SUPPORTED = {"uint8", "uint16", "uint32", "uint64", "float32"}
@@ -80,7 +80,7 @@ class PrecomputedFrontend(Frontend):
         for lvl in range(pipeline.num_levels):
             info = pipeline.info(lvl)
             # precomputed resolutions are always nanometres
-            res = [info.voxel_size[a] * _UNIT_TO_M.get(info.units[a], 1e-9) * 1e9 for a in sp]
+            res = [info.voxel_size[a] * metres(info.units[a]) * 1e9 for a in sp]
             res = res[::-1]
             off = self._offset(info, sp)[::-1]
             scales.append(

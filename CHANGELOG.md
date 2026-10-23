@@ -12,11 +12,14 @@ and a release that breaks it says so here.
   tensorstore ask for, counted from the offset (`3-19_2-18_1-9`); every chunk of one not at
   0 was a 404. Chunk keys of every format are worldarray's (`wa.chunk_key`,
   `wa.parse_chunk_key`).
-- The zarr frontends' OME multiscales are written by worldarray (`wa.ome_multiscales`,
-  `worldarray>=0.3,<1`): a translation is written even when it is 0, OME 0.5 has its
-  `version` only beside `multiscales`, an axis with a name that is neither spatial nor a
-  channel nor time is left untyped, and the multiscale no longer carries `"type":
-  "chunkmirage"` or a description.
+- Neuroglancer links and precomputed's `resolution` convert units by worldarray's table
+  (`wa.units`, `worldarray>=0.3.1,<1`) rather than chunkmirage's own: centimetres,
+  picometres, microns, nanoseconds, British spellings, plurals and capitals are converted,
+  where a spatial axis in one of them was taken as nanometres and a time axis as unitless.
+- The zarr frontends' OME multiscales are written by worldarray (`wa.ome_multiscales`): a
+  translation is written even when it is 0, OME 0.5 has its `version` only beside
+  `multiscales`, an axis with a name that is neither spatial nor a channel nor time is left
+  untyped, and the multiscale no longer carries `"type": "chunkmirage"` or a description.
 
 ### Sources
 

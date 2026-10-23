@@ -804,7 +804,9 @@ names: the OME frontends type a time axis as `time` (by name or a time unit), an
 viewer helpers show its last three axes as x, y and z.
 
 Unitless `z, y, x` axes are served as nanometres by every frontend (left without a unit,
-Neuroglancer would read OME axes as metres). Neuroglancer counts zoom
+Neuroglancer would read OME axes as metres). Units are converted by worldarray's table
+(`wa.units`): to metres and seconds in Neuroglancer links, to nanometres in precomputed's
+`resolution`, a spatial unit it does not know taken as nanometres. Neuroglancer counts zoom
 (`crossSectionScale`) in the smallest scale among the viewer's dimensions, whatever their
 units, so beside a time axis in seconds a zoom of 1 is not one pixel per voxel:
 `chunkmirage.neuroglancer.cross_section_scale(dims, axis, voxels_per_pixel)` converts.

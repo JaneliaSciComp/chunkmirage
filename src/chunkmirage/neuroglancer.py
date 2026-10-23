@@ -6,38 +6,11 @@ import json
 from collections.abc import Mapping, Sequence
 from urllib.parse import quote
 
+import worldarray as wa
+
 from chunkmirage.core import ArrayInfo
 from chunkmirage.pipeline import Pipeline
 
-_UNIT_TO_M = {
-    "nm": 1e-9,
-    "nanometer": 1e-9,
-    "um": 1e-6,
-    "µm": 1e-6,
-    "micrometer": 1e-6,
-    "mm": 1e-3,
-    "millimeter": 1e-3,
-    "m": 1.0,
-    "meter": 1.0,
-    "km": 1e3,
-    "kilometer": 1e3,
-    "angstrom": 1e-10,
-    "": 1e-9,
-}
-_TIME_TO_S = {
-    "s": 1.0,
-    "second": 1.0,
-    "ms": 1e-3,
-    "millisecond": 1e-3,
-    "us": 1e-6,
-    "microsecond": 1e-6,
-    "min": 60.0,
-    "minute": 60.0,
-    "h": 3600.0,
-    "hour": 3600.0,
-    "d": 86400.0,
-    "day": 86400.0,
-}
 _SPATIAL = ("z", "y", "x")
 DEFAULT_VIEWER = "https://neuroglancer-demo.appspot.com"
 
@@ -107,6 +80,12 @@ def layer_for(name: str, pipeline: Pipeline, src_url: str) -> dict:
     return {"type": "image", "source": src_url, "name": name}
 
 
+def metres(unit: str) -> float:
+    """Metres in one ``unit`` of a spatial axis; a unitless or unknown one is taken as nm, as
+    the frontends serve it."""
+    return wa.units.factor(unit, "meter") if wa.units.kind(unit) == "space" else 1e-9
+
+
 def dimensions(info: ArrayInfo) -> dict[str, list]:
     """Each axis as Neuroglancer's zarr/OME reader names and scales it, ``{name: [scale,
     unit]}`` in axis order: time (any axis in a time unit) in seconds, spatial axes in
@@ -116,10 +95,10 @@ def dimensions(info: ArrayInfo) -> dict[str, list]:
     for ax, vs, unit in zip(info.axes, info.voxel_size, info.units):
         if ax == "c":
             dims["c'"] = [1.0, ""]
-        elif unit in _TIME_TO_S:
-            dims[ax] = [vs * _TIME_TO_S[unit], "s"]
+        elif wa.units.kind(unit) == "time":
+            dims[ax] = [vs * wa.units.factor(unit, "second"), "s"]
         elif ax in _SPATIAL:
-            dims[ax] = [vs * _UNIT_TO_M.get(unit, 1e-9), "m"]
+            dims[ax] = [vs * metres(unit), "m"]
         else:
             dims[ax] = [vs, ""]
     return dims
