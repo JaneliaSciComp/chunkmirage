@@ -3,7 +3,8 @@ read through worldarray: it detects the format, opens the array in C order with 
 0, reads remote stores the way a public dataset most likely lets in, and says where the array
 sits (voxel size, the centre of voxel 0, units, axes) by the conventions in
 ``docs/concepts/formats.md``. What chunkmirage adds on top: xarray coordinate arrays and CF
-packing (geo and climate zarr), the overrides ``open_source`` takes, and the ``kind``.
+packing (geo and climate zarr), the overrides ``open_source`` takes, the ``kind``, and how
+wide its tensorstore pools are.
 """
 
 from __future__ import annotations
@@ -17,9 +18,14 @@ import worldarray as wa
 from chunkmirage.core import ArrayInfo, Box, corner_to_centre, kind_for_dtype
 from chunkmirage.sources.base import MultiscaleSource, Source
 
-#: One tensorstore context per cache budget, shared by every source this process opens: the
-#: levels of an image, two opens of it and several images all draw on one cache pool.
-shared_context = wa.shared_context
+
+def shared_context(cache_bytes: int = 0) -> ts.Context:
+    """One tensorstore context per cache budget, shared by every source this process opens:
+    the levels of an image, two opens of it and several images all draw on one cache pool.
+    Its decoding and file I/O pools are tensorstore's own, as wide as the machine, as the
+    server's ``--threads`` is, where worldarray's default sizes them to the job's slots (one
+    in a plain ``bsub``)."""
+    return wa.shared_context(cache_bytes, threads=0)
 
 
 def detect(url: str) -> wa.Node | None:
@@ -40,15 +46,12 @@ def open_tensorstore(
     return wa.open_tensorstore(path, level=scale_index, context=ctx)
 
 
-_SECONDS = {"day": 86400.0, "hour": 3600.0, "minute": 60.0, "second": 1.0}
-
-
 def _cf_unit(units: str) -> tuple[str, float]:
     """A CF coordinate's ``units`` as (unit, factor to it): ``days since ...`` and the like
     become seconds, degrees of latitude or longitude unitless (no viewer has degrees)."""
     u = units.strip().lower()
     if m := re.match(r"(day|hour|minute|second)s?\s+since\b", u):
-        return "s", _SECONDS[m.group(1)]
+        return "s", wa.units.factor(m.group(1), "second")
     if u.startswith("degree"):
         return "", 1.0
     return units.strip(), 1.0
