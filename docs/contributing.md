@@ -10,7 +10,10 @@ uv run mkdocs serve          # live docs at http://127.0.0.1:8000
 ```
 
 CI runs ruff, pytest and `mkdocs build --strict` on every push and pull request. Docs
-deploy to GitHub Pages from `main`.
+deploy to GitHub Pages from `main`. chunkmirage takes any worldarray below 1.0 at or above
+the one it was last moved to, so packages beside it can move to a new worldarray without
+waiting for a chunkmirage release; every Monday, and on a manual run of the workflow, CI
+also runs pytest against the newest worldarray on PyPI (`worldarray-latest`).
 
 ## Documentation must move with the code
 
