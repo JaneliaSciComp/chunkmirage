@@ -3,12 +3,14 @@ read through worldarray: it detects the format, opens the array in C order with 
 0, reads remote stores the way a public dataset most likely lets in, and says where the array
 sits (voxel size, the centre of voxel 0, units, axes) by the conventions in
 ``docs/concepts/formats.md``. What chunkmirage adds on top: xarray coordinate arrays and CF
-packing (geo and climate zarr), the overrides ``open_source`` takes, and the ``kind``.
+packing (geo and climate zarr), the overrides ``open_source`` takes, the ``kind``, and the
+tensorstore context its stores share.
 """
 
 from __future__ import annotations
 
 import re
+import threading
 
 import numpy as np
 import tensorstore as ts
@@ -17,9 +19,22 @@ import worldarray as wa
 from chunkmirage.core import ArrayInfo, Box, corner_to_centre, kind_for_dtype
 from chunkmirage.sources.base import MultiscaleSource, Source
 
-#: One tensorstore context per cache budget, shared by every source this process opens: the
-#: levels of an image, two opens of it and several images all draw on one cache pool.
-shared_context = wa.shared_context
+_contexts: dict[int, ts.Context] = {}
+_contexts_lock = threading.Lock()
+
+
+def shared_context(cache_bytes: int = 0) -> ts.Context:
+    """One tensorstore context per cache budget, shared by every source this process opens:
+    the levels of an image, two opens of it and several images all draw on one cache pool.
+    Its decoding and file I/O pools are tensorstore's own, as wide as the machine, as the
+    server's ``--threads`` is; worldarray's shared context sizes them to the job's slots (one
+    in a plain ``bsub``). worldarray watches it for tensorstore's lost wakeups once it opens
+    a store on it."""
+    with _contexts_lock:
+        ctx = _contexts.get(int(cache_bytes))
+        if ctx is None:
+            ctx = _contexts[int(cache_bytes)] = ts.Context({"cache_pool": {"total_bytes_limit": int(cache_bytes)}})
+        return ctx
 
 
 def detect(url: str) -> wa.Node | None:

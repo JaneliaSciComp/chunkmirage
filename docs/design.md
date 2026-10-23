@@ -215,7 +215,10 @@ one tensorstore reader shared with cellmap-flow, cellmap-analyze and mesh-n-bone
 had each drifted to their own half-voxel rules. Its specification and its fixture of
 metadata layouts are the contract; chunkmirage keeps what only it needs on top: xarray
 coordinate arrays and CF packing, the spec's overrides and `kind`
-(`sources/tensorstore_source.py`). What chunkmirage serves goes through it too: the OME
+(`sources/tensorstore_source.py`), and its own tensorstore context: worldarray's shared one
+sizes its decoding and file I/O pools to the job's slots (one in a plain `bsub`), where a
+server's are tensorstore's own, as wide as the machine, like `--threads`; worldarray still
+watches it for tensorstore's lost wakeups. What chunkmirage serves goes through it too: the OME
 multiscales of the zarr frontends (`wa.ome_multiscales`) and every format's chunk keys
 (`wa.chunk_key`, `wa.parse_chunk_key`), so a served dataset reads back by the rules it was
 written by; N5 attributes and precomputed `info` are chunkmirage's own, as worldarray writes

@@ -464,7 +464,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'gpu'", specifier = ">=2.6", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "chunkmirage", extra = "gpu" } },
     { name = "typer", specifier = ">=0.12" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
-    { name = "worldarray", specifier = ">=0.3.1,<1" },
+    { name = "worldarray", specifier = ">=0.5,<0.6" },
 ]
 provides-extras = ["hdf5", "tiff", "ops", "mesh", "mcp", "viewer", "https", "gpu", "cpu", "cupy", "all"]
 
@@ -3582,16 +3582,16 @@ wheels = [
 
 [[package]]
 name = "worldarray"
-version = "0.3.1"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
     { name = "tensorstore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c1/f5/34cbe5147a086fa5aebb60a13eeb27b85a4e5a15f824e32720c6017e036f/worldarray-0.3.1.tar.gz", hash = "sha256:afacc0f0f47bd08c5f65960b4355e3af32efd0fb32e3dd05145524999e23d047", size = 215742, upload-time = "2026-10-23T00:51:57.367Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9c/fa/4a4186da9bf8f088e1b331c65cddc69c216de8a024753446f012e6ad065b/worldarray-0.5.0.tar.gz", hash = "sha256:6b1ff9f51ff90d5ff73f19759ced854a6d395c71e6f4059c9f4deb9ea3ae73f1", size = 230798, upload-time = "2026-10-23T14:15:38.127Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f7/e6/2f21cc50489752b9103b5cbdffff5ee106d4337ca44d780efd9ba5de4180/worldarray-0.3.1-py3-none-any.whl", hash = "sha256:7f9fc4793a0a9e134df816c5f5a45d24f6159fc6c26f9b9835852733f2f2c34b", size = 70882, upload-time = "2026-10-23T00:51:55.668Z" },
+    { url = "https://files.pythonhosted.org/packages/42/59/084b40cb33bc3927c5d00051da08723422dfe04813c631b5f796d83d0a3c/worldarray-0.5.0-py3-none-any.whl", hash = "sha256:8cbf540e18b4012d924cae7e52e3f975e04447edad56d13e39323e6e3c5978da", size = 74989, upload-time = "2026-10-23T14:15:36.669Z" },
 ]
 
 [[package]]
