@@ -14,6 +14,8 @@ and a release that breaks it says so here.
   tensorstore's lost wakeup runs within a second instead of never, and `materialize`
   writes without fsync or OS file locks, about 10 ms less per chunk on NFS. A chunk is
   still written whole, to a temporary file renamed into place.
+- The lock moves to worldarray 0.9.0; the pin stays `>=0.8,<1`. The context chunkmirage's
+  stores share is unchanged under 0.9.
 
 ## 0.1.0a5 (2026-10-23)
 
