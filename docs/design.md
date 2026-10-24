@@ -218,7 +218,9 @@ coordinate arrays and CF packing, the spec's overrides and `kind`
 (`sources/tensorstore_source.py`), and how wide its tensorstore pools are: worldarray's
 shared context at tensorstore's own sizes (`threads=0`), as wide as the machine like
 `--threads`, where worldarray's default sizes them to the job's slots (one in a plain
-`bsub`). What chunkmirage serves goes through it too: the OME
+`bsub`). The stores chunkmirage opens itself (`materialize`'s, a GeoTIFF's) are opened on
+it too, so worldarray's watchdog for tensorstore's lost wakeup covers them. What
+chunkmirage serves goes through it too: the OME
 multiscales of the zarr frontends (`wa.ome_multiscales`) and every format's chunk keys
 (`wa.chunk_key`, `wa.parse_chunk_key`), so a served dataset reads back by the rules it was
 written by; N5 attributes and precomputed `info` are chunkmirage's own, as worldarray writes

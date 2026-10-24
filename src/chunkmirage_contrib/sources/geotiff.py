@@ -145,9 +145,12 @@ def open_geotiff(path: str, *, cache_bytes: int = 0, **_) -> MultiscaleSource:
     import tensorstore as ts
     import tifffile
 
+    from chunkmirage.sources.tensorstore_source import shared_context
+
     head, _, key = path.rstrip("/").rpartition("/")
     root = head + "/"  # a kvstore's keys are appended to its root as they are
-    kv = ts.KvStore.open(root if "://" in head else {"driver": "file", "path": root}).result()
+    spec = root if "://" in head else {"driver": "file", "path": root}
+    kv = ts.KvStore.open(spec, context=shared_context()).result()  # watched by worldarray
     ranges = _Ranges(kv, key, _size(kv, key, path))
     with _lock:
         tif = tifffile.TiffFile(io.BufferedReader(ranges, 1 << 16), name=key)

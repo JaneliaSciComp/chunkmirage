@@ -132,12 +132,14 @@ def materialize(
     after each batch of chunks. Returns ``{chunks, written, skipped, bytes}``."""
     import tensorstore as ts
 
+    from chunkmirage.sources.tensorstore_source import shared_context
+
     if format not in FORMATS:
         raise ValueError(f"format {format!r}: one of {', '.join(FORMATS)}")
     if extent not in EXTENTS:
         raise ValueError(f"extent {extent!r}: one of {', '.join(EXTENTS)}")
     fe = get_frontend(format, **({} if compressor is None else {"compressor": compressor}))
-    kv = ts.KvStore.open(_kvstore_url(where)).result()
+    kv = ts.KvStore.open(_kvstore_url(where), context=shared_context()).result()  # watched by worldarray
     levels = list(range(pipeline.num_levels)) if levels is None else [int(lv) for lv in levels]
     for lv in levels:
         if not 0 <= lv < pipeline.num_levels:
