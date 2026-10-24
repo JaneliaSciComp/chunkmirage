@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>chunkmirage demo</title>
+<style>:root{--lightningcss-light: ;--lightningcss-dark:initial;color-scheme:dark;--bg:#0e1014;--panel:#161a20;--line:#262c36;--fg:#e7e9ec;--muted:#939cab;--faint:#5d6675;--accent:#7ab0ff;--accent-ink:#081225}*{box-sizing:border-box}html,body{height:100%;margin:0}body{background:var(--bg);color:var(--fg);grid-template-columns:minmax(280px,330px) 1fr;font:13px/1.45 system-ui,-apple-system,Segoe UI,sans-serif;display:grid}aside{background:var(--panel);border-right:1px solid var(--line);flex-direction:column;gap:16px;padding:18px 16px;display:flex;overflow-y:auto}a{color:var(--accent);text-decoration:none}h1{margin:0;font-size:15px;font-weight:650}p{margin:0}.muted{color:var(--muted)}.faint{color:var(--faint);font-size:12px}.label{letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-size:11px;font-weight:600}pre{border:1px solid var(--line);background:var(--bg);white-space:pre-wrap;word-break:break-all;border-radius:6px;margin:6px 0 0;padding:8px;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}button{background:var(--accent);color:var(--accent-ink);font:inherit;cursor:pointer;border:0;border-radius:6px;padding:6px 10px;font-weight:650}.state{color:var(--fg)}.date{font-variant-numeric:tabular-nums;font-size:18px;font-weight:650}#when{flex-direction:column;gap:4px;min-height:64px;display:flex}#when[hidden]{display:none}[hidden]{display:none!important}.controls{flex-direction:column;gap:10px;display:flex}.control{grid-template-columns:1fr auto;align-items:center;gap:2px 8px;display:grid}.control input[type=range]{width:100%;accent-color:var(--accent);grid-column:1/-1}.control output{font-variant-numeric:tabular-nums;color:var(--muted)}.counts{color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px}main{background:#000;min-width:0;position:relative}main iframe{border:0;width:100%;height:100%;position:absolute;inset:0}.empty{text-align:center;color:var(--faint);place-content:center;padding:24px;display:grid;position:absolute;inset:0}#map{background:#000;position:absolute;inset:0}#gdal{background:var(--bg);padding:18px;position:absolute;inset:0;overflow:auto}.gdal{flex-direction:column;gap:10px;max-width:980px;display:flex}.gdal .row{flex-wrap:wrap;align-items:center;gap:12px;display:flex}.gdal img{max-width:100%;image-rendering:pixelated;border:1px solid var(--line)}.gdal img:not([src]){display:none}select{font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:2px 4px}body.coding{grid-template-columns:minmax(360px,560px) 1fr}#code-text{resize:vertical;border:1px solid var(--line);background:var(--bg);width:100%;min-height:16em;color:var(--fg);tab-size:4;white-space:pre;border-radius:6px;padding:8px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}#code-error{color:#ff8a80;border-color:#5a2a2a}#code-output{color:var(--muted)}.row{flex-wrap:wrap;align-items:center;gap:8px;display:flex}.trust{color:#f3d77a;border:1px solid #6b5a1e;border-radius:6px;padding:8px}#ask summary{cursor:pointer;color:var(--accent)}#ask>.controls{margin-top:8px}#ask input{width:100%;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:4px 6px}#ask .row input{flex:1;width:auto;min-width:0}@media (max-width:720px){body{grid-template-rows:auto 70vh;grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid var(--line)}}</style>
+  <script type="module" crossorigin src="./assets/pipeline-IiqF3_sM.js"></script>
+  <link rel="modulepreload" crossorigin href="./assets/modulepreload-polyfill-P2Xu9kJm.js">
+  <link rel="modulepreload" crossorigin href="./assets/cards--9-MEbNz.js">
+  <link rel="modulepreload" crossorigin href="./assets/preload-helper-uBIymjUX.js">
+  <link rel="modulepreload" crossorigin href="./assets/chunkmirage.schema-CqR-sRfF.js">
+  <link rel="modulepreload" crossorigin href="./assets/engine-DOxljVa6.js">
+</head>
+<body>
+<aside>
+  <p><a href="./">← All demos</a></p>
+  <div>
+    <h1 id="title">chunkmirage demo</h1>
+  </div>
+  <section id="when" hidden>
+    <p class="date" id="date"></p>
+    <p class="muted" id="event"></p>
+  </section>
+  <p class="muted" id="blurb"></p>
+  <p class="faint">Data: <span id="data"></span></p>
+  <section class="controls" id="consumers" hidden><div class="label">Read by</div>
+    <select id="consumer"></select><p class="faint" id="consumer-note"></p></section>
+  <section class="controls" id="controls" hidden><div class="label">Settings</div></section>
+  <section class="controls" id="code" hidden>
+    <div class="label">Your Python</div>
+    <p class="faint">Runs on each chunk of a layer, in this browser. The view updates as you edit.</p>
+    <div class="row"><select id="code-view" aria-label="layer"></select><button id="code-add" type="button">Add Python</button></div>
+    <p class="faint" id="code-where"></p>
+    <div class="controls" id="code-edit" hidden>
+      <p class="trust" id="code-trust" hidden>This link carries Python, shown below: read it first. It runs in this tab only, when you choose.
+        <button id="code-run" type="button">Run it</button></p>
+      <textarea id="code-text" spellcheck="false" aria-label="Python"></textarea>
+      <pre id="code-error" hidden></pre>
+      <pre id="code-output" hidden title="What the code printed"></pre>
+      <div class="controls" id="code-sliders"></div>
+      <div class="row"><button id="code-share" type="button">Copy link</button><button id="code-plugin" type="button">Copy as plugin</button><button id="code-remove" type="button">Remove</button></div>
+    </div>
+    <details id="ask">
+      <summary>Ask a model to write it</summary>
+      <div class="controls">
+        <div class="row"><select id="ask-provider" aria-label="provider"></select><input id="ask-model" list="ask-models" spellcheck="false" aria-label="model"><datalist id="ask-models"></datalist></div>
+        <input id="ask-key" type="password" autocomplete="off" spellcheck="false" aria-label="API key">
+        <p class="faint" id="ask-note">Your key stays in this tab for this visit and goes only to the provider picked, billed to you. The code a reply ends with replaces the code above and runs here, as yours does.</p>
+        <div class="chat"></div>
+      </div>
+    </details>
+  </section>
+  <section>
+    <div class="label">Status</div>
+    <p class="state" id="state">Starting…</p>
+    <p class="counts" id="counts"></p>
+  </section>
+  <section>
+    <div class="label">The same from Python</div>
+    <pre id="command"></pre>
+    <p style="margin-top: 6px"><button id="copy" type="button">Copy</button> <button id="save-code" type="button" hidden></button></p>
+    <p class="faint" id="save-note" hidden>Save the code where you run the command: it is the code as you have it, its sliders where you left them. Then open the server's <code>/processed/n5</code> in Fiji, or <code>/processed/zarr</code> in napari.</p>
+  </section>
+  <p class="faint">Everything here runs in this browser: the images are read from their public
+    buckets, and each chunk is computed by chunkmirage's own Python ops, run by Pyodide in web
+    workers, then served to the Neuroglancer viewer through a service worker. Nothing is uploaded.</p>
+</aside>
+<main>
+  <div class="empty" id="empty">Loading…</div>
+  <iframe id="ng" title="Neuroglancer" hidden></iframe>
+  <div id="map" hidden></div>
+  <div id="gdal" hidden></div>
+</main>
+</body>
+</html>
