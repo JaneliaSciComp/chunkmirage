@@ -3582,16 +3582,16 @@ wheels = [
 
 [[package]]
 name = "worldarray"
-version = "0.8.0"
+version = "0.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
     { name = "tensorstore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9e/d4/b8aa5cb7f2bc7891f1cb445814ed1a8f1abc0ee08de9acb5cd03b1d7bb50/worldarray-0.8.0.tar.gz", hash = "sha256:d5c81244e1dbfc979bbc0af0c9f5ca9e001b6f36dcd31f7991093029da800492", size = 239268, upload-time = "2026-10-23T21:14:48.961Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/36/b8/e0bdfccac609e262469771f1e72325ffdc360b49151ea6ba56d640d2a0b2/worldarray-0.9.0.tar.gz", hash = "sha256:653b8540b1b983482ebb1a8f3e4adf04ddf48dce26ec33e12aa15706c638ace7", size = 241143, upload-time = "2026-10-24T02:50:41.17Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cb/15/00d8a9da04090529a73343084719d4f1e65972433dfbb439a3b2eaa099a8/worldarray-0.8.0-py3-none-any.whl", hash = "sha256:98ef944153fb15487c852374b627020bda20f5ff67a94d7a23015c776e80cdcd", size = 77852, upload-time = "2026-10-23T21:14:47.621Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/7a/b4913b11b11cd5614e18cecb4b03481297467218492ab4779564a878704b/worldarray-0.9.0-py3-none-any.whl", hash = "sha256:5defb00643fea764a5d21227c97bc5e51f473ae8987f0cb51af8aa8d800efc34", size = 78271, upload-time = "2026-10-24T02:50:39.615Z" },
 ]
 
 [[package]]
