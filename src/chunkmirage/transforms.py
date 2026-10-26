@@ -19,7 +19,6 @@ from collections.abc import Sequence as Seq
 
 import numpy as np
 
-from chunkmirage import gpu
 from chunkmirage.gpu import array_module, host, ndimage
 
 
@@ -183,8 +182,6 @@ class VectorField:
         win = np.moveaxis(win, self.vector_axis, 0)
         if xp is not np:
             win = xp.asarray(np.ascontiguousarray(win))
-            if gpu.KERNELS and self.order == 1:  # what follows, in one kernel
-                return gpu.interpolate(g, win, lo, hi)
         local = xp.empty((self.ndim, pts.shape[0]), dtype=g.dtype)
         for j in range(self.ndim):  # clamped to the field, then placed in the window
             local[j] = xp.clip(g[:, j], 0.0, float(hi[j])) - float(lo[j])

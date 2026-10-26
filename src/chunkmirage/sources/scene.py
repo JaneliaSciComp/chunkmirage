@@ -238,28 +238,22 @@ class SceneLevelSource(Source):
                     "large area. Use smaller output chunks (chunk=...)."
                 )
             data = self.src.read(window)
-            if self.order == 1 and xp is not np and gpu.KERNELS:  # every lead index at once
-                k = len(lead.shape)
-                flat = xp.asarray(data).astype(ftype, copy=False).reshape(-1, *data.shape[k:])
-                vals = host(gpu.interpolate(c, flat, lo, components_first=True, dtype=ftype))
-                vals = vals.reshape(*lead.shape, len(c)).astype(float)
+            local = xp.empty((c.shape[1], len(c)), dtype=c.dtype)
+            for j in range(c.shape[1]):
+                local[j] = c[:, j] - float(lo[j])
+            if self.order == 0:  # the nearest voxel, gathered on the CPU in the image's dtype
+                vals = data[(Ellipsis, *host(local).astype(np.intp))]
             else:
-                local = xp.empty((c.shape[1], len(c)), dtype=c.dtype)
-                for j in range(c.shape[1]):
-                    local[j] = c[:, j] - float(lo[j])
-                if self.order == 0:  # the nearest voxel, gathered on the CPU in the image's dtype
-                    vals = data[(Ellipsis, *host(local).astype(np.intp))]
-                else:
-                    if xp is not np:
-                        data = xp.asarray(data).astype(ftype, copy=False)
-                    vals = np.empty((*lead.shape, len(c)))
-                    for li in np.ndindex(*lead.shape):
-                        vals[li] = host(map_coordinates(
-                            data[li], local, order=1, mode="nearest", prefilter=False, output=ftype
-                        ))
-            if self.order == 1 and np.issubdtype(self._info.dtype, np.integer):
-                lim = np.iinfo(self._info.dtype)
-                vals = np.clip(np.rint(vals), lim.min, lim.max)
+                if xp is not np:
+                    data = xp.asarray(data).astype(ftype, copy=False)
+                vals = np.empty((*lead.shape, len(c)))
+                for li in np.ndindex(*lead.shape):
+                    vals[li] = host(map_coordinates(
+                        data[li], local, order=1, mode="nearest", prefilter=False, output=ftype
+                    ))
+                if np.issubdtype(self._info.dtype, np.integer):
+                    lim = np.iinfo(self._info.dtype)
+                    vals = np.clip(np.rint(vals), lim.min, lim.max)
             res[..., host(inside)] = vals
         return res.reshape(*lead.shape, *slab.shape)
 

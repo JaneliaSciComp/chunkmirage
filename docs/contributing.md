@@ -15,11 +15,6 @@ the one it was last moved to, so packages beside it can move to a new worldarray
 waiting for a chunkmirage release; every Monday, and on a manual run of the workflow, CI
 also runs pytest against the newest worldarray on PyPI (`worldarray-latest`).
 
-No CI runner has a GPU, so `tests/test_gpu.py` skips there. Those tests check that the
-resampler's CUDA kernel (`chunkmirage.gpu.interpolate`) gives the same bits as
-`cupyx.scipy.ndimage`. Run them on a GPU node (`uv sync --extra cupy`) before merging a
-change to `gpu.py`, `transforms.py` or `sources/scene.py`.
-
 ## Documentation must move with the code
 
 The docs are part of the definition of done. Any change that adds, removes or renames a
