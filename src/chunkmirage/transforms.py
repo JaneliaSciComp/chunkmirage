@@ -155,20 +155,24 @@ class VectorField:
 
     def sample(self, pts: np.ndarray) -> np.ndarray:
         """Vectors at ``pts`` (NaN rows, e.g. unconvergent inverse points, stay NaN), on the
-        GPU for points there (CuPy): the window is read on the CPU and copied over."""
+        GPU for points there (CuPy): the window is read on the CPU and copied over. There a
+        wait for the GPU holds up the server's other threads, so only the window's bounds
+        come back before the result, and constants are Python scalars (an array of them
+        would be copied over, which waits)."""
         xp = array_module(pts)
-        finite = xp.isfinite(pts).all(axis=1)
-        if not bool(finite.all()):
-            out = xp.full((pts.shape[0], self.ncomp), xp.nan, dtype=pts.dtype)
-            if bool(finite.any()):
-                out[finite] = self.sample(pts[finite])
-            return out
         g = self.to_grid.apply(pts)
-        hi = xp.asarray(self.grid_shape, dtype=g.dtype) - 1
-        g = xp.clip(g, 0.0, hi)
         least, most = host(xp.stack([g.min(axis=0), g.max(axis=0)]))  # one wait on a GPU
-        lo = np.floor(least).astype(int)
-        top = np.minimum(np.floor(most).astype(int) + 2, self.grid_shape)
+        if not (np.isfinite(least).all() and np.isfinite(most).all()):
+            # a point that is not finite has no finite coordinate on the grid either
+            finite = xp.isfinite(pts).all(axis=1)
+            if not bool(finite.all()):
+                out = xp.full((pts.shape[0], self.ncomp), xp.nan, dtype=pts.dtype)
+                if bool(finite.any()):
+                    out[finite] = self.sample(pts[finite])
+                return out
+        hi = np.asarray(self.grid_shape) - 1
+        lo = np.floor(np.clip(least, 0, hi)).astype(int)
+        top = np.minimum(np.floor(np.clip(most, 0, hi)).astype(int) + 2, self.grid_shape)
         slices = [slice(int(a), int(b)) for a, b in zip(lo, top)]
         slices.insert(self.vector_axis, slice(None))
         # in the field's own precision (a stored field is float32, its window no float64 copy)
@@ -178,7 +182,9 @@ class VectorField:
         win = np.moveaxis(win, self.vector_axis, 0)
         if xp is not np:
             win = xp.asarray(np.ascontiguousarray(win))
-        local = (g - xp.asarray(lo, dtype=g.dtype)).T
+        local = xp.empty((self.ndim, pts.shape[0]), dtype=g.dtype)
+        for j in range(self.ndim):  # clamped to the field, then placed in the window
+            local[j] = xp.clip(g[:, j], 0.0, float(hi[j])) - float(lo[j])
         out = xp.empty((pts.shape[0], self.ncomp), dtype=win.dtype)
         map_coordinates = ndimage(xp).map_coordinates
         for c in range(self.ncomp):
