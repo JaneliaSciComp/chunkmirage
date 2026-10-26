@@ -441,7 +441,11 @@ The parameters follow the last `?`, so the image URL may carry its own query. Wi
 on a GPU, here and for `scene://`: every output voxel through the affines and sampled fields
 and the image interpolated, the resampler's own code run with CuPy for numpy and
 `cupyx.scipy.ndimage` for `scipy.ndimage` (the `cupy` extra), in single precision, so values
-agree with the CPU's to within a grey level and the cache keys are the same. Measured on a 184 M-voxel volume
+agree with the CPU's to within a grey level and the cache keys are the same. The linear
+interpolation of each field's and the image's window is one kernel of chunkmirage's own
+(`chunkmirage.gpu.interpolate`) rather than a call per component, and gives the bits
+`cupyx.scipy.ndimage.map_coordinates` would; `chunkmirage.gpu.KERNELS = False` uses cupyx
+instead. Measured on a 184 M-voxel volume
 through three lattice fields, CuPy took 0.5 s on an A100 where one CPU thread took 154 s
 and 24 took 13.5 s, most of it sampling the fields. A chain with any other step (a swirl,
 an inverse estimated numerically) is resampled on the CPU. To show the field as RGB, its components must be a Neuroglancer shader channel dimension (`c^`, read

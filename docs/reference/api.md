@@ -151,7 +151,8 @@ a store as a frontend serves it, which reads back as a stored dataset: the Pytho
 
 Two process-wide settings `chunkmirage serve` makes from its flags, for an application
 serving its own: `chunkmirage.gpu.set_device("cpu" | "auto" | "cuda" | "cuda:N")` (where
-`warp://` and `scene://` resample, `--device`), and `chunkmirage.demand.set_gather_threads(n)`
+`warp://` and `scene://` resample, `--device`; `chunkmirage.gpu.KERNELS = False` interpolates
+there with cupyx instead of chunkmirage's kernel), and `chunkmirage.demand.set_gather_threads(n)`
 (how many threads compute the chunks one read needs at once; default a thread per core the
 process may use, at least 4; `1` computes them in the thread that reads).
 
