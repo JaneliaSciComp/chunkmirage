@@ -58,6 +58,7 @@ class Affine(Transform):
             raise ValueError(f"affine matrix must be (d_out, d_in + 1), got shape {m.shape}")
         self.matrix = m
         self.ndim_out, self.ndim_in = m.shape[0], m.shape[1] - 1
+        self._on_device: dict = {}  # (GPU, dtype) -> the matrix there, for ``apply``
 
     @classmethod
     def identity(cls, n: int) -> Affine:
@@ -88,7 +89,18 @@ class Affine(Transform):
         # threads (1 M points took seconds there, against tens of milliseconds like this).
         # Points on a GPU (CuPy) stay there, in their precision; on the CPU, in float64.
         xp = array_module(pts)
-        pts = np.asarray(pts, dtype=float) if xp is np else pts
+        if xp is not np:
+            # one matrix product there: the multiply-adds are two dozen small kernels, whose
+            # launches hold the GIL long enough to pace a server's chunk threads
+            key = (xp.cuda.Device().id, pts.dtype)
+            if key not in self._on_device:
+                self._on_device[key] = (
+                    xp.asarray(self.linear.T, dtype=pts.dtype),
+                    xp.asarray(self.offset, dtype=pts.dtype),
+                )
+            linear_t, offset = self._on_device[key]
+            return pts @ linear_t + offset
+        pts = np.asarray(pts, dtype=float)
         out = xp.empty((*pts.shape[:-1], self.ndim_out), dtype=pts.dtype)
         for j, (row, t) in enumerate(zip(self.linear, self.offset)):
             col = pts[..., 0] * float(row[0])
@@ -154,8 +166,9 @@ class VectorField:
         g = self.to_grid.apply(pts)
         hi = xp.asarray(self.grid_shape, dtype=g.dtype) - 1
         g = xp.clip(g, 0.0, hi)
-        lo = np.floor(host(g.min(axis=0))).astype(int)
-        top = np.minimum(np.floor(host(g.max(axis=0))).astype(int) + 2, self.grid_shape)
+        least, most = host(xp.stack([g.min(axis=0), g.max(axis=0)]))  # one wait on a GPU
+        lo = np.floor(least).astype(int)
+        top = np.minimum(np.floor(most).astype(int) + 2, self.grid_shape)
         slices = [slice(int(a), int(b)) for a, b in zip(lo, top)]
         slices.insert(self.vector_axis, slice(None))
         # in the field's own precision (a stored field is float32, its window no float64 copy)

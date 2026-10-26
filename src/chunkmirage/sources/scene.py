@@ -216,12 +216,11 @@ class SceneLevelSource(Source):
             c = coords[inside]
             if self.order == 0:
                 c = xp.floor(c + 0.5)
-                lo, hi = host(c.min(axis=0)).astype(int), host(c.max(axis=0)).astype(int) + 1
+            least, most = host(xp.stack([c.min(axis=0), c.max(axis=0)]))  # one wait on a GPU
+            if self.order == 0:
+                lo, hi = least.astype(int), most.astype(int) + 1
             else:
-                lo, hi = (
-                    np.floor(host(c.min(axis=0))).astype(int),
-                    np.floor(host(c.max(axis=0))).astype(int) + 2,
-                )
+                lo, hi = np.floor(least).astype(int), np.floor(most).astype(int) + 2
             lo = np.clip(lo, 0, self._src_spatial.astype(int))
             hi = np.clip(hi, 0, self._src_spatial.astype(int))
             window = Box(tuple(lead.start) + tuple(lo), tuple(lead.stop) + tuple(hi))
