@@ -102,7 +102,7 @@ class SelectSource(Source):
     def cache_key(self) -> str:
         return self._key
 
-    def read(self, box: Box) -> np.ndarray:
+    def _inner_box(self, box: Box) -> Box:
         start, stop, k = [], [], 0
         for a in range(self.inner.info.ndim):
             if a in self.pinned:
@@ -112,7 +112,14 @@ class SelectSource(Source):
                 start.append(box.start[k])
                 stop.append(box.stop[k])
                 k += 1
-        return self.inner.read(Box(tuple(start), tuple(stop))).reshape(box.shape)
+        return Box(tuple(start), tuple(stop))
+
+    def read(self, box: Box) -> np.ndarray:
+        return self.inner.read(self._inner_box(box)).reshape(box.shape)
+
+    def read_into(self, box: Box, out: np.ndarray) -> np.ndarray:
+        self.inner.read_into(self._inner_box(box), np.expand_dims(out, tuple(sorted(self.pinned))))
+        return out
 
 
 def select_axes(source: MultiscaleSource, select: dict[str, int]) -> MultiscaleSource:
@@ -203,7 +210,8 @@ def _fused_stage(
     kept = len(total_halo)
     info = info.with_(chunk_shape=info.shape[: info.ndim - kept] + _output_chunks(prev_info, info, scale, keep_chunks))
     fused.input_box(prev_info, info.chunk_box((0,) * info.ndim), lead, total_halo, scale)  # whole voxels, or why not
-    overlap = ops[0].for_level(info).overlap_for(kept) if ops else (0,) * kept
+    first = ops[0].for_level(info) if ops else None
+    overlap = first.overlap_for(kept) if first is not None else (0,) * kept
     if any(overlap) and len(ops) > 1:
         raise ValueError(f"op {ops[0].name!r} has an overlap: it must be a stage of its own")
 
@@ -213,9 +221,20 @@ def _fused_stage(
 
     def compute(out_box: Box, idx: tuple[int, ...], stage_key: str) -> np.ndarray:
         in_box = fused.input_box(prev_info, out_box, lead, total_halo, scale)
+        buf = first.input_buffer(in_box.shape, prev_info.dtype) if first is not None else None
+        if buf is not None and (buf.shape != in_box.shape or buf.dtype != prev_info.dtype):
+            raise ValueError(
+                f"op {first.name!r}: input_buffer gave {buf.shape} {buf.dtype}, "
+                f"not {in_box.shape} {prev_info.dtype}"
+            )
         # past the volume's edge: its outermost voxels repeated (no step there), or zeros
-        block = prev.read_padded(in_box, edge=padding == "edge")
-        run = lambda: fused.run(ops, block, in_box, out_box, info, total_halo, scale)  # noqa: E731
+        block = prev.read_padded(in_box, edge=padding == "edge", out=buf)
+
+        def run():
+            out = fused.run(ops, block, in_box, out_box, info, total_halo, scale)
+            # the op may reuse its buffer: what is cached must not be a view of it
+            return out.copy() if buf is not None and np.may_share_memory(out, buf) else out
+
         return run() if queue is None else queue.run((stage_key, idx), level, run)
 
     def reads(box_of):  # what a chunk's computation reads, for Pipeline.plan

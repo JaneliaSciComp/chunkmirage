@@ -25,7 +25,8 @@ segment is one `ChunkedSource` stage whose `compute_chunk(index)`:
 3. reads that padded box from the previous stage via `read_padded`, voxels beyond the volume
    repeating the nearest one inside, so a filter or detector sees no step at its border
    (the spec's `"padding": "zero"` pads with zeros instead, as a model trained on
-   zero-padded blocks expects; the browser engine always repeats the edge);
+   zero-padded blocks expects; the browser engine always repeats the edge), into the array
+   the first op's `input_buffer` gives if it gives one;
 4. calls each op's `apply_at(block, box)` in turn on the whole padded block;
 5. crops the padding off and casts to the last op's declared output dtype.
 
@@ -90,6 +91,7 @@ schema for free (`GET /api/ops`).
 | `cache_token()`        | optional; what the output depends on beyond the parameters (a weights file's modification time), as a string: part of the op's digest, so a change gives new links and viewers refetch; see [caching](caching.md#state-outside-the-parameters) |
 | `apply(block)`         | the computation: returns the block's own shape, or the block shaved by `halo` on every side (a valid convolution), with leading axes dropped or added as `output_info` says |
 | `apply_at(block, box)` | optional; same but told the block's (halo-padded) position, for position-dependent results such as unique per-chunk labels |
+| `input_buffer(shape, dtype)` | optional; for the first op of a stage, the array its input is read into: pinned memory, say, so the block goes to a GPU in a copy that does not wait, with no copy into it first. It stays the op's: a result that shares its memory is copied before it is cached, so the op may reuse it once `apply` has returned. The browser engine does not call it. Default `None`: a new array |
 | `input_voxel_size()`   | optional; the voxel size the op must read (its last axes, in the source's units), as a model trained at one resolution does. The pipeline then runs it on one level and makes the coarser ones from its output; see [ops at one resolution](#ops-at-one-resolution). Default `None`: it runs on every level |
 | `for_level(info)`      | optional; the op as it runs on a scale level, given that level's `ArrayInfo`; ops in physical units take its voxel size (`slope` and `hillshade` their pixel spacing, which doubles from level to level). An op that set `computed_from` finds its input there, whose shape is exact where the output's is rounded up (blocks past the volume's edge are padding). Default: the op itself |
 

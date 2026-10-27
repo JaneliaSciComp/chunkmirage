@@ -17,6 +17,21 @@ and a release that breaks it says so here.
 - The lock moves to worldarray 0.9.0; the pin stays `>=0.8,<1`. The context chunkmirage's
   stores share is unchanged under 0.9.
 
+### Ops and pipelines
+
+- A read of many cached chunks works out where each piece goes an axis at a time and looks
+  each chunk up once, where each piece took several boxes' arithmetic and two cache lookups:
+  about 18 µs of Python a piece, holding the GIL, down to about 3. A block matcher's padded
+  read of 300 chunks spends about 1 ms of it instead of 5. Values are unchanged.
+- `Source.read_into(box, out)` and `read_padded(..., out=)` read into an array the caller
+  gives: a view of a larger one, or pinned memory. Cached stages, `stack://` and a source
+  with pinned axes write each piece in place, so a stack's channels are no longer assembled
+  and then copied.
+- An op's `input_buffer(shape, dtype)` may give the array its input is read into: pinned
+  memory, say, so a block goes to a GPU in a copy that does not wait, with no copy into it
+  first. A result that shares the buffer's memory is copied before it is cached. Like
+  `read_into`, an addition to the plugin API.
+
 ## 0.1.0a5 (2026-10-23)
 
 A dependency release, on `worldarray>=0.8,<1`: packages beside chunkmirage can now move to

@@ -38,12 +38,14 @@ class StackSource(Source):
         return self._key
 
     def read(self, box: Box) -> np.ndarray:
+        return self.read_into(box, np.empty(box.shape, dtype=self._info.dtype))
+
+    def read_into(self, box: Box, out: np.ndarray) -> np.ndarray:
         space = Box(box.start[1:], box.stop[1:])
-        out = np.empty(box.shape, dtype=self._info.dtype)
         for i, c in enumerate(range(box.start[0], box.stop[0])):
             src, lead = self.parts[c]
             b = Box(lead + space.start, tuple(v + 1 for v in lead) + space.stop)
-            out[i] = src.read(b).reshape(space.shape)
+            src.read_into(b, out[i][(None,) * len(lead)])  # each image's read lands in its channel
         return out
 
 
