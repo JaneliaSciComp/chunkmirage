@@ -242,19 +242,22 @@ class SceneLevelSource(Source):
             for j in range(c.shape[1]):
                 local[j] = c[:, j] - float(lo[j])
             if self.order == 0:  # the nearest voxel, gathered on the CPU in the image's dtype
-                vals = data[(Ellipsis, *host(local).astype(np.intp))]
+                res[..., host(inside)] = data[(Ellipsis, *host(local).astype(np.intp))]
             else:
                 if xp is not np:
                     data = xp.asarray(data).astype(ftype, copy=False)
-                vals = np.empty((*lead.shape, len(c)))
+                vals = xp.empty((*lead.shape, len(c)), dtype=ftype)
                 for li in np.ndindex(*lead.shape):
-                    vals[li] = host(map_coordinates(
+                    vals[li] = map_coordinates(
                         data[li], local, order=1, mode="nearest", prefilter=False, output=ftype
-                    ))
-                if np.issubdtype(self._info.dtype, np.integer):
+                    )
+                if np.issubdtype(self._info.dtype, np.integer):  # in float64, as on the CPU
                     lim = np.iinfo(self._info.dtype)
-                    vals = np.clip(np.rint(vals), lim.min, lim.max)
-            res[..., host(inside)] = vals
+                    vals = xp.clip(xp.rint(vals.astype(np.float64, copy=False)), float(lim.min), float(lim.max))
+                # finished where it was computed: only the result comes back, in its dtype
+                full = xp.zeros((*lead.shape, n), dtype=self._info.dtype)
+                full[..., xp.flatnonzero(inside)] = vals
+                res = host(full)
         return res.reshape(*lead.shape, *slab.shape)
 
 

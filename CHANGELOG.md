@@ -19,9 +19,11 @@ and a release that breaks it says so here.
   one matrix product, where its column multiply-adds launched about twenty kernels. A
   field's window bounds come back in one wait, which also stands in for the check that the
   points are finite. Constants are Python scalars, where a small array of them was copied
-  over and waited for. On registration-station's chain of lattice fields on an H200, the
-  first two changes took views about 10% faster. The CPU path computes the same bits as
-  before.
+  over and waited for. A resampled chunk is rounded, clipped and put in place on the GPU,
+  so only the result comes back, in its own dtype (two bytes a voxel for uint16, where its
+  float values and the mask of points inside came back). On registration-station's chain of
+  lattice fields on an H200, the first two changes took views about 10% faster. The CPU
+  path computes the same bits as before.
 - The lock moves to worldarray 0.9.0; the pin stays `>=0.8,<1`. The context chunkmirage's
   stores share is unchanged under 0.9.
 
