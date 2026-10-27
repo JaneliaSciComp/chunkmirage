@@ -97,6 +97,15 @@ class Op(BaseModel):
         make per-chunk labels globally unique. Default delegates to ``apply``."""
         return self.apply(block)
 
+    def input_buffer(self, shape: tuple[int, ...], dtype: np.dtype) -> np.ndarray | None:
+        """An array of ``shape`` and ``dtype`` for the pipeline to read this op's input
+        into, when it is the first op of its stage: pinned memory, say, so the block goes to
+        a GPU in a copy that does not wait, with no copy into it first. It is the op's: the
+        pipeline writes the block into it and passes it to ``apply``, and copies a result
+        that shares its memory before caching it, so the op may reuse it once ``apply`` has
+        returned. ``None`` (the default): a new array, or the input's own chunk."""
+        return None
+
     # --- identity / serialization -------------------------------------------------
     def spec(self) -> dict[str, Any]:
         spec = {"op": self.name, **self.model_dump(mode="json")}

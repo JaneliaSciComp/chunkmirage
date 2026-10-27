@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
@@ -24,19 +25,37 @@ class Source(ABC):
     def read(self, box: Box) -> np.ndarray:
         """Return data for ``box`` (must lie within ``info.shape``), shape == box.shape."""
 
-    def read_padded(self, box: Box, fill=0, *, edge: bool = False) -> np.ndarray:
+    def read_into(self, box: Box, out: np.ndarray) -> np.ndarray:
+        """``read(box)`` written into ``out``, any writable array of ``box``'s shape and the
+        source's dtype (a view into a larger one, pinned memory for a copy to a GPU), and
+        returned. Sources that assemble a read from parts override it to write each part
+        in place; the default copies ``read``'s result."""
+        out[...] = self.read(box)
+        return out
+
+    def read_padded(self, box: Box, fill=0, *, edge: bool = False, out: np.ndarray | None = None) -> np.ndarray:
         """Read ``box`` even if it pokes outside the array. Out-of-range voxels are ``fill``,
-        or with ``edge`` the nearest voxel inside (so a filter sees no step at the border)."""
+        or with ``edge`` the nearest voxel inside (so a filter sees no step at the border).
+        Into ``out`` if given (as ``read_into``), else a new array, or the read itself when
+        the box lies within the array."""
         clipped = box.clip(self.info.shape)
-        if clipped == box:
-            return self.read(box)
-        if edge and not clipped.empty:
-            inner = clipped.relative_to(box)
-            pad = [(a, s - b) for a, b, s in zip(inner.start, inner.stop, box.shape)]
-            return np.pad(self.read(clipped), pad, mode="edge")
-        out = np.full(box.shape, fill, dtype=self.info.dtype)
-        if not clipped.empty:
-            out[clipped.relative_to(box).slices()] = self.read(clipped)
+        if out is None:
+            if clipped == box:
+                return self.read(box)
+            out = np.empty(box.shape, dtype=self.info.dtype)
+        if clipped.empty:
+            out[...] = fill
+            return out
+        inner = clipped.relative_to(box)
+        self.read_into(clipped, out[inner.slices()])
+        # what lies past the edge, an axis at a time: each band copies the voxels beside it,
+        # already filled along the axes before it, so a corner gets its nearest voxel inside
+        for axis, (a, b) in enumerate(zip(inner.start, inner.stop)):
+            before = (slice(None),) * axis
+            if a > 0:
+                out[(*before, slice(0, a))] = out[(*before, slice(a, a + 1))] if edge else fill
+            if b < box.shape[axis]:
+                out[(*before, slice(b, None))] = out[(*before, slice(b - 1, b))] if edge else fill
         return out
 
     def cache_key(self) -> str:
@@ -64,6 +83,9 @@ class KindSource(Source):
 
     def read(self, box: Box) -> np.ndarray:
         return self.inner.read(box)
+
+    def read_into(self, box: Box, out: np.ndarray) -> np.ndarray:
+        return self.inner.read_into(box, out)
 
 
 class ChunkedSource(Source):
@@ -162,34 +184,49 @@ class ChunkedSource(Source):
         idx = tuple(a // c for a, c in zip(box.start, info.chunk_shape))
         if info.chunk_box(idx) == box:
             return self.chunk(idx)
-        out = np.empty(box.shape, dtype=info.dtype)
+        return self.read_into(box, np.empty(box.shape, dtype=info.dtype))
 
-        def put(cidx, cbox, inter):  # chunks are disjoint: they may be put at once
-            out[inter.relative_to(box).slices()] = self.chunk(cidx)[inter.relative_to(cbox).slices()]
+    def read_into(self, box: Box, out: np.ndarray) -> np.ndarray:
+        def put(data, into, of):  # chunks are disjoint: they may be put at once
+            out[into] = data[of]
 
-        parts = []
-        for cidx in info.chunks_covering(box):
-            cbox = info.chunk_box(cidx)
-            inter = Box(
-                tuple(max(a, b) for a, b in zip(box.start, cbox.start)),
-                tuple(min(a, b) for a, b in zip(box.stop, cbox.stop)),
-            )
-            if not inter.empty:
-                parts.append((cidx, cbox, inter))
-        self._each(parts, put)
+        self._each(self._pieces(box), put)
         return out
 
+    def _pieces(self, box: Box) -> list[tuple]:
+        """``(index, where in box, where in the chunk)`` for each chunk ``box`` reaches, as
+        slices worked out an axis at a time: a read of hundreds of chunks spends its time
+        copying them, not in arithmetic per chunk."""
+        axes = []
+        for a, b, c in zip(box.start, box.stop, self._info.chunk_shape):
+            axis = []
+            for i in range(a // c, (b - 1) // c + 1):
+                lo, hi = max(a, i * c), min(b, i * c + c)
+                axis.append((i, slice(lo - a, hi - a), slice(lo - i * c, hi - i * c)))
+            axes.append(axis)
+        return [
+            (tuple(p[0] for p in piece), tuple(p[1] for p in piece), tuple(p[2] for p in piece))
+            for piece in itertools.product(*axes)
+        ]
+
     def _each(self, parts: list[tuple], fn: Callable) -> list:
-        """``fn(*part)`` for each part, whose first item is a chunk index: those whose chunk
-        is cached here, the rest computed at once (``demand.gather``)."""
+        """``fn(chunk, *rest)`` for each part ``(index, *rest)``: those whose chunk is cached
+        here, the rest computed at once (``demand.gather``)."""
         out: list = [None] * len(parts)
         todo = []
-        for i, part in enumerate(parts):
-            if self.in_cache(part[0]):
-                out[i] = fn(*part)
+        cache = self._cache
+        for i, (index, *rest) in enumerate(parts):
+            key = (self._key, index)
+            data = cache.get(key) if cache is not None and key in cache else None
+            if data is not None:
+                out[i] = fn(data, *rest)
             else:
                 todo.append(i)
-        for i, result in zip(todo, demand.gather([partial(fn, *parts[i]) for i in todo])):
+
+        def computed(index, *rest):
+            return fn(self.chunk(index), *rest)
+
+        for i, result in zip(todo, demand.gather([partial(computed, *parts[i]) for i in todo])):
             out[i] = result
         return out
 
@@ -255,7 +292,7 @@ class BlockSource(ChunkedSource):
             if not inter.empty:
                 parts.append((index, extent, inter))
         # the blocks computed at once, then summed here (they overlap)
-        pieces = self._each(parts, lambda index, extent, inter: self.chunk(index)[inter.relative_to(extent).slices()])
+        pieces = self._each(parts, lambda data, extent, inter: data[inter.relative_to(extent).slices()])
         for (index, _, inter), data in zip(parts, pieces):
             core = Box.from_chunk(index[lead:], chunks)
             weight = tent(inter.start[lead:], inter.stop[lead:], core.start, core.stop, self.overlap)

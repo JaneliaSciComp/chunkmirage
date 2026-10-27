@@ -90,6 +90,10 @@ def open_ramp(url: str) -> MultiscaleSource:  # ramp://512
     return MultiscaleSource([Ramp(int(url.split("://")[1]))], name="ramp")
 ```
 
+A source that assembles a read from parts may also override `read_into(box, out)`, which
+writes the read into an array the caller gives (a view of a larger one, pinned memory), to
+put each part in place; the default copies `read`'s result.
+
 List it under `[project.entry-points."chunkmirage.sources"]` as `ramp = "mypackage:open_ramp"`
 (see [formats](concepts/formats.md#your-own-schemes-sources-from-other-packages)). The core's
 own schemes, the ones that compose other sources (`scene://`, `warp://`, `stack://`,
@@ -105,11 +109,11 @@ process). Either is documented in `docs/concepts/formats.md`.
 Packages build on chunkmirage through its plugin API, which is stable:
 
 * **Ops.** `Op` and its contract: the class attributes `name`, `halo`, `overlap`, `cache`,
-  `packages`, `output_kind` and `slots`; the methods `apply`, `apply_at`, `output_dtype`,
+  `packages`, `output_kind` and `slots`; the methods `apply`, `apply_at`, `input_buffer`, `output_dtype`,
   `output_info`, `input_voxel_size`, `for_level` and `cache_token`; parameters as pydantic
   fields. `register` and the `chunkmirage.ops` entry point. `demand.cancelled()` and
   `demand.Cancelled`, for a long op to give up once no request waits for it.
-* **Sources.** `Source` (`info`, `read`, `read_padded`, `cache_key`), `ChunkedSource`,
+* **Sources.** `Source` (`info`, `read`, `read_into`, `read_padded`, `cache_key`), `ChunkedSource`,
   `MultiscaleSource`, `ArrayInfo` (its `computed_from` among it) and `Box`; an opener `opener(url, *, cache_bytes, cache)`
   returning a `MultiscaleSource`, registered with `register_source` or the
   `chunkmirage.sources` entry point, or for files told apart by their path a matcher

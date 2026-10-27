@@ -144,3 +144,64 @@ def test_zero_padding_pads_past_the_edge_with_zeros():
     out = zero.read(0, whole)
     assert out[4, 4, 4] == 100 and out[0, 4, 4] < 100 and out[0, 0, 0] < out[0, 4, 4]
     assert zero.digest() != Pipeline(src, ops).digest()
+
+
+def test_padded_reads_of_many_chunks_match_numpy_into_any_array():
+    from chunkmirage.core import ArrayInfo
+    from chunkmirage.sources.base import ChunkedSource
+
+    vol = np.random.default_rng(0).integers(0, 1000, (11, 13, 17)).astype(np.uint16)
+    info = ArrayInfo(vol.shape, vol.dtype, (4, 5, 6), (1.0,) * 3, ("",) * 3, ("z", "y", "x"))
+    src = ChunkedSource(info, lambda idx: vol[info.chunk_box(idx).slices()], LRUCache(1 << 20), "vol")
+    for box in [Box((1, 2, 3), (10, 12, 16)), Box((-3, 4, -2), (6, 16, 20)), Box((-2, -2, -2), (13, 15, 19))]:
+        clipped = box.clip(vol.shape)
+        pad = [(c0 - b0, b1 - c1) for b0, b1, c0, c1 in zip(box.start, box.stop, clipped.start, clipped.stop)]
+        inside = vol[clipped.slices()]
+        edge, zero = np.pad(inside, pad, mode="edge"), np.pad(inside, pad, constant_values=7)
+        np.testing.assert_array_equal(src.read_padded(box, edge=True), edge)
+        np.testing.assert_array_equal(src.read_padded(box, fill=7), zero)
+        big = np.zeros((2, *(s + 2 for s in box.shape)), vol.dtype)  # into a view of a larger array
+        view = big[1, 1:-1, 1:-1, 1:-1]
+        assert src.read_padded(box, edge=True, out=view) is view
+        np.testing.assert_array_equal(view, edge)
+        assert not big[0].any() and not big[1, 0].any()
+
+
+def test_an_op_supplies_the_array_its_input_is_read_into():
+    from chunkmirage.core import ArrayInfo
+    from chunkmirage.ops import Op
+    from chunkmirage.sources.base import MultiscaleSource, Source
+
+    vol = np.arange(8 * 8 * 8, dtype=np.uint16).reshape(8, 8, 8)
+
+    class Mem(Source):
+        info = ArrayInfo(vol.shape, vol.dtype, (8, 8, 8), (1.0,) * 3, ("",) * 3, ("z", "y", "x"))
+
+        def read(self, box):
+            return vol[box.slices()]
+
+        def cache_key(self):
+            return "mem"
+
+    given = []
+
+    class Same(Op):
+        name = "same_into_buffer"
+        halo = 1
+        cache = True
+
+        def input_buffer(self, shape, dtype):
+            given.append(np.empty(shape, dtype))
+            return given[-1]
+
+        def apply(self, block):
+            assert block is given[-1]
+            return block  # a view of the buffer: the pipeline copies it before caching
+
+    p = Pipeline(MultiscaleSource([Mem()]), [Same()], chunk_shape=(4, 4, 4))
+    out = p.read(0, Box((0, 0, 0), (8, 8, 8)))
+    np.testing.assert_array_equal(out, vol)
+    assert len(given) == 8
+    for buf in given:
+        buf[...] = 0  # the op reuses its buffers: what was cached is unchanged
+    np.testing.assert_array_equal(p.read(0, Box((0, 0, 0), (8, 8, 8))), vol)
