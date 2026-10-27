@@ -4,7 +4,12 @@ Notable changes per release. Versions follow the rules in
 [contributing](docs/contributing.md#plugin-api-and-versioning): the plugin API is stable,
 and a release that breaks it says so here.
 
-## Unreleased
+## 0.1.0a6 (2026-10-27)
+
+Faster reads of many chunks and a faster GPU resampler, with the same values, and
+materialize and GeoTIFF stores on the shared context. The plugin API only grows:
+`Source.read_into`, `read_padded(..., out=)` and `Op.input_buffer`, so an op can have its
+input read into pinned memory for a GPU.
 
 ### Serving
 

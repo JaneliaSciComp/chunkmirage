@@ -5,6 +5,11 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+# merges close together each deploy the site: only the newest runs, so their pushes of
+# gh-pages never race
+concurrency:
+  group: docs
+  cancel-in-progress: true
 env:
   # The Neuroglancer the browser engine embeds, built from Google's source here rather than
   # kept in this repo. The page answers the viewer's requests through a service worker,
