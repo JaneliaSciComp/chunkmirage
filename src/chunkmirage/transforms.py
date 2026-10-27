@@ -58,6 +58,7 @@ class Affine(Transform):
             raise ValueError(f"affine matrix must be (d_out, d_in + 1), got shape {m.shape}")
         self.matrix = m
         self.ndim_out, self.ndim_in = m.shape[0], m.shape[1] - 1
+        self._on_device: dict = {}  # (GPU, dtype) -> the matrix there, for ``apply``
 
     @classmethod
     def identity(cls, n: int) -> Affine:
@@ -88,7 +89,18 @@ class Affine(Transform):
         # threads (1 M points took seconds there, against tens of milliseconds like this).
         # Points on a GPU (CuPy) stay there, in their precision; on the CPU, in float64.
         xp = array_module(pts)
-        pts = np.asarray(pts, dtype=float) if xp is np else pts
+        if xp is not np:
+            # one matrix product there: the multiply-adds are two dozen small kernels, whose
+            # launches hold the GIL long enough to pace a server's chunk threads
+            key = (xp.cuda.Device().id, pts.dtype)
+            if key not in self._on_device:
+                self._on_device[key] = (
+                    xp.asarray(self.linear.T, dtype=pts.dtype),
+                    xp.asarray(self.offset, dtype=pts.dtype),
+                )
+            linear_t, offset = self._on_device[key]
+            return pts @ linear_t + offset
+        pts = np.asarray(pts, dtype=float)
         out = xp.empty((*pts.shape[:-1], self.ndim_out), dtype=pts.dtype)
         for j, (row, t) in enumerate(zip(self.linear, self.offset)):
             col = pts[..., 0] * float(row[0])
@@ -143,19 +155,24 @@ class VectorField:
 
     def sample(self, pts: np.ndarray) -> np.ndarray:
         """Vectors at ``pts`` (NaN rows, e.g. unconvergent inverse points, stay NaN), on the
-        GPU for points there (CuPy): the window is read on the CPU and copied over."""
+        GPU for points there (CuPy): the window is read on the CPU and copied over. There a
+        wait for the GPU holds up the server's other threads, so only the window's bounds
+        come back before the result, and constants are Python scalars (an array of them
+        would be copied over, which waits)."""
         xp = array_module(pts)
-        finite = xp.isfinite(pts).all(axis=1)
-        if not bool(finite.all()):
-            out = xp.full((pts.shape[0], self.ncomp), xp.nan, dtype=pts.dtype)
-            if bool(finite.any()):
-                out[finite] = self.sample(pts[finite])
-            return out
         g = self.to_grid.apply(pts)
-        hi = xp.asarray(self.grid_shape, dtype=g.dtype) - 1
-        g = xp.clip(g, 0.0, hi)
-        lo = np.floor(host(g.min(axis=0))).astype(int)
-        top = np.minimum(np.floor(host(g.max(axis=0))).astype(int) + 2, self.grid_shape)
+        least, most = host(xp.stack([g.min(axis=0), g.max(axis=0)]))  # one wait on a GPU
+        if not (np.isfinite(least).all() and np.isfinite(most).all()):
+            # a point that is not finite has no finite coordinate on the grid either
+            finite = xp.isfinite(pts).all(axis=1)
+            if not bool(finite.all()):
+                out = xp.full((pts.shape[0], self.ncomp), xp.nan, dtype=pts.dtype)
+                if bool(finite.any()):
+                    out[finite] = self.sample(pts[finite])
+                return out
+        hi = np.asarray(self.grid_shape) - 1
+        lo = np.floor(np.clip(least, 0, hi)).astype(int)
+        top = np.minimum(np.floor(np.clip(most, 0, hi)).astype(int) + 2, self.grid_shape)
         slices = [slice(int(a), int(b)) for a, b in zip(lo, top)]
         slices.insert(self.vector_axis, slice(None))
         # in the field's own precision (a stored field is float32, its window no float64 copy)
@@ -165,7 +182,9 @@ class VectorField:
         win = np.moveaxis(win, self.vector_axis, 0)
         if xp is not np:
             win = xp.asarray(np.ascontiguousarray(win))
-        local = (g - xp.asarray(lo, dtype=g.dtype)).T
+        local = xp.empty((self.ndim, pts.shape[0]), dtype=g.dtype)
+        for j in range(self.ndim):  # clamped to the field, then placed in the window
+            local[j] = xp.clip(g[:, j], 0.0, float(hi[j])) - float(lo[j])
         out = xp.empty((pts.shape[0], self.ncomp), dtype=win.dtype)
         map_coordinates = ndimage(xp).map_coordinates
         for c in range(self.ncomp):

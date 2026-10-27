@@ -14,6 +14,16 @@ and a release that breaks it says so here.
   tensorstore's lost wakeup runs within a second instead of never, and `materialize`
   writes without fsync or OS file locks, about 10 ms less per chunk on NFS. A chunk is
   still written whole, to a temporary file renamed into place.
+- On a GPU (`serve --device`), `warp://` and `scene://` launch fewer kernels and wait on the
+  GPU less, since both hold the GIL and so pace the server's chunk threads. Each affine is
+  one matrix product, where its column multiply-adds launched about twenty kernels. A
+  field's window bounds come back in one wait, which also stands in for the check that the
+  points are finite. Constants are Python scalars, where a small array of them was copied
+  over and waited for. A resampled chunk is rounded, clipped and put in place on the GPU,
+  so only the result comes back, in its own dtype (two bytes a voxel for uint16, where its
+  float values and the mask of points inside came back). On registration-station's chain of
+  lattice fields on an H200, the first two changes took views about 10% faster. The CPU
+  path computes the same bits as before.
 - The lock moves to worldarray 0.9.0; the pin stays `>=0.8,<1`. The context chunkmirage's
   stores share is unchanged under 0.9.
 
