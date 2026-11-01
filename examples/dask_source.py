@@ -1,5 +1,5 @@
-"""A lazy dask array served as a pyramid: each chunk a viewer asks for computes only the dask
-chunks under it, with a chunkmirage op on top.
+"""A lazy dask array served as a pyramid, as it is and with a chunkmirage op on top: each
+chunk a viewer asks for computes only the dask chunks under it.
 
     uv run --with dask python examples/dask_source.py          # in a clone, after uv sync --extra ops
     uv run --with "chunkmirage[ops]>=0.1.0a5" --with dask python dask_source.py   # anywhere else
@@ -16,6 +16,7 @@ import uvicorn
 from scipy import ndimage as ndi
 
 from chunkmirage import Pipeline, create_app
+from chunkmirage.cache import LRUCache
 from chunkmirage.core import ArrayInfo
 from chunkmirage.neuroglancer import source_url, viewer_link
 from chunkmirage.sources import MultiscaleSource, Source
@@ -47,9 +48,12 @@ class DaskSource(Source):
         return np.asarray(self.arr[box.slices()].compute())
 
 
-# 1. Any dask graph: here noise, blurred with each chunk's neighbours read in.
+# 1. Any dask graph: here noise, blurred with each chunk's neighbours read in, and stretched
+#    to about 0-1 (the blur's spread is about 0.005) so a viewer shows it.
 noise = da.random.default_rng(0).random((512, 512, 512), chunks=128, dtype=np.float32)
-blurred = da.map_overlap(lambda b: ndi.gaussian_filter(b, 4), noise, depth=12, boundary="reflect")
+blurred = da.map_overlap(
+    lambda b: 0.5 + 30 * (ndi.gaussian_filter(b, 4) - 0.5), noise, depth=12, boundary="reflect"
+)
 
 # 2. A pyramid of it, each level the mean of 2x2x2 blocks of the one before.
 levels = [DaskSource(blurred)]
@@ -58,10 +62,17 @@ for f in (2, 4, 8, 16):
         DaskSource(da.coarsen(np.mean, levels[-1].arr, {0: 2, 1: 2, 2: 2}).rechunk(128), f)
     )
 
-# 3. chunkmirage ops on top, served in every format: blobs where the blur is above its mean.
-name, port = "blobs", 8000
-pipe = Pipeline(MultiscaleSource(levels, name=name), [{"op": "threshold", "low": 0.5}])
-app = create_app({name: pipe})
-src = source_url(f"http://localhost:{port}", name, "zarr3", "zarr3", pipe.digest())
-print("neuroglancer:", viewer_link({name: pipe}, {name: src}))
+# 3. Served in every format, as it is and with a chunkmirage op on top: blobs where the blur
+#    is above its mean. The two share a cache, so dask computes each chunk once.
+source, cache, port = MultiscaleSource(levels, name="blurred"), LRUCache(), 8000
+pipes = {
+    "blurred": Pipeline(source, [], cache=cache),
+    "blobs": Pipeline(source, [{"op": "threshold", "low": 0.5}], cache=cache),
+}
+app = create_app(pipes)
+urls = {
+    n: source_url(f"http://localhost:{port}", n, "zarr3", "zarr3", p.digest())
+    for n, p in pipes.items()
+}
+print("neuroglancer:", viewer_link(pipes, urls))
 uvicorn.run(app, port=port)
