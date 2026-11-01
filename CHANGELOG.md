@@ -4,6 +4,13 @@ Notable changes per release. Versions follow the rules in
 [contributing](docs/contributing.md#plugin-api-and-versioning): the plugin API is stable,
 and a release that breaks it says so here.
 
+## Unreleased
+
+### Examples
+
+- `examples/dask_source.py`: a lazy dask array served as a pyramid with a threshold on
+  top, each chunk a viewer asks for computing only the dask chunks under it.
+
 ## 0.1.0a6 (2026-10-27)
 
 Faster reads of many chunks and a faster GPU resampler, with the same values, and
