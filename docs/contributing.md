@@ -90,6 +90,9 @@ def open_ramp(url: str) -> MultiscaleSource:  # ramp://512
     return MultiscaleSource([Ramp(int(url.split("://")[1]))], name="ramp")
 ```
 
+Any Python array can be a source this way: `examples/dask_source.py` serves a lazy dask
+array, each level computing only the dask chunks a read covers.
+
 A source that assembles a read from parts may also override `read_into(box, out)`, which
 writes the read into an array the caller gives (a view of a larger one, pinned memory), to
 put each part in place; the default copies `read`'s result.
