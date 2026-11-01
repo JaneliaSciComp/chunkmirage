@@ -339,6 +339,11 @@ Fully client-side is feasible and would make a compelling hosted demo:
 * Same-origin is required because service workers only see requests from pages in their
   scope; a hosted `neuroglancer-demo.appspot.com` cannot be pointed at an in-browser
   server. Hosting our own Neuroglancer build is fine and commonly done.
+* The browser engine follows the trick Mark Kittisopikul's
+  [service_worker_demo](https://github.com/mkitti/service_worker_demo)
+  ([live](https://mkitti.github.io/service_worker_demo/)) showed in June 2026: a service
+  worker that computes the Mandelbrot set as a multiscale OME-Zarr, read by a Neuroglancer
+  hosted on the same origin, all in the browser.
 * A shared Rust crate (chunk key parsing, zarr/n5/precomputed codecs) compiled to WASM and
   to a Python extension would keep the two implementations from drifting. Not needed to
   start.
