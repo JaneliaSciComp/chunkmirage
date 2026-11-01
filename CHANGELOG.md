@@ -47,6 +47,11 @@ input read into pinned memory for a GPU.
   first. A result that shares the buffer's memory is copied before it is cached. Like
   `read_into`, an addition to the plugin API.
 
+### Examples
+
+- `examples/dask_source.py`: a lazy dask array served as a pyramid with a threshold on
+  top, each chunk a viewer asks for computing only the dask chunks under it.
+
 ## 0.1.0a5 (2026-10-23)
 
 A dependency release, on `worldarray>=0.8,<1`: packages beside chunkmirage can now move to
