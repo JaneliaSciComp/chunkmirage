@@ -128,7 +128,9 @@ def open_source(
     cache that computed sources keep their expensive intermediates in (``register://``'s
     refined blocks), normally the pipeline's. ``kind`` says what the values are (``image``,
     ``label``, ``mask``) over what the source guessed: stored arrays guess from their dtype
-    (``core.kind_for_dtype``), so a uint32 image needs ``kind="image"``.
+    (``core.kind_for_dtype``), so a uint32 image needs ``kind="image"``. ``axes_order``
+    (zarr, N5 and precomputed) presents a stored array's axes in another order, worldarray's
+    ``axes_order``: ``"zyx"`` puts those named z, y and x last, for data stored x, y, z.
     """
     source = _open(path, cache_bytes=cache_bytes, cache=cache, **kw)
     if kind is not None and kind != source.levels[0].info.kind:
@@ -141,15 +143,27 @@ def open_source(
     return source
 
 
-def _open(path: str, *, cache_bytes: int, cache: LRUCache | None, **kw) -> MultiscaleSource:
+def _stored_order(path: str, axes_order) -> None:
+    if axes_order != "stored":
+        raise ValueError(
+            f"axes_order={axes_order!r} reorders a zarr, N5 or precomputed array's axes, not {path}'s"
+        )
+
+
+def _open(
+    path: str, *, cache_bytes: int, cache: LRUCache | None, axes_order="stored", **kw
+) -> MultiscaleSource:
     scheme, sep, _ = path.partition("://")
     if sep and (opener := _opener(scheme)) is not None:
+        _stored_order(path, axes_order)
         return _call(opener, path, cache_bytes=cache_bytes, cache=cache)
     for matcher in _matchers():
         if (opener := matcher(path)) is not None:
+            _stored_order(path, axes_order)
             return _call(opener, path, cache_bytes=cache_bytes, cache=cache)
     if "::" in path or path.split("::")[0].endswith((".h5", ".hdf5")):
         from chunkmirage.sources.hdf5_source import open_multiscale_hdf5
 
+        _stored_order(path, axes_order)
         return open_multiscale_hdf5(path, cache_bytes=cache_bytes, **kw)
-    return open_multiscale_tensorstore(path, cache_bytes=cache_bytes, **kw)
+    return open_multiscale_tensorstore(path, cache_bytes=cache_bytes, axes_order=axes_order, **kw)

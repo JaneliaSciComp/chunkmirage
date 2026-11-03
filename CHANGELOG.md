@@ -6,6 +6,14 @@ and a release that breaks it says so here.
 
 ## Unreleased
 
+### Sources
+
+- `axes_order` in the spec (`--axes-order`): a stored array's axes in another order, `"zyx"`
+  putting those named z, y and x last, for OME-Zarr stored x, y, z (as TensorSwitch writes
+  it) read by ops and models that index by position. Names, voxel size and placement move
+  with the data; the default stays the stored order. Needs worldarray 0.10, which also
+  brings 0.9.1's fix for a finished process aborting at exit (exit code 134).
+
 ### Examples
 
 - `examples/dask_source.py`: a lazy dask array served as a pyramid with a threshold on

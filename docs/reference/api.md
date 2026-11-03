@@ -51,6 +51,7 @@ are refused with 403 unless the app was made with `create_app(..., allow_code=Tr
   "units": ["nm", "nm", "nm"],
   "axes": ["z", "y", "x"],
   "translation": [0, 0, 0],
+  "axes_order": "stored",            // or "zyx": axes named z, y, x last (data stored x, y, z), or every axis name in order
   "kind": "image",                   // optional: image, label or mask, over what the source guesses
   "padding": "edge",                 // what ops see past the volume's edge: edge (repeated) or zero
   "input_level": "resample",         // an op at one voxel size no level has: resample a finer level, or read the nearest

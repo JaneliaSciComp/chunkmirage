@@ -326,3 +326,35 @@ def test_unpacked_arrays_keep_their_dtype_and_fill(tmp_path):
     src = open_source(str(tmp_path / "labels"))[0]
     assert src.info.dtype == np.uint8 and src.info.axes == ("z", "y", "x")
     np.testing.assert_array_equal(src.read(Box((0, 0, 0), DATA.shape)), DATA)
+
+
+def test_axes_stored_x_y_z_are_served_as_stored_or_z_y_x_on_request(tmp_path):
+    """OME-Zarr stored x, y, z (as TensorSwitch writes it) keeps that order unless the spec's
+    axes_order asks for z, y, x: then names, shape, voxel size and data all move together,
+    cached apart from the stored order."""
+    root, xyz = tmp_path / "xyz.zarr", DATA.transpose()  # stored x, y, z
+    axes = [{"name": n, "type": "space", "unit": "nanometer"} for n in "xyz"]
+    ct = [{"type": "scale", "scale": [8, 4, 45]}]
+    ome = {"version": "0.5", "multiscales": [{"axes": axes, "datasets": [{"path": "s0", "coordinateTransformations": ct}]}]}
+    _write_json(root, "zarr.json", {"zarr_format": 3, "node_type": "group", "attributes": {"ome": ome}})
+    ts.open(
+        {
+            "driver": "zarr3",
+            "kvstore": {"driver": "file", "path": str(root / "s0")},
+            "metadata": {"dimension_names": ["x", "y", "z"]},
+        },
+        create=True,
+        dtype=ts.uint8,
+        shape=xyz.shape,
+    ).result().write(xyz).result()
+
+    stored = Pipeline.from_spec({"source": str(root)})
+    assert stored.levels[0].info.axes == ("x", "y", "z") and stored.levels[0].info.shape == (30, 20, 10)
+    zyx = Pipeline.from_spec({"source": str(root), "axes_order": "zyx"})
+    info = zyx.levels[0].info
+    assert info.axes == ("z", "y", "x") and info.shape == DATA.shape
+    assert info.voxel_size == (45.0, 4.0, 8.0)
+    np.testing.assert_array_equal(zyx.levels[0].read(Box((0, 0, 0), DATA.shape)), DATA)
+    assert zyx.digest() != stored.digest()
+    with pytest.raises(ValueError, match="axes_order"):
+        open_source("synthetic://blobs?shape=8,8,8", axes_order="zyx")

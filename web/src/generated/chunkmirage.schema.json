@@ -605,6 +605,25 @@
           ],
           "default": null
         },
+        "axes_order": {
+          "anyOf": [
+            {
+              "enum": [
+                "stored",
+                "zyx"
+              ],
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ],
+          "default": "stored",
+          "description": "The order a stored array's axes come in: 'stored' as the store has them; 'zyx' the axes named z, y and x last, in that order, the others first (for data stored x, y, z, as ops and models indexing by position expect); or every axis name in order. Names, voxel size and placement move with the data, and the overrides above are in this order"
+        },
         "select": {
           "anyOf": [
             {

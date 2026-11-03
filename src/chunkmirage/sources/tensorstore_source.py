@@ -178,24 +178,45 @@ class TensorStoreSource(Source):
         return cls(store, info, key=key, decode=decode)
 
     @classmethod
-    def from_path(cls, path: str, *, cache_bytes: int = 0, **overrides) -> TensorStoreSource:
-        vol = wa.open(path, units=None, context=shared_context(cache_bytes), metadata_conflicts="warn")
-        return cls.from_array(vol, f"ts:{path}", **overrides)
+    def from_path(
+        cls, path: str, *, cache_bytes: int = 0, axes_order="stored", **overrides
+    ) -> TensorStoreSource:
+        vol = wa.open(
+            path,
+            units=None,
+            context=shared_context(cache_bytes),
+            metadata_conflicts="warn",
+            axes_order=axes_order,
+        )
+        return cls.from_array(vol, _key(path, axes_order), **overrides)
 
 
-def open_multiscale_tensorstore(path: str, *, cache_bytes: int = 0, **kw) -> MultiscaleSource:
+def _key(path: str, axes_order) -> str:
+    """A level's cache key: its path, and the order its axes are read in unless stored."""
+    if axes_order == "stored":
+        return f"ts:{path}"
+    return f"ts:{path}?axes_order={axes_order if isinstance(axes_order, str) else ','.join(axes_order)}"
+
+
+def open_multiscale_tensorstore(
+    path: str, *, cache_bytes: int = 0, axes_order="stored", **kw
+) -> MultiscaleSource:
     """Open ``path`` as a multiscale group (its ``multiscales[0].datasets``, else ``s0``,
-    ``s1``, ...; a precomputed volume's scales), or a single array."""
+    ``s1``, ...; a precomputed volume's scales), or a single array; its axes in
+    ``axes_order`` (worldarray's: ``"stored"``, ``"zyx"`` or every axis name in order)."""
     node = detect(path)
     if node is None:
         raise ValueError(f"{path}: no zarr, N5 or precomputed array or group there")
     if node.kind == "array" or node.scale_key is not None:
-        return MultiscaleSource([TensorStoreSource.from_path(path, cache_bytes=cache_bytes, **kw)], name=path)
+        level = TensorStoreSource.from_path(path, cache_bytes=cache_bytes, axes_order=axes_order, **kw)
+        return MultiscaleSource([level], name=path)
     context = shared_context(cache_bytes)
-    pyramid = wa.open_pyramid(path, units=None, context=context, metadata_conflicts="warn")
+    pyramid = wa.open_pyramid(
+        path, units=None, context=context, metadata_conflicts="warn", axes_order=axes_order
+    )
     root = path.rstrip("/")
     levels = [
-        TensorStoreSource.from_array(vol, f"ts:{root}/{name}", **kw)
+        TensorStoreSource.from_array(vol, _key(f"{root}/{name}", axes_order), **kw)
         for name, vol in zip(pyramid.names, pyramid.levels)
     ]
     return MultiscaleSource(levels, name=path)
