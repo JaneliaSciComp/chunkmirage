@@ -36,6 +36,14 @@ class PipelineSpec(BaseModel):
     units: list[str] | None = None
     axes: list[str] | None = None
     translation: list[float] | None = None
+    axes_order: Literal["stored", "zyx"] | list[str] = Field(
+        "stored",
+        description="The order a stored array's axes come in: 'stored' as the store has "
+        "them; 'zyx' the axes named z, y and x last, in that order, the others first (for "
+        "data stored x, y, z, as ops and models indexing by position expect); or every "
+        "axis name in order. Names, voxel size and placement move with the data, and the "
+        "overrides above are in this order",
+    )
     select: dict[str, int] | None = Field(
         None,
         description='Pin non-spatial axes to one index each, e.g. {"c": 1, "t": 0}: the '
@@ -484,6 +492,7 @@ class Pipeline:
             units=spec.units,
             axes=spec.axes,
             translation=spec.translation,
+            axes_order=spec.axes_order,
             kind=spec.kind,
         )
         if spec.select:

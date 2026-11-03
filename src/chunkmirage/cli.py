@@ -101,6 +101,7 @@ def build_registry(
     source_cache_gb: float = 0.5,
     select: str | None = None,
     mesh: str | None = None,
+    axes_order: str = "stored",
 ):
     """Build the registry the CLI serves (separated from `serve` so it can be tested)."""
     from chunkmirage.cache import LRUCache
@@ -111,13 +112,17 @@ def build_registry(
     pinned = None
     if select:
         pinned = {k.strip(): int(v) for k, _, v in (kv.partition("=") for kv in select.split(","))}
+    order = [a.strip() for a in axes_order.split(",")] if "," in axes_order else axes_order
     registry = DatasetRegistry(
         LRUCache(int(cache_gb * 1024**3)), source_cache_bytes=int(source_cache_gb * 1024**3)
     )
     if raw:
         raw_name = "raw" if name != "raw" else "source"
         registry.add(
-            raw_name, PipelineSpec(source=source, ops=[], chunk_shape=chunk_shape, select=pinned)
+            raw_name,
+            PipelineSpec(
+                source=source, ops=[], chunk_shape=chunk_shape, select=pinned, axes_order=order
+            ),
         )
     registry.add(
         name,
@@ -126,6 +131,7 @@ def build_registry(
             ops=[_parse_op(o) for o in ops],
             chunk_shape=chunk_shape,
             select=pinned,
+            axes_order=order,
             mesh={k: v for k, v in _parse_op(f"mesh:{mesh}").items() if k != "op"}
             if mesh is not None
             else None,
@@ -158,6 +164,11 @@ def serve(
         None,
         help="pin non-spatial axes, e.g. c=1,t=0: process that channel of that time point "
         "(ops such as spots need a z, y, x volume)",
+    ),
+    axes_order: str = typer.Option(
+        "stored",
+        help="the order a stored array's axes come in: stored, zyx (those named z, y, x last, "
+        "for data stored x, y, z) or every axis name, e.g. c,z,y,x",
     ),
     mesh: str | None = typer.Option(
         None,
@@ -276,6 +287,7 @@ def serve(
         source_cache_gb=source_cache_gb,
         select=select,
         mesh=mesh,
+        axes_order=axes_order,
     )
     if resolver:
         registry.resolver = load_object(resolver)
@@ -415,6 +427,7 @@ def materialize(
     ),
     chunk: str | None = typer.Option(None, help="output chunk shape, as for serve"),
     select: str | None = typer.Option(None, help="pin non-spatial axes, as for serve"),
+    axes_order: str = typer.Option("stored", help="the order a stored array's axes come in, as for serve"),
     compressor: str | None = typer.Option(None, help="as the format takes it (default: blosc for zarr, gzip for n5)"),
     keep_empty: bool = typer.Option(False, "--keep-empty", help="also write chunks of nothing but zeros"),
     device: str = typer.Option("cpu", help="where warp:// and scene:// resample, as for serve"),
@@ -430,7 +443,9 @@ def materialize(
     from chunkmirage.materialize import materialize as write
 
     gpu.set_device(device)
-    registry = build_registry(source, "processed", op, chunk, cache_gb=cache_gb, select=select)
+    registry = build_registry(
+        source, "processed", op, chunk, cache_gb=cache_gb, select=select, axes_order=axes_order
+    )
     region = None
     if box:
         lo, _, hi = box.partition(":")

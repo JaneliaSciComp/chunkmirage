@@ -832,7 +832,14 @@ back half a voxel to the corner. So a volume shows in the same place whichever f
 precomputed cannot hold half-voxel offsets. Anything in the spec (`voxel_size`, `units`,
 `axes`, `translation`) overrides what was read. The spec's `select` pins non-spatial axes
 to one index each, `{"c": 1, "t": 0}` (`--select c=1,t=0`), so the ops see one channel of
-one time point as a `z, y, x` volume; only that channel is read. HDF5 uses `file.h5::/dataset` and needs
+one time point as a `z, y, x` volume; only that channel is read. Axes come in the order
+they are stored, each with its name, so a viewer places them right whatever the order. The
+spec's `axes_order` (`--axes-order`, worldarray's) presents a zarr, N5 or precomputed array's
+axes in another: `"zyx"` puts those named `z`, `y` and `x` last, in that order, and the
+others first, for data stored `x, y, z` (as TensorSwitch writes OME-Zarr) read by ops and
+models that index by position; a list names every axis in order. Shape, chunks, voxel size
+and translation move with the names, the overrides above are in that order, and the two
+orders are cached apart. HDF5 uses `file.h5::/dataset` and needs
 the `hdf5` extra.
 
 The browser engine reads the same stored formats in TypeScript (`web/src/sources.ts`), all

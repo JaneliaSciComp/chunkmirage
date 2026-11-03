@@ -21,6 +21,7 @@ URL ([sources](../concepts/formats.md#sources)).
 | `--raw` / `--no-raw`  | on                                        | also serve the unprocessed source as `raw`; shares the cache, appears as a second layer |
 | `--chunk`             | source chunks                             | output chunk shape, e.g. `64,64,64` |
 | `--select`            | none                                      | pin non-spatial axes, e.g. `c=1,t=0`: the pipeline sees that channel of that time point as a `z, y, x` volume (the spec's `select`) |
+| `--axes-order`        | `stored`                                  | the order a stored array's axes come in (the spec's `axes_order`): `zyx` puts those named z, y and x last, for data stored x, y, z; or every axis name, e.g. `c,z,y,x` |
 | `--mesh`              | none                                      | what the [mesh frontend](../concepts/formats.md#meshes-computed-when-fetched) meshes (the spec's `mesh`): `kind=surface,threshold=255` (an isosurface), `kind=terrain,exaggeration=2` (an elevation model), `level=N`, `lods=4` (levels of detail: finer meshes where the viewer zooms in); `''` for the defaults. The python viewer then shows the mesh too |
 | `--host` / `--port`   | `0.0.0.0` / `8000`                        | bind address; without `--port`, the first free port from 8000 up; `--port 0`: any free port. The port is bound before anything is printed, so no other process can take it in between |
 | `--ready-file`        | none                                      | once the server accepts connections, write `{"url", "port", "pid", "datasets", "neuroglancer"}` (`datasets`: each dataset's source URL in `--format`) to this file, whole; `-` prints it as one line on stdout. The file is removed when the server exits. For launchers that start a server and wait for its address (a cluster job, a test) |
@@ -68,7 +69,7 @@ batch's progress on stderr.
 | `--level`, `-l` | every level | a level whose chunks to write (repeatable); every level's metadata is written |
 | `--box` | all of it | level 0's voxels along the last axes, `lo:hi` each comma separated in C order; every level writes the same region on its own voxels, rounded out to whole voxels |
 | `--extent` | `box` | `box`: each level an array of exactly the box, placed where it is (its translation moved by the box's corner), in chunks counted from that corner; `level`: the box's chunks, rounded out to whole chunks, in an array of the level's whole shape (several boxes in one store) |
-| `--chunk`, `--select` | as for `serve` | output chunk shape; non-spatial axes pinned |
+| `--chunk`, `--select`, `--axes-order` | as for `serve` | output chunk shape; non-spatial axes pinned; the order of the axes |
 | `--compressor` | blosc (zarr), gzip (n5) | as the format takes it |
 | `--keep-empty` | off | also write chunks of nothing but zeros (left out otherwise: a reader takes a missing chunk as the fill value) |
 | `--device` | `cpu` | where `warp://` and `scene://` resample, as for `serve` |

@@ -46,6 +46,10 @@ export interface PipelineSpec {
   axes?: string[] | null;
   translation?: number[] | null;
   /**
+   * The order a stored array's axes come in: 'stored' as the store has them; 'zyx' the axes named z, y and x last, in that order, the others first (for data stored x, y, z, as ops and models indexing by position expect); or every axis name in order. Names, voxel size and placement move with the data, and the overrides above are in this order
+   */
+  axes_order?: ("stored" | "zyx") | string[];
+  /**
    * Pin non-spatial axes to one index each, e.g. {"c": 1, "t": 0}: the pipeline sees that channel of that time point, without those axes
    */
   select?: {
