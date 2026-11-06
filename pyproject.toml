@@ -29,17 +29,20 @@ dependencies = [
     "worldarray>=0.10,<1",
     "starlette>=0.37",
     "uvicorn[standard]>=0.29",
-    "hypercorn[h2]>=0.17",
+    "hypercorn>=0.17",
     "pydantic>=2.6",
     "typer>=0.12",
     "threadpoolctl>=3.1",
+    # resampling (scene://, an op's input at its voxel size), meshes, the filter ops
+    "scipy>=1.12",
 ]
 
 [project.optional-dependencies]
 hdf5 = ["h5py>=3.10"]
 # GeoTIFF / cloud-optimized GeoTIFF sources (tensorstore's tiff driver reads only uint8)
 tiff = ["tifffile>=2024.1", "imagecodecs>=2024.1"]
-ops = ["scipy>=1.12"]
+# scipy is a core dependency now; kept so `chunkmirage[ops]` still installs
+ops = []
 # meshes computed on demand (marching cubes)
 mesh = ["scikit-image>=0.22", "DracoPy>=1.4"]
 mcp = ["mcp>=1.0"]
@@ -47,10 +50,10 @@ viewer = ["neuroglancer>=2.40"]
 https = ["cryptography>=42"]
 # register:// solves on a GPU when there is one (CPU otherwise). gpu is PyTorch's CUDA build,
 # ~3 GB of wheels, so not in `all`; cpu is its CPU-only build (CI, laptops). Pick one.
-gpu = ["torch>=2.6", "scipy>=1.12"]
-cpu = ["torch>=2.6", "scipy>=1.12"]
+gpu = ["torch>=2.6"]
+cpu = ["torch>=2.6"]
 # serve --device resamples warp:// and scene:// on a GPU through CuPy (CUDA 12)
-cupy = ["cupy-cuda12x>=13", "scipy>=1.12"]
+cupy = ["cupy-cuda12x>=13"]
 all = ["chunkmirage[hdf5,tiff,ops,mesh,mcp,viewer,https]"]
 
 [project.urls]

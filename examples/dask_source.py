@@ -1,7 +1,7 @@
 """A lazy dask array served as a pyramid, as it is and with a chunkmirage op on top: each
 chunk a viewer asks for computes only the dask chunks under it.
 
-    uv run --with dask python examples/dask_source.py          # in a clone, after uv sync --extra ops
+    uv run --with dask python examples/dask_source.py          # in a clone, after uv sync
     uv run --with "chunkmirage[ops]>=0.1.0a5" --with dask python dask_source.py   # anywhere else
 
 The graph is noise blurred by ``map_overlap``, which reads each chunk's neighbours, so the

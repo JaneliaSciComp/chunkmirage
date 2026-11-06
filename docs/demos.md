@@ -88,9 +88,9 @@ in 512³ blocks (268 MB decoded) at full resolution; `examples/contact_sites.py
 | `examples/track_nucleus.py` | a nucleus and its descendants followed through the colony time-lapse (`tracking.lineage`), volumes per frame written as CSV (the track page's work, from Python) | `uv sync --extra all` |
 | `examples/register_demo.py` | a deformable registration solved as the source opens, re-solved as you type settings | `uv sync --extra all --extra gpu` (or `--extra cpu`) |
 | `examples/swirl_demo.py` | a procedural deformation and its field, animated on a time axis | `uv sync --extra all` |
-| `examples/demo.py` | one small volume served in every format at once, with a shared cache | `uv sync --extra ops` |
-| `examples/dask_source.py` | a lazy dask array served as a pyramid, a threshold on top: each chunk a viewer asks for computes only the dask chunks under it, and any Python array can be a source the same way | `uv sync --extra ops`, run with `uv run --with dask` |
-| `examples/quickstart.py` | the library in thirty lines: a cached blur, a threshold, a server | `uv sync --extra ops` |
+| `examples/demo.py` | one small volume served in every format at once, with a shared cache | `uv sync` |
+| `examples/dask_source.py` | a lazy dask array served as a pyramid, a threshold on top: each chunk a viewer asks for computes only the dask chunks under it, and any Python array can be a source the same way | `uv sync`, run with `uv run --with dask` |
+| `examples/quickstart.py` | the library in thirty lines: a cached blur, a threshold, a server | `uv sync` |
 | `examples/fiji_follow.groovy` | Fiji following a server: its datasets in one BigDataViewer, their chunks fetched again on every edit of a pipeline (the server's event stream, listened to from Fiji's script editor; [how](concepts/interactivity.md#making-the-viewer-refetch)); asks for the server's link and the datasets to open, the only things that change between servers | Fiji with the N5 Viewer plugin; paste into the script editor (`[`), *Language > Groovy* |
 | `examples/napari_follow.py` | napari following a server the same way: its datasets as layers, refreshed on every edit; the link and the datasets on the command line | `uv run --with "napari[all]" --with napari-ome-zarr examples/napari_follow.py <link> raw processed` |
 

@@ -357,6 +357,8 @@ dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
     { name = "pydantic" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
+    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
     { name = "starlette" },
     { name = "tensorstore" },
     { name = "threadpoolctl" },
@@ -375,25 +377,17 @@ all = [
     { name = "mcp" },
     { name = "neuroglancer" },
     { name = "scikit-image" },
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
-    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
     { name = "tifffile", version = "2026.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
     { name = "tifffile", version = "2026.9.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
 ]
 cpu = [
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-11-chunkmirage-cpu') or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
-    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and extra == 'extra-11-chunkmirage-cpu') or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
     { name = "torch", version = "2.14.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-11-chunkmirage-cpu') or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
     { name = "torch", version = "2.14.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-11-chunkmirage-cpu') or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
 ]
 cupy = [
     { name = "cupy-cuda12x" },
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
-    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
 ]
 gpu = [
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-11-chunkmirage-gpu') or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
-    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and extra == 'extra-11-chunkmirage-gpu') or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
     { name = "torch", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
 ]
 hdf5 = [
@@ -408,10 +402,6 @@ mcp = [
 mesh = [
     { name = "dracopy" },
     { name = "scikit-image" },
-]
-ops = [
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
-    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
 ]
 tiff = [
     { name = "imagecodecs", version = "2026.3.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-11-chunkmirage-cpu' and extra == 'extra-11-chunkmirage-gpu')" },
@@ -444,7 +434,7 @@ requires-dist = [
     { name = "cupy-cuda12x", marker = "extra == 'cupy'", specifier = ">=13" },
     { name = "dracopy", marker = "extra == 'mesh'", specifier = ">=1.4" },
     { name = "h5py", marker = "extra == 'hdf5'", specifier = ">=3.10" },
-    { name = "hypercorn", extras = ["h2"], specifier = ">=0.17" },
+    { name = "hypercorn", specifier = ">=0.17" },
     { name = "imagecodecs", marker = "extra == 'tiff'", specifier = ">=2024.1" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0" },
     { name = "neuroglancer", marker = "extra == 'viewer'", specifier = ">=2.40" },
@@ -452,10 +442,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "scikit-image", marker = "extra == 'mesh'", specifier = ">=0.22" },
-    { name = "scipy", marker = "extra == 'cpu'", specifier = ">=1.12" },
-    { name = "scipy", marker = "extra == 'cupy'", specifier = ">=1.12" },
-    { name = "scipy", marker = "extra == 'gpu'", specifier = ">=1.12" },
-    { name = "scipy", marker = "extra == 'ops'", specifier = ">=1.12" },
+    { name = "scipy", specifier = ">=1.12" },
     { name = "starlette", specifier = ">=0.37" },
     { name = "tensorstore", specifier = ">=0.1.60" },
     { name = "threadpoolctl", specifier = ">=3.1" },
