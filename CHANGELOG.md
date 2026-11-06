@@ -6,6 +6,12 @@ and a release that breaks it says so here.
 
 ## Unreleased
 
+### Install
+
+- scipy is a core dependency: `scene://` on an image, an op's input resampled to its voxel
+  size and meshes need it, and a plain `pip install chunkmirage` left it out. The `ops`
+  extra stays, empty, so `chunkmirage[ops]` still installs.
+
 ### Sources
 
 - `axes_order` in the spec (`--axes-order`): a stored array's axes in another order, `"zyx"`
