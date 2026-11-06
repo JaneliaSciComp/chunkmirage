@@ -238,8 +238,9 @@ Three layers, from most to least structured:
 
 1. **Built-in ops**: pointwise (threshold, cast, scale), filters (gaussian, uniform, dog),
    morphology, connected components with a size filter (`label`), spot detection (`spots`),
-   and `contacts` over the channels of a `stack://` source, the first op over several images
-   (the stack reads them on one grid; the op drops the channel axis), and `downsample`.
+   and contacts over the channels of a stack:// source, the first op over several images 
+   (the stack serves them on one   grid — resampling an input whose grid differs, level 
+   by level — and the op drops the channel axis), and `downsample`.
    Planned: distance transform, a `Combine` op taking another pipeline as input. Registration is a source,
    not an op (see below).
 2. **Plugins**: subclass `Op`, declare `name`, `halo`, `cache`, register via the
