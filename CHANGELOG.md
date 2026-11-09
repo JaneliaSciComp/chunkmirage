@@ -37,6 +37,13 @@ and a release that breaks it says so here.
 - `examples/dask_source.py`: a lazy dask array served as a pyramid with a threshold on
   top, each chunk a viewer asks for computing only the dask chunks under it.
 
+### Browser engine
+
+- The demos open again: their service worker, `sw.js`, imported the code it shares with
+  the pages (`web/src/urls.ts`) from a chunk of its own, which a service worker registered
+  as a classic script cannot do, so it never started and no page showed its viewer. It is
+  now built on its own, as one file, and the build fails if it imports anything.
+
 ## 0.1.0a6 (2026-10-27)
 
 Faster reads of many chunks and a faster GPU resampler, with the same values, and
