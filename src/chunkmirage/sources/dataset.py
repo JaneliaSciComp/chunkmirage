@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from chunkmirage.core import ArrayInfo, Box
-from chunkmirage.sources.base import ChunkedSource, MultiscaleSource, Source
+from chunkmirage.sources.base import BlockSource, ChunkedSource, MultiscaleSource, Source
 
 if TYPE_CHECKING:
     from chunkmirage.pipeline import Pipeline
@@ -102,8 +102,12 @@ class CoverageLevel(Source):
     def __init__(self, stage: ChunkedSource, fine: ChunkedSource):
         self.stage, self.fine = stage, fine
         info = stage.info
-        grid = info.chunk_grid
-        # a voxel is a chunk: the chunk's size, placed at the chunk's centre (voxel
+        # blocks moved half a chunk (an op's block_phase="corner") have one more per axis,
+        # each centred on a corner where chunks meet
+        grid = stage.grid if isinstance(stage, BlockSource) else info.chunk_grid
+        moved = stage.offset if isinstance(stage, BlockSource) else ()
+        moved = (0,) * (info.ndim - len(moved)) + tuple(moved)
+        # a voxel is a chunk (or block): the chunk's size, placed at its centre (voxel
         # positions are centres)
         self._info = ArrayInfo(
             shape=grid,
@@ -112,7 +116,9 @@ class CoverageLevel(Source):
             voxel_size=tuple(v * c for v, c in zip(info.voxel_size, info.chunk_shape)),
             units=info.units,
             axes=info.axes,
-            translation=tuple(t + (c - 1) / 2 * v for t, c, v in zip(info.translation, info.chunk_shape, info.voxel_size)),
+            translation=tuple(
+                t + ((c - 1) / 2 - f) * v for t, c, v, f in zip(info.translation, info.chunk_shape, info.voxel_size, moved)
+            ),
             kind="label",
         )
         self._key = f"coverage:{stage.cache_key()}:{fine.cache_key()}"

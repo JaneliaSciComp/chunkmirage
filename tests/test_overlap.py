@@ -95,3 +95,52 @@ def test_a_plan_says_what_a_read_would_compute_and_computes_nothing():
     blocks, out = p.plan(0, box)
     assert (blocks["held"], blocks["compute"]) == (8, 0), "held now: the walk stops there"
     assert out["compute"] == 1, "a stage that keeps nothing computes again"
+
+
+class OnCorners(BlockCentre):
+    """Blocks on chunk corners, weighted by a ramp: as properties, read per instance, the way
+    one op class serving many models sets them from each model's config."""
+
+    name: ClassVar[str] = "block_corner_test"
+    weighting: str = "ramp"
+
+    @property
+    def block_phase(self):
+        return "corner"
+
+    @property
+    def blend(self):
+        return self.weighting
+
+
+def test_blocks_on_corners_put_each_chunk_in_eight_blended_by_a_ramp():
+    from chunkmirage.ops.base import list_ops
+
+    base._REGISTRY[OnCorners.name] = OnCorners
+    try:
+        assert (list_ops()[OnCorners.name]["block_phase"], list_ops()[OnCorners.name]["blend"]) == ("dynamic", "dynamic")
+        p = Pipeline(open_source(SRC), [{"op": OnCorners.name}])
+        blocks = p.levels[0].blocks
+        assert blocks.grid == (3, 3, 5), "one more block along each axis"
+        assert blocks.chunk_box((0, 0, 0)) == Box((-8, -8, -8), (8, 8, 8)), "a block is 2 x 2 x 2 chunks, on a corner"
+        inner = Box((0, 0, 8), (8, 8, 16))  # a chunk inside along x
+        assert p.plan(0, inner)[-2]["chunks"] == 8, "8 blocks, where centred ones take 2 x 2 x 3"
+        assert Pipeline(open_source(SRC), [{"op": "block_centre_test"}]).plan(0, inner)[-2]["chunks"] == 12
+
+        BlockCentre.calls = 0
+        along_x = p.read(0, WHOLE)[0, 0]
+        assert BlockCentre.calls == 3 * 3 * 5, "each block once"
+        # every block is its x centre, so the blend along x is the ramp-weighted mean of the
+        # centres of the blocks reaching each voxel (the other axes' weights cancel)
+        expected = []
+        for x in range(32):
+            w = {j: min(x - (8 * j - 8) + 0.5, 8 * j + 8 - x - 0.5) / 8 for j in range(5) if 8 * j - 8 <= x < 8 * j + 8}
+            expected.append(sum(wj * 8 * j for j, wj in w.items()) / sum(w.values()))
+        np.testing.assert_allclose(along_x, expected, rtol=1e-6)
+
+        tent = Pipeline(open_source(SRC), [{"op": OnCorners.name, "weighting": "tent"}])
+        assert tent.levels[0].cache_key() != p.levels[0].cache_key(), "the blend is part of the op's identity"
+        with pytest.raises(ValueError, match="blend 'mean'"):
+            Pipeline(open_source(SRC), [{"op": OnCorners.name, "weighting": "mean"}])
+    finally:
+        del base._REGISTRY[OnCorners.name]
