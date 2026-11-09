@@ -40,6 +40,10 @@ nav:
   - Roadmap: roadmap.md
   - Contributing & doc policy: contributing.md
 
+# page views of the live site, counted without cookies (FAQ: Does the site count visits?)
+extra_javascript:
+  - javascripts/count.js
+
 markdown_extensions:
   - attr_list
   - md_in_html

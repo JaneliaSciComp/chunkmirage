@@ -135,3 +135,17 @@ that API is on the [roadmap](roadmap.md).
 * **One process**: the cache and the registry live in one process, so `--workers` suits
   fixed pipelines only. `--token` guards the control API (`/api/*`), but the datasets
   themselves are open to anyone who can reach the server, since viewers send no headers.
+
+## Does the site count visits?
+
+The docs and the browser demos at `janeliascicomp.github.io/chunkmirage` count page views
+with [GoatCounter](https://www.goatcounter.com), which sets no cookies. A view sends the
+page's path (for a demo, with the name of its gallery card), its title, the screen width
+and the referring site's domain; GoatCounter also sees what any web request carries, the
+browser's user agent and the IP address, which it turns into a country and does not keep.
+The query string and hash are never sent: the pages send the count themselves rather than
+load GoatCounter's script, which would send the query string, where `register.html` keeps
+the addresses of the images you register (`pipeline.html` keeps your own Python in the
+hash). Only the live site counts: not a local build, `web/serve.py`, your own
+`chunkmirage serve`, or an automated browser. The code is `web/src/count.ts` and
+`docs/javascripts/count.js`.
