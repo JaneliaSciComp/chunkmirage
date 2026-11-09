@@ -77,9 +77,8 @@ they vary by instance (one op class serving many models, each with its own). `bl
 chunks meet, with one more block along each axis. With an overlap of half a chunk, a block
 is then 2 × 2 × 2 chunks and every chunk is the blend of exactly 8 blocks, where blocks
 centred on chunks (the default) give each chunk its own and its 26 neighbours'. For a view
-one chunk deep, a slice through a model's 256³ windows on 128³ chunks, that is about half
-as many blocks to compute, and the first chunk in a fresh region waits for 8 of them rather
-than 27. `blend = "ramp"` weights each block by a ramp falling linearly from its centre to
+one chunk deep (a slice), that is about half as many blocks to compute, and the first chunk
+in a fresh region waits for 8 of them rather than 27. `blend = "ramp"` weights each block by a ramp falling linearly from its centre to
 its faces along every axis (`chunkmirage.fused.ramp`, a sliding-window inference's
 weighting) instead of the tent. Both are part of the op's identity, so a change gives the
 stages new keys.
