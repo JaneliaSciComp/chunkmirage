@@ -13,6 +13,11 @@ and a release that breaks it says so here.
   it) read by ops and models that index by position. Names, voxel size and placement move
   with the data; the default stays the stored order. Needs worldarray 0.10, which also
   brings 0.9.1's fix for a finished process aborting at exit (exit code 134).
+- `stack://` puts an image on another grid onto the first image's, level by level, instead
+  of refusing it, so a mask computed at one resolution can stand next to an image's pyramid:
+  by nearest voxel for labels and masks, linearly otherwise, 0 outside the image, as
+  `scene://` resamples. The stack's levels end at the coarsest every image reaches; images
+  in other units or with their axes in another order are refused.
 
 ### Examples
 

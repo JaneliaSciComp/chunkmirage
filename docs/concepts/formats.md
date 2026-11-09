@@ -657,20 +657,26 @@ with nothing installed:
 stack://<image>|<image>[|<image>...]
 ```
 
-serves images as the channels of one (c, z, y, x) array ((c, y, x) for images in y and x, such as GeoTIFF bands): channel 0 is the first image's first channel, channel 1 the second's, and so on. The first image sets the pyramid: the stack has its level count, and each level's shape, voxel size and translation. Other sources are matched to each of those levels:
+serves images as the channels of one `(c, z, y, x)` array (`(c, y, x)` for images in y and
+x, such as GeoTIFF bands): channel 0 is the first image's first channel, channel 1 the
+second's, and so on. The first image sets the grid: the stack has its levels, with their
+shapes, voxel sizes and translations, down to the coarsest level that every other image has
+a level as coarse as. At each level, every other image's nearest level is read as it is
+where it is on that level's grid, and is otherwise resampled onto it as `scene://` resamples:
+by nearest voxel for labels and masks, linearly otherwise, and 0 outside the image. So a
+mask computed at one coarse resolution can stand next to an image's whole pyramid, and the
+stack ends at the mask's resolution rather than reading the mask at its own resolution for
+every chunk of a much coarser level. The images must have the same spatial axes, in the
+same order, and the same units. Each is anything `open_source` reads, so a stack can hold a
+stored volume next to a `synthetic://` or `register://` one. Nothing is copied: a stack
+chunk reads the same box of each image (or the box covering it, when resampled), through
+that image's own cache. The browser engine's `stack://` still needs every image on one grid.
 
-Its spatial axes may be any permutation of (z, y, x) — a mask stored (t, c, x, y, z) is accepted, transposed at read time.
-
-A source with fewer levels than the first (a single-resolution mask, say) has the level nearest each output level's voxel size picked, and is resampled to that level's grid.
-
-A source whose voxel size differs at a level is resampled to that level's grid. Nearest-neighbour by default, so binary masks stay binary; ResampleLevel takes order=1 for linear. The affine is built once per level from physical positions (voxel size and translation), as warp:// builds its mapping, so a boundary lands at the same physical place at every output level rather than shifting with the chunk grid.
-
-The images must agree on their spatial axes as a set; an axes mismatch (say (z, y, x) against (y, x)) is refused. Each is anything open_source reads, so a stack can hold a stored volume next to a synthetic:// or register:// one. Nothing is copied: a stack chunk reads the same box of each image (or the source box covering it, when resampled), through that image's own cache.
-
-A stack exists for ops that need two images at once. Such an op takes the channel axis and
-returns an array without it; the pipeline reads every channel and pads only the spatial axes
-by the op's halo, and `--chunk` may then give just the three spatial values. The first such
-op is [`contacts`](../reference/ops.md): the voxels within a distance of both structures.
+A stack exists for ops that need two images at once; to view a mask over an image, open
+each as a layer of its own, which a viewer overlays whatever their resolutions. Such an op
+takes the channel axis and returns an array without it; the pipeline reads every channel
+and pads only the spatial axes by the op's halo, and `--chunk` may then give just the three
+spatial values. The first such op is [`contacts`](../reference/ops.md): the voxels within a distance of both structures.
 On OpenOrganelle's published organelle predictions, mirrored back into the EM's frame (see
 below), followed by `label` to colour and size-filter the sites:
 

@@ -1,22 +1,24 @@
-"""``stack://`` sources: several images on one grid, served as the channels of one array, so
-an op can compute something from all of them at once (``contacts``, masks, differences).
+"""``stack://`` sources: several images served as the channels of one array, so an op can
+compute something from all of them at once (``contacts``, masks, differences).
 
     stack://<image>|<image>[|<image>...]
 
 Each image is anything ``open_source`` reads. Its first channel (index 0 on any leading
-axis) becomes one channel of the stack, in the order given. Spatial axes may be any
-permutation of ``(z, y, x)``; ``ResampleLevel`` transposes at read time. Levels are paired
-by nearest voxel size; sources with a different grid, or fewer levels, are resampled to
-the primary level's grid. The first source sets the pyramid.
-
-Sources that are not on the primary grid are resampled with ``SceneLevelSource``: points
-outside the source image read as 0, matching ``scene://``. Units and the set of spatial
-axes must match the primary source; a mismatch is an error, not something to resample.
+axis) becomes one channel of the stack, in the order given. The first image sets the grid:
+the stack has its levels, down to the coarsest that every other image has a level as coarse
+as, so no image is read at a much finer resolution than the level it serves. At each level,
+every other image's nearest level is read as it is when it is on that level's grid, and
+otherwise resampled onto it as ``scene://`` resamples (``SceneLevelSource``): by nearest
+voxel for labels and masks, linearly otherwise, 0 outside the image. The images must have
+the same spatial axes, in the same order, and the same units. Nothing is copied: reading a
+stack chunk reads the same box of each image (or the box covering it, when resampled),
+through each image's own cache.
 """
 
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -51,7 +53,7 @@ class StackSource(Source):
         for i, c in enumerate(range(box.start[0], box.stop[0])):
             src, lead = self.parts[c]
             b = Box(lead + space.start, tuple(v + 1 for v in lead) + space.stop)
-            src.read_into(b, out[i][(None,) * len(lead)])
+            src.read_into(b, out[i][(None,) * len(lead)])  # each image's read lands in its channel
         return out
 
 
@@ -61,15 +63,11 @@ def _n_lead(ms: MultiscaleSource, url: str) -> int:
     while n < len(axes) and axes[n] not in _SPATIAL:
         n += 1
     if len(axes) - n not in (2, 3) or any(a not in _SPATIAL for a in axes[n:]):
-        raise ValueError(
-            f"{url}: stack:// needs images with axes ending in a permutation of z, y, x; got {axes}"
-        )
+        raise ValueError(f"{url}: stack:// needs images with axes ending in z, y, x (or y, x); got {axes}")
     return n
 
 
 def _same_grid(a: ArrayInfo, na: int, b: ArrayInfo, nb: int) -> bool:
-    if list(a.axes[na:]) != list(b.axes[nb:]):
-        return False
     return (
         a.shape[na:] == b.shape[nb:]
         and a.units[na:] == b.units[nb:]
@@ -78,66 +76,47 @@ def _same_grid(a: ArrayInfo, na: int, b: ArrayInfo, nb: int) -> bool:
     )
 
 
-def _check_compatible(base: ArrayInfo, nb: int, info: ArrayInfo, ni: int, url: str, primary_url: str) -> None:
-    """Reject images whose spatial axes or units cannot be stacked onto the primary's."""
-    b_axes = list(base.axes[nb:])
-    i_axes = list(info.axes[ni:])
-    if set(i_axes) != set(b_axes):
+def _check_compatible(first: ArrayInfo, nf: int, info: ArrayInfo, n: int, url: str, first_url: str) -> None:
+    """Refuse an image that cannot be put on the first's grid by scaling and shifting it."""
+    if tuple(info.axes[n:]) != tuple(first.axes[nf:]):
         raise ValueError(
-            f"stack:// {url}: spatial axes {i_axes} are not a permutation of "
-            f"{primary_url}'s {b_axes}"
+            f"stack:// {url}: spatial axes {tuple(info.axes[n:])} are not {first_url}'s "
+            f"{tuple(first.axes[nf:])}; images with their axes in another order are not reordered"
         )
-    b_units = dict(zip(b_axes, base.units[nb:]))
-    i_units = dict(zip(i_axes, info.units[ni:]))
-    if i_units != b_units:
-        bad = {a: (i_units.get(a), b_units.get(a)) for a in b_axes if i_units.get(a) != b_units.get(a)}
+    if tuple(info.units[n:]) != tuple(first.units[nf:]):
         raise ValueError(
-            f"stack:// {url}: spatial units {i_units} do not match {primary_url}'s "
-            f"{b_units} (axis: got, expected): {bad}"
+            f"stack:// {url}: units {tuple(info.units[n:])} are not {first_url}'s {tuple(first.units[nf:])}"
         )
 
 
-def _affine_to_source(src: ArrayInfo, ns: int, tgt: ArrayInfo, nt: int) -> Affine:
-    """Source spatial index = A(target spatial index), in source-axis order.
-
-        target_physical = tt + i_t * tv           (target index, target order)
-        source_index    = (target_physical - st) / sv
-                        = (tt - st) / sv + i_t * (tv / sv)
-
-    The transposition between source and target axis order is folded in so the returned
-    affine takes target-order spatial indices and returns source-order spatial indices.
-    """
-    s_axes = list(src.axes[ns:])
-    t_axes = list(tgt.axes[nt:])
-    perm = [s_axes.index(a) for a in t_axes]  # target i -> source pos
-    sv = np.asarray(src.voxel_size[ns:], dtype=float)          # source order
-    tv = np.asarray(tgt.voxel_size[nt:], dtype=float)          # target order
-    st = np.asarray(src.translation[ns:], dtype=float)         # source order
-    tt = np.asarray(tgt.translation[nt:], dtype=float)         # target order
-    scale = tv[perm] / sv
-    shift = (tt[perm] - st) / sv
-    n = len(s_axes)
-    m = np.zeros((n, n + 1))
-    m[:, :n] = np.diag(scale)
-    m[:, -1] = shift
-    return Affine(m)
-
-
-def _resampled(src: Source, ns: int, tgt: ArrayInfo, nt: int, key: str) -> Source:
-    """``src`` resampled onto ``tgt``'s spatial grid, via ``SceneLevelSource``."""
-    k = len(tgt.axes) - nt
-    tgt_spatial = ArrayInfo(
-        shape=tgt.shape[nt:],
-        dtype=src.info.dtype,
-        chunk_shape=tgt.chunk_shape[nt:],
-        voxel_size=tgt.voxel_size[nt:],
-        units=tgt.units[nt:],
-        axes=tgt.axes[nt:],
-        translation=tgt.translation[nt:],
-        kind=src.info.kind,
+def _reaches(ms: MultiscaleSource, n: int, voxel_size: Sequence[float]) -> bool:
+    """Whether ``ms`` has a level at least as coarse as ``voxel_size`` along every axis."""
+    return any(
+        all(v >= w * (1 - 1e-6) for v, w in zip(lvl.info.voxel_size[n:], voxel_size)) for lvl in ms.levels
     )
-    mapping = _affine_to_source(src.info, ns, tgt, nt)
-    return SceneLevelSource(src, mapping, tgt_spatial, ns, order=0, key=key)
+
+
+def _resampled(src: Source, n: int, grid: ArrayInfo, ng: int) -> Source:
+    """``src`` (``n`` leading axes, kept) on ``grid``'s spatial voxels: by nearest voxel for
+    labels and masks, linearly otherwise; 0 outside ``src``."""
+    s = src.info
+    info = ArrayInfo(
+        shape=tuple(s.shape[:n]) + tuple(grid.shape[ng:]),
+        dtype=s.dtype,
+        chunk_shape=tuple(s.shape[:n]) + tuple(grid.chunk_shape[ng:]),
+        voxel_size=tuple(s.voxel_size[:n]) + tuple(grid.voxel_size[ng:]),
+        units=tuple(s.units[:n]) + tuple(grid.units[ng:]),
+        axes=tuple(s.axes[:n]) + tuple(grid.axes[ng:]),
+        translation=tuple(s.translation[:n]) + tuple(grid.translation[ng:]),
+        kind=s.kind,
+    )
+    sv, st = np.asarray(s.voxel_size[n:], dtype=float), np.asarray(s.translation[n:], dtype=float)
+    gv, gt = np.asarray(grid.voxel_size[ng:], dtype=float), np.asarray(grid.translation[ng:], dtype=float)
+    # voxel i of the grid is centred at gt + i * gv, which is voxel (gt + i * gv - st) / sv of src
+    mapping = Affine.scale_translation(gv / sv, (gt - st) / sv)
+    order = 0 if s.kind in ("label", "mask") else 1
+    key = f"resampled:{tuple(grid.shape[ng:])}:{tuple(gv)}:{tuple(gt)}:{order}:{src.cache_key()}"
+    return SceneLevelSource(src, mapping, info, n, order, key)
 
 
 def open_stack(url: str, *, cache_bytes: int = 0, cache=None) -> MultiscaleSource:
@@ -148,57 +127,36 @@ def open_stack(url: str, *, cache_bytes: int = 0, cache=None) -> MultiscaleSourc
         raise ValueError("stack:// needs two or more images separated by '|': stack://<a>|<b>")
     images = [open_source(u, cache_bytes=cache_bytes, cache=cache) for u in urls]
     leads = [_n_lead(ms, u) for ms, u in zip(images, urls)]
-
-    primary = images[0]
-    primary_lead = leads[0]
-    n_levels = len(primary.levels)
-
-    p_axes = list(primary.levels[0].info.axes[primary_lead:])
-    p_set = set(p_axes)
-    for u, ms, n in zip(urls[1:], images[1:], leads[1:]):
-        s_axes = list(ms.levels[0].info.axes[n:])
-        if set(s_axes) != p_set:
-            raise ValueError(
-                f"stack:// {u}: spatial axes {s_axes} are not a permutation of "
-                f"{urls[0]}'s {p_axes}"
-            )
-
+    first, nf = images[0], leads[0]
+    others = list(zip(urls[1:], images[1:], leads[1:]))
+    for u, ms, n in others:
+        _check_compatible(first.levels[0].info, nf, ms.levels[0].info, n, u, urls[0])
+    # the first image's levels, down to the coarsest every other image has a level as coarse
+    # as: a mask at one resolution, say, ends the stack there rather than being read at its
+    # own resolution for every chunk of a much coarser level
+    n_levels = 1
+    while n_levels < len(first.levels) and all(
+        _reaches(ms, n, first.levels[n_levels].info.voxel_size[nf:]) for _, ms, n in others
+    ):
+        n_levels += 1
     levels: list[Source] = []
     for i in range(n_levels):
-        base = primary.levels[i].info
-        parts: list[tuple[Source, tuple[int, ...]]] = [(primary.levels[i], (0,) * primary_lead)]
-
-        for u, ms, n in zip(urls[1:], images[1:], leads[1:]):
-            try:
-                j = ms.nearest_level(base.voxel_size[primary_lead:], fitted=False)
-            except TypeError:
-                j = ms.nearest_level(base.voxel_size[primary_lead:])
-            j = min(max(j, 0), len(ms.levels) - 1)
-            lvl = ms.levels[j]
-
-            _check_compatible(base, primary_lead, lvl.info, n, u, urls[0])
-
-            if _same_grid(lvl.info, n, base, primary_lead):
-                parts.append((lvl, (0,) * n))
-            else:
-                key = (
-                    f"resample:{lvl.cache_key()}:{base.shape[primary_lead:]}:"
-                    f"{base.voxel_size[primary_lead:]}:{base.translation[primary_lead:]}"
-                )
-                parts.append((_resampled(lvl, n, base, primary_lead, key), (0,) * n))
-
+        base = first.levels[i].info
+        parts: list[tuple[Source, tuple[int, ...]]] = [(first.levels[i], (0,) * nf)]
+        for _, ms, n in others:
+            lvl = ms.levels[ms.nearest_level(base.voxel_size[nf:])]
+            parts.append((lvl if _same_grid(base, nf, lvl.info, n) else _resampled(lvl, n, base, nf), (0,) * n))
         info = ArrayInfo(
-            shape=(len(parts), *base.shape[primary_lead:]),
-            dtype=np.result_type(*(p[0].info.dtype for p in parts)),
-            chunk_shape=(len(parts), *base.chunk_shape[primary_lead:]),
-            voxel_size=(1.0, *base.voxel_size[primary_lead:]),
-            units=("", *base.units[primary_lead:]),
-            axes=("c", *base.axes[primary_lead:]),
-            translation=(0.0, *base.translation[primary_lead:]),
+            shape=(len(parts), *base.shape[nf:]),
+            dtype=np.result_type(*(src.info.dtype for src, _ in parts)),
+            chunk_shape=(len(parts), *base.chunk_shape[nf:]),
+            voxel_size=(1.0, *base.voxel_size[nf:]),
+            units=("", *base.units[nf:]),
+            axes=("c", *base.axes[nf:]),
+            translation=(0.0, *base.translation[nf:]),
         )
         ident = "|".join(f"{src.cache_key()}@{lead}" for src, lead in parts)
         key = "stack:" + hashlib.sha1(ident.encode()).hexdigest()[:16]
         levels.append(StackSource(parts, info, key))
-
     name = "+".join(ms.name or u.rstrip("/").rsplit("/", 1)[-1] for ms, u in zip(images, urls))
-    return MultiscaleSource(levels, name=name or primary.name)
+    return MultiscaleSource(levels, name=name or first.name)
