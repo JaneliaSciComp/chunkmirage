@@ -11,7 +11,7 @@ import numpy as np
 from chunkmirage import demand
 from chunkmirage.cache import LRUCache
 from chunkmirage.core import KINDS, ArrayInfo, Box
-from chunkmirage.fused import tent
+from chunkmirage.fused import BLENDS, ramp, tent
 
 
 class Source(ABC):
@@ -234,13 +234,17 @@ class ChunkedSource(Source):
 class BlockSource(ChunkedSource):
     """Chunks that overlap: block ``index`` is chunk ``index`` of ``info`` and ``overlap``
     voxels around it along the last axes (past the array's edge too, so every block has the
-    one shape), each computed from its inputs alone and memoized as a chunk is. ``read``
-    blends them: a voxel is the mean of every block reaching it, each weighted 1 over its
-    own chunk and less the further into its overlap (``fused.tent``), so the result turns
-    smoothly from one block's values to the next's instead of stepping at a chunk's edge,
-    and is the same whatever order the blocks are computed in. An integer output is
-    rounded after the mean. The blocks of an op with ``overlap``; the leading axes (before
-    the last ``len(overlap)``) are read whole."""
+    one shape), each computed from its inputs alone and memoized as a chunk is. ``offset``
+    moves the blocks that many voxels back along those axes (half a chunk: a block on each
+    corner where chunks meet, an op's ``block_phase="corner"``), with one more block along
+    each axis moved. ``read`` blends them: a voxel is the mean of every block reaching it,
+    each weighted by ``blend``: ``"tent"``, 1 over its own region (its chunk, moved by the
+    offset) and less the further into its overlap (``fused.tent``), or ``"ramp"``, most at
+    its centre and least at its faces (``fused.ramp``). So the result turns smoothly from one
+    block's values to the next's instead of stepping where they meet, and is the same
+    whatever order the blocks are computed in. An integer output is rounded after the
+    mean. The blocks of an op with ``overlap``; the leading axes (before the last
+    ``len(overlap)``) are read whole."""
 
     def __init__(
         self,
@@ -249,29 +253,56 @@ class BlockSource(ChunkedSource):
         compute_block: Callable[[tuple[int, ...]], np.ndarray],
         cache: LRUCache | None,
         key: str,
+        offset: Sequence[int] | None = None,
+        blend: str = "tent",
     ):
         super().__init__(info, compute_block, cache, key)
         self.overlap = tuple(int(o) for o in overlap)
+        self.offset = tuple(int(o) for o in offset) if offset is not None else (0,) * len(self.overlap)
+        if len(self.offset) != len(self.overlap):
+            raise ValueError(f"{key}: offset {self.offset} is not one per axis of overlap {self.overlap}")
+        if blend not in BLENDS:
+            raise ValueError(f"{key}: blend {blend!r} is not one of {', '.join(BLENDS)}")
+        self.blend = blend
 
-    def chunk_box(self, index: Sequence[int]) -> Box:
-        """Block ``index``'s extent: chunk ``index``, not clipped to the array along the
-        last axes, padded by the overlap."""
+    @property
+    def grid(self) -> tuple[int, ...]:
+        """How many blocks there are along each axis: as many as chunks, one more along an
+        axis whose blocks are moved."""
         info, k = self._info, len(self.overlap)
         lead = info.ndim - k
-        whole = info.chunk_box(index)
-        core = Box.from_chunk(index, info.chunk_shape)
+        spatial = zip(info.shape[lead:], info.chunk_shape[lead:], self.offset)
+        return info.chunk_grid[:lead] + tuple(-(-(n + f) // c) for n, c, f in spatial)
+
+    def core(self, index: Sequence[int]) -> Box:
+        """Block ``index``'s own region along the last axes: its chunk, moved by the offset."""
+        k = len(self.overlap)
+        chunk = Box.from_chunk(index[len(index) - k :], self._info.chunk_shape[self._info.ndim - k :])
         return Box(
-            whole.start[:lead] + tuple(a - o for a, o in zip(core.start[lead:], self.overlap)),
-            whole.stop[:lead] + tuple(b + o for b, o in zip(core.stop[lead:], self.overlap)),
+            tuple(a - f for a, f in zip(chunk.start, self.offset)),
+            tuple(b - f for b, f in zip(chunk.stop, self.offset)),
+        )
+
+    def chunk_box(self, index: Sequence[int]) -> Box:
+        """Block ``index``'s extent: its own region, not clipped to the array along the last
+        axes, padded by the overlap."""
+        info, k = self._info, len(self.overlap)
+        lead = info.ndim - k
+        whole = Box.from_chunk(index[:lead], info.chunk_shape[:lead]).clip(info.shape[:lead])
+        core = self.core(index)
+        return Box(
+            whole.start + tuple(a - o for a, o in zip(core.start, self.overlap)),
+            whole.stop + tuple(b + o for b, o in zip(core.stop, self.overlap)),
         )
 
     def covering(self, box: Box) -> list[tuple[int, ...]]:
         """The blocks whose extent reaches ``box``."""
         info, k = self._info, len(self.overlap)
         lead = info.ndim - k
-        chunks, grid = info.chunk_shape[lead:], info.chunk_grid[lead:]
-        first = [max((a - o) // c, 0) for a, o, c in zip(box.start[lead:], self.overlap, chunks)]
-        last = [min((b - 1 + o) // c, g - 1) for b, o, c, g in zip(box.stop[lead:], self.overlap, chunks, grid)]
+        chunks, grid = info.chunk_shape[lead:], self.grid[lead:]
+        spatial = list(zip(box.start[lead:], box.stop[lead:], self.overlap, self.offset, chunks, grid))
+        first = [max((a + f - o) // c, 0) for a, _, o, f, c, _ in spatial]
+        last = [min((b - 1 + f + o) // c, g - 1) for _, b, o, f, c, g in spatial]
         ahead = tuple(a // c for a, c in zip(box.start[:lead], info.chunk_shape[:lead]))
         return [ahead + tuple(int(lo + r) for lo, r in zip(first, rel))
                 for rel in np.ndindex(*[hi - lo + 1 for lo, hi in zip(first, last)])]
@@ -279,7 +310,6 @@ class BlockSource(ChunkedSource):
     def read(self, box: Box) -> np.ndarray:
         info, k = self._info, len(self.overlap)
         lead = info.ndim - k
-        chunks = info.chunk_shape[lead:]
         acc = np.zeros(box.shape, np.float64)
         total = np.zeros(box.shape[lead:], np.float64)
         parts = []
@@ -293,9 +323,12 @@ class BlockSource(ChunkedSource):
                 parts.append((index, extent, inter))
         # the blocks computed at once, then summed here (they overlap)
         pieces = self._each(parts, lambda data, extent, inter: data[inter.relative_to(extent).slices()])
-        for (index, _, inter), data in zip(parts, pieces):
-            core = Box.from_chunk(index[lead:], chunks)
-            weight = tent(inter.start[lead:], inter.stop[lead:], core.start, core.stop, self.overlap)
+        for (index, extent, inter), data in zip(parts, pieces):
+            if self.blend == "ramp":
+                weight = ramp(inter.start[lead:], inter.stop[lead:], extent.start[lead:], extent.stop[lead:])
+            else:
+                core = self.core(index)
+                weight = tent(inter.start[lead:], inter.stop[lead:], core.start, core.stop, self.overlap)
             dst = inter.relative_to(box).slices()
             acc[dst] += weight * data
             total[dst[lead:]] += weight

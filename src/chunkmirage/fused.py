@@ -139,6 +139,10 @@ def run(ops: Sequence[Op], block: np.ndarray, in_box: Box, out_box: Box, out: Ar
     return np.asarray(block[lead.slices() + crop.slices()], dtype=out.dtype)
 
 
+#: how an op's overlapping blocks may be weighted where they meet (``Op.blend``)
+BLENDS = ("tent", "ramp")
+
+
 def tent(i0: Sequence[int], i1: Sequence[int], c0: Sequence[int], c1: Sequence[int],
          overlap: int | Sequence[int]) -> np.ndarray:
     """A block's weight at the voxels ``i0:i1`` where blocks overlap: 1 on its own voxels
@@ -153,6 +157,19 @@ def tent(i0: Sequence[int], i1: Sequence[int], c0: Sequence[int], c1: Sequence[i
         idx = np.arange(a, b)
         d = np.maximum(np.maximum(lo - idx, idx - (hi - 1)), 0)
         weight = np.multiply.outer(weight, np.clip(1 - d / (ov + 1), 0, 1))
+    return weight
+
+
+def ramp(i0: Sequence[int], i1: Sequence[int], e0: Sequence[int], e1: Sequence[int]) -> np.ndarray:
+    """A block's weight at the voxels ``i0:i1`` of its extent ``e0:e1``: along each axis
+    ``min(i + 0.5, n - i - 0.5) / (n / 2)`` at its ``i``-th voxel of ``n``, highest at its
+    centre and falling linearly to ``1 / n`` at its faces, the product over the axes. A
+    sliding-window inference's weight: what a model makes of a window's edges, where it saw
+    least around them, counts least."""
+    weight = np.ones(())
+    for a, b, lo, hi in zip(i0, i1, e0, e1):
+        n, i = hi - lo, np.arange(a, b) - lo
+        weight = np.multiply.outer(weight, np.clip(np.minimum(i + 0.5, n - i - 0.5), 0, None) / (n / 2))
     return weight
 
 

@@ -178,6 +178,10 @@ def _output_chunks(prev: ArrayInfo, out: ArrayInfo, scale: Sequence[float], keep
     return tuple(chunks)
 
 
+#: where an op's overlapping blocks sit (``Op.block_phase``)
+BLOCK_PHASES = ("centred", "corner")
+
+
 def _has_overlap(op: Op) -> bool:
     o = op.overlap
     return any(o) if isinstance(o, (tuple, list)) else bool(o)
@@ -252,10 +256,24 @@ def _fused_stage(
         stage = ChunkedSource(info, lambda idx: compute(info.chunk_box(idx), idx, key), cache, key)
         stage.reads = reads(info.chunk_box)
         return stage
-    # the blocks, chunk plus overlap, each from its inputs alone; the chunk is their blend
+    # the blocks, chunk plus overlap, each from its inputs alone; the chunk is their blend.
+    # On corners, the blocks sit half a chunk back (the op's digest, so the key, says so).
+    phase, blend = first.block_phase, first.blend
+    if phase not in BLOCK_PHASES:
+        raise ValueError(f"op {first.name!r}: block_phase {phase!r} is not one of {', '.join(BLOCK_PHASES)}")
+    if blend not in fused.BLENDS:
+        raise ValueError(f"op {first.name!r}: blend {blend!r} is not one of {', '.join(fused.BLENDS)}")
+    chunks = info.chunk_shape[info.ndim - kept :]
+    offset = tuple(c // 2 for c in chunks) if phase == "corner" else (0,) * kept
     bkey = f"blocks:{key}"
     blocks = BlockSource(
-        info, overlap, lambda idx: compute(blocks.chunk_box(idx), idx, bkey), cache if blocks_cache is None else blocks_cache, bkey
+        info,
+        overlap,
+        lambda idx: compute(blocks.chunk_box(idx), idx, bkey),
+        cache if blocks_cache is None else blocks_cache,
+        bkey,
+        offset=offset,
+        blend=blend,
     )
     blocks.reads = reads(blocks.chunk_box)
     stage = ChunkedSource(info, lambda idx: blocks.read(info.chunk_box(idx)), cache, key)

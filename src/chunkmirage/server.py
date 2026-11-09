@@ -381,6 +381,8 @@ def create_app(
                     "op": op.name,
                     "halo": list(op.for_level(p.info(0)).halo_for(p.info(0).ndim)),  # an op in physical units: this level's
                     "overlap": list(op.for_level(p.info(0)).overlap_for(p.info(0).ndim)),
+                    "block_phase": op.for_level(p.info(0)).block_phase,
+                    "blend": op.for_level(p.info(0)).blend,
                     "cached": op.cached,
                     "doc": (op.__doc__ or "").strip(),
                     **({"controls": [c.model_dump() for c in op.directives.controls]} if isinstance(op, PythonOp) else {}),

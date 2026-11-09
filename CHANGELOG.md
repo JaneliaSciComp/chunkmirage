@@ -12,6 +12,18 @@ and a release that breaks it says so here.
   size and meshes need it, and a plain `pip install chunkmirage` left it out. The `ops`
   extra stays, empty, so `chunkmirage[ops]` still installs.
 
+### Ops and pipelines
+
+- An op with `overlap` says where its blocks sit and how they blend: `block_phase =
+  "corner"` puts them half a chunk back, on the corners where chunks meet (with an overlap
+  of half a chunk, every chunk is then the blend of 8 blocks rather than of its own and its
+  26 neighbours', about half the blocks for a slice view and 8 rather than 27 before the
+  first chunk), and `blend = "ramp"` weights each from its centre to its faces
+  (`fused.ramp`) instead of the tent. Either may be a property, read per instance. The
+  defaults are unchanged, and so are the stage keys of ops that keep them; `coverage://`
+  places moved blocks where they sit, and `GET /api/datasets/{name}` and `GET /api/ops`
+  report both.
+
 ### Sources
 
 - `axes_order` in the spec (`--axes-order`): a stored array's axes in another order, `"zyx"`

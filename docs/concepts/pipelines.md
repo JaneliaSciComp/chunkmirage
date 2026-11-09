@@ -67,9 +67,22 @@ so two neighbours cross in the middle of their overlap and the result changes no
 across a chunk's edge than inside one. Since no block depends on another, the result is the
 same whatever order chunks are asked for. An op with an overlap is a stage of its own (the
 ops before and after it are not fused with it); `GET /api/datasets/{name}` reports each
-op's `overlap` beside its halo. An integer output is rounded after the mean, so labels,
+op's `overlap`, `block_phase` and `blend` beside its halo. An integer output is rounded after the mean, so labels,
 which do not blend, should have no overlap. `register://`'s refined blocks blend with the
 same weights. The browser engine computes a chunk alone, cropped, without blending.
+
+Where the blocks sit and how they are weighted are the op's to say too, as properties when
+they vary by instance (one op class serving many models, each with its own). `block_phase =
+"corner"` moves the blocks half a chunk back along every axis, onto the corners where
+chunks meet, with one more block along each axis. With an overlap of half a chunk, a block
+is then 2 × 2 × 2 chunks and every chunk is the blend of exactly 8 blocks, where blocks
+centred on chunks (the default) give each chunk its own and its 26 neighbours'. For a view
+one chunk deep, a slice through a model's 256³ windows on 128³ chunks, that is about half
+as many blocks to compute, and the first chunk in a fresh region waits for 8 of them rather
+than 27. `blend = "ramp"` weights each block by a ramp falling linearly from its centre to
+its faces along every axis (`chunkmirage.fused.ramp`, a sliding-window inference's
+weighting) instead of the tent. Both are part of the op's identity, so a change gives the
+stages new keys.
 
 ## Ops
 
@@ -81,6 +94,8 @@ schema for free (`GET /api/ops`).
 | `name`                 | identifier used in specs and the CLI (`--op name:key=val`)              |
 | `halo`                 | voxels of context needed on every side; int, per-axis tuple, or a property computed from parameters (e.g. `Gaussian` uses `ceil(sigma * truncate)`) |
 | `overlap`              | output voxels beyond its chunk that each block also computes, for ops whose blocks computed alone disagree where they meet; the blocks are cached as a stage of their own and blended into the served chunks; see [overlapping blocks](#overlapping-blocks-blended-where-they-meet). Default 0 |
+| `block_phase`          | where an op's overlapping blocks sit: `"centred"` on its chunks (the default) or `"corner"`, half a chunk back, each on a corner where chunks meet; may be a property, read per instance; see [overlapping blocks](#overlapping-blocks-blended-where-they-meet) |
+| `blend`                | how overlapping blocks are weighted where they meet: `"tent"` (the default; 1 over a block's own region, falling across its overlap) or `"ramp"` (falling from the block's centre to its faces); may be a property |
 | `cache`                | whether this stage's output chunks are memoized; see [Caching](caching.md) |
 | `slots`                | at most this many `apply` calls of the op at once, across the process (one per GPU, say, or a memory-hungry step); waiting chunks are queued finest level first and dropped when no request wants them any more ([order of work](caching.md#order-of-work-and-requests-given-up-on)). The op runs as a stage of its own, so reading its input holds no slot. Default `None`: as many as the server computes at once |
 | `packages`             | packages `apply` imports beyond numpy, e.g. `("scipy",)`; the schema carries them (`x-packages`) so the browser engine loads them with Python, only for pages whose ops need them (one Pyodide ships but not listed loads when first imported) |

@@ -38,6 +38,15 @@ class Op(BaseModel):
       cached as a stage of their own, and a served chunk is the weighted mean of every block
       reaching it (``fused.tent``): smooth across chunk edges, and the same whatever order
       the blocks are computed in. The op runs as a stage of its own.
+    * ``block_phase``: where an op's overlapping blocks sit, ``"centred"`` (the default)
+      each on a chunk, or ``"corner"`` each on a corner where chunks meet, half a chunk
+      along every axis from the chunk grid: with an overlap of half a chunk, a block is
+      then 2 x 2 x 2 chunks and every chunk lies in 8 blocks, where centred it takes from
+      its own and its 26 neighbours'.
+    * ``blend``: how blocks are weighted where they overlap, ``"tent"`` (the default; 1
+      over a block's own region, falling across its overlap, ``fused.tent``) or ``"ramp"``
+      (falling linearly from the block's centre to its faces along every axis,
+      ``fused.ramp``, as a sliding-window inference weights its windows).
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -45,6 +54,9 @@ class Op(BaseModel):
     name: ClassVar[str] = ""
     halo: ClassVar[int | tuple[int, ...]] = 0
     overlap: ClassVar[int | tuple[int, ...]] = 0
+    # each may be a property, read per instance (one op class for many models, say)
+    block_phase: ClassVar[str] = "centred"
+    blend: ClassVar[str] = "tent"
     cache: ClassVar[bool] = False
     # packages its apply imports beyond numpy (the browser engine loads them up front)
     packages: ClassVar[tuple[str, ...]] = ()
@@ -127,6 +139,10 @@ class Op(BaseModel):
         token = self.cache_token()
         if token is not None:
             identity["@cache_token"] = str(token)
+        # how its blocks are laid out and blended, when not the defaults (so the digests of
+        # ops that keep them do not change); a property may set either per instance
+        if self.block_phase != "centred" or self.blend != "tent":
+            identity["@blocks"] = f"{self.block_phase}/{self.blend}"
         payload = json.dumps(identity, sort_keys=True, default=str).encode()
         return hashlib.sha1(payload).hexdigest()[:12]
 
@@ -170,6 +186,8 @@ def list_ops() -> dict[str, dict]:
         name: {
             "halo": "dynamic" if isinstance(cls.halo, property) else cls.halo,
             "overlap": "dynamic" if isinstance(cls.overlap, property) else cls.overlap,
+            "block_phase": "dynamic" if isinstance(cls.block_phase, property) else cls.block_phase,
+            "blend": "dynamic" if isinstance(cls.blend, property) else cls.blend,
             "cache": cls.cache,
             "slots": cls.slots,
             "doc": (cls.__doc__ or "").strip(),
