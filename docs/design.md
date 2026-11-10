@@ -618,7 +618,9 @@ as text). What such a page gets, in the order it uses it:
   old one's chunks. `Engine.stop()` terminates the reader and the Pyodide workers, drops
   waiting chunks and forgets every view; a page that opens another source then starts a
   fresh `Engine`, whose URLs carry a new page id, so a viewer fetches afresh.
-* The service worker. The engine registers `sw.js` beside the page, by name, so a page
+* The service worker. The engine registers `sw.js` beside the page, by name, as a classic
+  script, which cannot import: `web/vite.config.ts` builds it on its own, one file with
+  what it shares with the pages inside, and fails the build if it imports anything. A page
   with routes of its own (an API its page answers, files picked on the machine) bundles its
   own service worker from `web/src/relay.ts`, as `web/src/sw.ts` is: `relay(request,
   {pick, timeout})` asks the open pages (all of them, or those `pick` chooses) for the
