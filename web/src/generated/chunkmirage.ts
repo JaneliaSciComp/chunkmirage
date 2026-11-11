@@ -56,6 +56,10 @@ export interface PipelineSpec {
     [k: string]: number;
   } | null;
   /**
+   * Keep only these levels of the source, finest first, e.g. [0] for its full resolution alone (a viewer zoomed out then reads that level, as it would a volume stored without a pyramid)
+   */
+  levels?: number[] | null;
+  /**
    * What the dataset's mesh frontend meshes (default: a surface at 128)
    */
   mesh?: MeshSpec | null;

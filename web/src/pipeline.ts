@@ -4,7 +4,7 @@ import { CARDS, type CardLayer, type OpControl, type PipelineCard, pythonInput, 
 import { codeEditor } from "./editor";
 import { Engine, TO_SECONDS } from "./engine";
 import schema from "./generated/chunkmirage.schema.json";
-import type { Control, ViewAxis } from "./types";
+import type { Control, StoreStats, ViewAxis } from "./types";
 
 const TO_METRES: Record<string, number> = { nanometer: 1e-9, nm: 1e-9, micrometer: 1e-6, um: 1e-6, millimeter: 1e-3, meter: 1, m: 1 };
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -47,22 +47,26 @@ function dimension(a: ViewAxis, voxel: number): [number, string] {
   return [voxel, ""];
 }
 
+/** A view's source for Neuroglancer: as precomputed when it passes stored levels through
+ * (Neuroglancer then reads those as it would the volume itself), else as OME-Zarr. */
+const layerUrl = (view: string) => engine.passesThrough(view) ? `precomputed://${engine.precomputedUrl(view)}` : `zarr3://${engine.url(view)}`;
+
 async function viewerState(card: PipelineCard) {
   const first = engine.sources[Object.keys(card.views)[0]], l0 = first.levels[0];
   const order = [2, 1, 0];  // shown x, y, z: the last axis across
   const names = order.map((a) => first.axes[a].name);
   const dims = Object.fromEntries(order.map((a) => [first.axes[a].name, dimension(first.axes[a], l0.voxel[a])]));
-  const url = (view: string) => `zarr3://${engine.url(view)}`;
   const layers = await Promise.all(card.layers.map(async (l) => {
-    const source = l.view ? url(l.view) : l.url!;
+    const source = l.view ? layerUrl(l.view) : l.url!;
+    const hidden = l.visible === false ? { visible: false } : {};
     if (l.type === "mesh") {  // the view's surface: chunkmirage's mesh layout, segment 1
       return {
-        type: "segmentation", name: l.name, source: `precomputed://${engine.url(l.view!)}mesh`, segments: ["1"],
+        type: "segmentation", name: l.name, source: `precomputed://${engine.url(l.view!)}mesh`, segments: ["1"], ...hidden,
         ...(l.colour ? { segmentDefaultColor: l.colour } : {}), ...(l.detail ? { meshRenderScale: l.detail } : {}),
       };
     }
     if (l.type === "segmentation") {
-      return { type: "segmentation", name: l.name, source, selectedAlpha: l.alpha ?? 0.9, ...(l.colour ? { segmentDefaultColor: l.colour } : {}) };
+      return { type: "segmentation", name: l.name, source, selectedAlpha: l.alpha ?? 0.9, ...(l.colour ? { segmentDefaultColor: l.colour } : {}), ...hidden };
     }
     let range = l.range;
     if (!range && l.percentiles && l.view) range = (await engine.sample(l.view, l.percentiles)) as [number, number];
@@ -74,7 +78,7 @@ async function viewerState(card: PipelineCard) {
       ? { url: source, transform: { outputDimensions: { "c^": [1, ""], ...Object.fromEntries(own.axes.map((a, i) => [a.name, dimension(a, own.levels[0].voxel[i])])) } } }
       : source;
     return {
-      type: "image", name: l.name, source: channelled,
+      type: "image", name: l.name, source: channelled, ...hidden,
       ...(glsl ? { shader: glsl } : {}),
       ...(l.additive ? { blend: "additive" } : {}),
       ...(l.volume ? { volumeRendering: "on" } : {}),
@@ -176,9 +180,12 @@ function viewerIn(ng: HTMLIFrameElement): Promise<NgViewer | undefined> {
  * plain layer of that kind, for Neuroglancer to set up. */
 function swapLayers(card: PipelineCard, viewer: NgViewer | undefined, view: string, name: string) {
   if (!viewer) return;
-  const old = new RegExp(`/virtual/${engine.page}/${view}(~\\d+)?/`), to = `/virtual/${engine.page}/${name}/`;
+  const old = new RegExp(`/virtual/${engine.page}/(precomputed/)?${view}(~\\d+)?/([^|]*)`), to = `/virtual/${engine.page}/${name}/`;
   const url = (src: unknown) => typeof src === "string" ? src : (src as { url?: string } | null)?.url ?? "";
-  const moved = (src: unknown) => typeof src === "string" ? src.replace(old, to) : { ...(src as object), url: url(src).replace(old, to) };
+  // the view's volume itself (nothing after its path, whatever form the viewer wrote the URL
+  // back in): as the edited view is served (with ops, OME-Zarr); its mesh: renamed
+  const next = (u: string) => old.exec(u)?.[3] === "" ? layerUrl(name) : u.replace(old, (_m, _p, _e, rest: string) => `${to}${rest}`);
+  const moved = (src: unknown) => typeof src === "string" ? next(src) : { ...(src as object), url: next(url(src)) };
   const now = engine.infos[name], was = engine.infos[view];
   const state = viewer.state.toJSON();
   state.layers = state.layers.map((l) => {
@@ -455,6 +462,7 @@ async function start() {
   }
   ng.src = `ng/index.html#!${encodeURIComponent(JSON.stringify(state))}`;
   ng.hidden = false;
+  void logToServer(ng);
   if (card.timeline) showDates(ng, card.timeline, state.displayDimensions);
   up();
   controls(card, ng);
@@ -499,3 +507,46 @@ function consumers(card: PipelineCard) {
 
 $("copy").addEventListener("click", () => void navigator.clipboard.writeText($("command").textContent ?? ""));
 start().catch((e) => { console.error(e); status(`Failed: ${(e as Error).message ?? e}`); });
+
+// ------------------------------------------------ served from this machine: a log
+/** On a page served by web/serve.py (which answers its first post to /log), what the engine
+ * is doing (every 2 s while it changes: chunks computed, running, waiting, given up, failed,
+ * and the service worker's store reads), each chunk that failed, and the page's, viewer's and
+ * service worker's errors, posted to /log, which prints them: a demo followed from the
+ * terminal that serves it. Elsewhere (the site, vite preview) the first post fails and
+ * nothing more is sent. */
+async function logToServer(ng: HTMLIFrameElement) {
+  const hello = JSON.stringify({ page: location.pathname + location.search });
+  if (!(await fetch("log", { method: "POST", body: hello }).then((r) => r.status === 204, () => false))) return;
+  const send = (o: Record<string, unknown>) => navigator.sendBeacon("log", JSON.stringify({ t: Math.round(performance.now() / 100) / 10, ...o }));
+  const workerLogs = () => navigator.serviceWorker.controller?.postMessage({ type: "log" });  // again each tick: a worker restarts idle
+  workerLogs();
+  const store = () => new Promise<StoreStats | null>((done) => {
+    const worker = navigator.serviceWorker.controller;
+    if (!worker) return done(null);
+    const ch = new MessageChannel();
+    ch.port1.onmessage = (e) => done(e.data as StoreStats);
+    worker.postMessage({ type: "store-stats" }, [ch.port2]);
+    setTimeout(() => done(null), 1000);
+  });
+  let last = "", failed = 0;
+  setInterval(async () => {
+    workerLogs();
+    const c = engine.counts, line = { computed: c.computed, running: engine.running, waiting: engine.waiting, dropped: c.dropped, failed: c.failed, store: await store() };
+    const now = JSON.stringify(line);
+    if (now !== last) { last = now; send(line); }
+    if (c.failed > failed && engine.failure) { failed = c.failed; send({ failure: engine.failure }); }
+  }, 2000);
+  addEventListener("error", (e) => send({ error: String(e.message) }));
+  addEventListener("unhandledrejection", (e) => send({ rejection: String((e.reason as Error)?.message ?? e.reason) }));
+  // the viewer's own complaints (a chunk it could not fetch or decode), once its frame is up
+  ng.addEventListener("load", () => {
+    const w = ng.contentWindow as (Window & typeof globalThis) | null;
+    if (!w) return;
+    for (const level of ["error", "warn"] as const) {
+      const was = w.console[level].bind(w.console);
+      w.console[level] = (...args: unknown[]) => { send({ viewer: level, message: args.map(String).join(" ").slice(0, 500) }); was(...args); };
+    }
+    w.addEventListener("error", (e) => send({ viewer: "error", message: String(e.message) }));
+  });
+}

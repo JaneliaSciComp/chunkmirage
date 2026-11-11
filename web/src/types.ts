@@ -1,3 +1,5 @@
+import type { PrecomputedScale } from "./precomputed";
+
 // Shapes shared by the page, the solvers and the workers. Arrays are C order (z, y, x) and
 // coordinates physical, as in chunkmirage.
 
@@ -74,15 +76,19 @@ export type Later = { body: ArrayBuffer } | { chunk: ArrayBuffer } | { done: tru
 // ------------------------------------------------ the pipeline page, its reader and its Pyodide workers
 /** One view a pipeline page serves: chunkmirage's PipelineSpec, as far as the browser goes. */
 export interface PipelineView {
-  source: string;                    // stack://, flip://, an OME-Zarr or N5 group, an xarray array
+  source: string;                    // stack://, flip://, chunksizes://, an OME-Zarr or N5 group, an xarray array
   select?: Record<string, number>;   // pin non-spatial axes, e.g. {c: 1, t: 0}
+  levels?: number[];                 // keep only these levels, finest first, e.g. [0]
   ops?: Record<string, unknown>[];   // op specs, as the CLI and REST API take them
   chunk: number[];                   // output chunks, one per axis
   mesh?: { kind?: "surface" | "terrain"; level?: number; threshold?: number; exaggeration?: number; lods?: number };  // served at <view>/mesh
 }
 /** An axis of a view: its name (z, or time, lat, ...) and the unit of its voxel size. */
 export interface ViewAxis { name: string; unit: string }
-export interface ViewLevel { shape: number[]; voxel: number[]; origin: number[] }
+/** A level as stored in a precomputed volume (its scale directory and scale), which a view
+ * read as stored passes through to Neuroglancer untouched. */
+export interface StoredScale { dir: string; scale: PrecomputedScale }
+export interface ViewLevel { shape: number[]; voxel: number[]; origin: number[]; stored?: StoredScale }
 /** A view's source as the reader opened it: three axes, and channels for a stack. */
 export interface SourceInfo { dtype: string; channels: number; axes: ViewAxis[]; levels: ViewLevel[]; geo?: { bbox: number[] } }
 /** A view as served: its source's axes and levels, and what its ops make of them. */

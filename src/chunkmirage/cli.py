@@ -145,7 +145,8 @@ def serve(
     source: str = typer.Argument(
         ...,
         help="zarr/n5/precomputed path or URL (file, s3://, gs://, http(s)://), file.h5::/dataset, "
-        "or a synthetic://, scene://, warp://, register://, stitch://, stack:// or flip:// URL",
+        "or a synthetic://, scene://, warp://, register://, stitch://, chunksizes://, stack:// or "
+        "flip:// URL",
     ),
     name: str = typer.Option("processed", help="dataset name in the served URL"),
     op: list[str] = typer.Option(

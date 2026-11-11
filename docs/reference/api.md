@@ -43,6 +43,7 @@ are refused with 403 unless the app was made with `create_app(..., allow_code=Tr
 {
   "source": "/path/or/url",          // zarr/n5/precomputed array or multiscale group, or file.h5::/dataset
   "select": {"c": 1, "t": 0},        // optional: pin an axis to one index, so the ops see a z, y, x volume
+  "levels": [0],                     // optional: keep only these levels of the source, finest first
   "ops": [{"op": "threshold", "low": 120}],
   "chunk_shape": [64, 64, 64],       // optional; default: source chunk shape
   "mesh": {"kind": "surface", "threshold": 128, "lods": 1},  // optional: what the mesh frontend meshes (--mesh)

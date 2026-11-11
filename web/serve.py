@@ -14,6 +14,9 @@ runs elsewhere), which needs no certificate. ``--no-https`` serves plain http on
 for browsers told to treat the address as secure (in Chrome, list it under
 chrome://flags/#unsafely-treat-insecure-origin-as-secure): no certificate either.
 
+A pipeline page served here posts what its engine is doing, and any chunk or read that failed,
+to ``/log``, which prints each line (``page: {...}``): a demo followed from this terminal.
+
 ``/ng/`` is the standard Neuroglancer client, relayed from neuroglancer-demo.appspot.com
 (fetched once, then kept in memory). It has to be on this origin: the page's service
 worker answers the viewer's requests for the registered volume, and a service worker
@@ -56,6 +59,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path == "/certificate.crt" and self.certificate:  # the public half, to trust it
             return self.send(Path(self.certificate).read_bytes(), "application/x-x509-ca-cert")
         return super().do_GET()
+
+    def do_POST(self):  # noqa: N802
+        """/log: a line the page posts (pipeline.ts's logToServer), printed as it came."""
+        if self.path.split("?", 1)[0] != "/log":
+            return self.send_error(404)
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            n = -1
+        if not 0 <= n <= 65536:
+            return self.send_error(413 if n > 65536 else 400)
+        print(f"page: {self.rfile.read(n).decode('utf-8', 'replace')}", flush=True)
+        self.send_response(204)
+        self.end_headers()
 
     def send(self, body: bytes, kind: str, encoding: str | None = None) -> None:
         self.send_response(200)

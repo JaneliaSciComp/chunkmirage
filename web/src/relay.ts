@@ -16,17 +16,19 @@
 //
 // `fromStore`: every read of the images' stores, by the page, its chunk workers and the
 // viewer alike, goes through one cache here: a region is read by many (overlapping blocks
-// and chunks, the before and after views, the viewer's own fixed layer), and each worker
-// keeping its own copy fetched the same chunks 13 times over. Chunks only: a store's
-// `metadata` is the page's to fetch (see it).
+// and chunks, the before and after views, a layer the viewer reads itself that the page reads
+// too), and each worker keeping its own copy fetched the same chunks 13 times over. The
+// page's reads queue for MAX_FETCHES; the viewer's do not (it paces its own). The stored
+// levels a view passes through to the viewer are fetched as it asks and not kept
+// (`passThrough`). Chunks only: a store's `metadata` is the page's to fetch (see it).
 import type { Ask, Later, Reply, StoreStats } from "./types";
-import { isMetadata } from "./urls";
+import { fetchUrl, isMetadata } from "./urls";
 
 export type { Ask, Later, Reply, StoreStats } from "./types";
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 const STORE_BYTES = 512 * 2 ** 20;  // fetched (still compressed) store chunks kept
-const MAX_FETCHES = 24;             // upstream at once; more pending and Chrome refuses some
+const MAX_FETCHES = 64;             // upstream at once; more pending and Chrome refuses some (reads retry)
 
 // ------------------------------------------------ the store cache
 interface Stored { body: Blob; status: number; headers: [string, string][] }
@@ -40,14 +42,16 @@ const KEEP = ["content-type", "content-range", "content-length"];
 
 /** `req` (a GET of data, by its URL and range) answered from the cache, or fetched once for
  * every request that waits for it and kept, up to STORE_BYTES, the least recently used
- * dropped first; an opaque or failed response is passed on as it is and not kept. */
-export async function fromStore(req: Request): Promise<Response> {
+ * dropped first; an opaque or failed response is passed on as it is and not kept. `queued`:
+ * a fetch waits its turn among MAX_FETCHES (the page's reads); the viewer's are not queued,
+ * as it paces its own. */
+export async function fromStore(req: Request, queued = true): Promise<Response> {
   const key = `${req.url} ${req.headers.get("range") ?? ""}`;
   stats.requests++;
   let entry = stored.get(key);
   if (entry) { stats.hits++; stored.delete(key); stored.set(key, entry); }
   else {
-    entry = upstream(req).then(async (r) => {
+    entry = (queued ? upstream(req) : (stats.fetches++, fetch(req))).then(async (r) => {
       if (r.type === "opaque" || (!r.ok && r.status !== 404)) { forget(key); return null; }
       const body = await r.blob();
       const s: Stored = { body, status: r.status, headers: KEEP.flatMap((h) => { const v = r.headers.get(h); return v ? [[h, v] as [string, string]] : []; }) };
@@ -69,6 +73,15 @@ export async function fromStore(req: Request): Promise<Response> {
  * volume's metadata is what it reads first, so the question comes up, and its chunks then
  * go through the cache. */
 export const metadata = (url: URL) => isMetadata(url);
+
+/** A stored file (`url`, as a store's are named: gs://, s3://, https://) fetched for the
+ * viewer, the range it asked for, and passed on as it comes, as the viewer would fetch it
+ * from the store itself: not kept in the store cache (a layer passing a stored level through
+ * shares no bytes with another) and not queued behind the page's reads (the viewer paces its
+ * own). */
+export function passThrough(url: string, range: string | null): Promise<Response> {
+  return fetch(new Request(fetchUrl(url), range ? { headers: { range } } : {}));
+}
 
 /** A network fetch, at most MAX_FETCHES at once. */
 async function upstream(req: Request): Promise<Response> {

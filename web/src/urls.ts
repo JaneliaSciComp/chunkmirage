@@ -21,6 +21,24 @@ export function fetchUrl(url: string): string {
   return url.replace(/^s3:\/\/([^/]+)/, "https://$1.s3.amazonaws.com");
 }
 
+/** `fetch(url, init)`, tried again after a pause when it fails in a way that may pass: the
+ * network (or the browser, short of resources with too many requests out), or a server busy
+ * or limiting its rate (429, 5xx). Up to `tries` in all, about 0.25, 0.5, 1 and 2 s apart;
+ * the last answer, or error, is the caller's. A viewer does not ask again for a chunk that
+ * failed, so a burst of thousands of small reads (a chunksizes:// level's indexes) must not
+ * fail on one refusal. */
+export async function fetchRetry(url: string, init: RequestInit = {}, tries = 5): Promise<Response> {
+  for (let i = 1; ; i++) {
+    try {
+      const r = await fetch(url, init);
+      if (i >= tries || !(r.status === 429 || r.status >= 500)) return r;
+    } catch (e) {
+      if (i >= tries || (e as Error)?.name === "AbortError") throw e;
+    }
+    await new Promise((ok) => setTimeout(ok, 250 * 2 ** (i - 1) * (0.5 + Math.random())));
+  }
+}
+
 const METADATA = new Set([".zattrs", ".zarray", ".zgroup", ".zmetadata", "zarr.json", "attributes.json", "info"]);
 
 /** Whether `url` is a store's metadata (zarr's, N5's, a precomputed volume's info) rather

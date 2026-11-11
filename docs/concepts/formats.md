@@ -73,6 +73,30 @@ view as zarr v2 with OME-Zarr 0.4 (`virtual/<page>/zarr2/<view>/`), the same chu
 readers that predate zarr v3's final spec: GDAL 3.8, as the fires demo runs it in the page
 (gdal3.js), opens a level as a zarr array and translates it to a GeoTIFF.
 
+## Precomputed, for stored levels passed through (browser engine)
+
+A view read as stored (no ops) whose source has levels stored as Neuroglancer precomputed
+scales is served a third way, as a precomputed volume (`virtual/<page>/precomputed/<view>/`),
+and the pipeline page gives it to Neuroglancer so. A stored level keeps its scale as stored
+(resolution, size, `voxel_offset`, chunk sizes, encoding, sharding); its key is
+`stored/<its directory, base64url>`, and the service worker answers a request for one of its
+files by fetching the file from that directory itself, the range asked for, untouched and
+not kept, so Neuroglancer decodes it as it would the volume itself, at its own pace, and the
+page never sees it. Only the other levels are the page's: raw scales under
+`computed/<level>`, unsharded, in the view's chunks (cut at the volume's edge), placed on
+their own voxels (a level's voxel 0 must start on a whole voxel of its own, as
+precomputed's integral `voxel_offset` needs; one voxel per stored chunk does). The
+[hemibrain demo](../demos.md) serves two views so, the finest level alone (a spec's
+`levels: [0]`) and the finest level under its
+[chunk sizes](#chunk-size-sources-a-sharded-volumes-coarse-levels-from-its-indexes), beside
+the stored pyramid that Neuroglancer reads itself. A view with ops is served as OME-Zarr
+only, as is one whose source is `flip://` or `stack://` of a precomputed volume (their levels
+are not as stored).
+
+In the pages, every read of a store goes through the service worker's cache (512 MB), so a
+region the page's workers and the viewer both read is fetched once; the page's reads queue
+for 64 fetches at once, and the viewer's, which it paces itself, do not.
+
 ## A dataset written to a store (Python and the command line)
 
 ```bash
@@ -710,6 +734,49 @@ in their attributes says so. The levels must share their centre, as OME-Zarr and
 pyramids whose extents halve evenly do, since a level mirrored about its own centre would
 otherwise drift from the others; `flip://` refuses a pyramid whose levels do not (as
 `synthetic://` levels along an odd extent, where a coarse level covers one fine voxel more).
+
+### Chunk-size sources (a sharded volume's coarse levels from its indexes)
+
+```
+chunksizes://<sharded precomputed volume>?range=lo,hi
+```
+
+serves a Neuroglancer precomputed volume's finest level as stored, then two coarser levels
+read from its shard indexes alone, nothing decoded: one voxel per chunk of the finest level
+(the chunk's compressed size, from its minishard's index) and one per minishard (a block of
+chunks, 8³ for hemibrain; the bytes between its index and the one before, from the shard's
+own index of 16 bytes a minishard). A voxel is the compressed size as a fraction of the raw
+size of the chunks it covers, `range` (default `0,1`) mapped onto the volume's dtype, black to
+white (0 to 255 for uint8). The finest scale must be sharded (`neuroglancer_uint64_sharded_v1`,
+identity hash), one channel, and not of 64-bit integers. The minishard level is offered only
+where it is exact: a minishard holds one block of chunks (`preshift_bits` above 0, and the
+shard bits reaching the grid's last, so blocks far apart do not share one), and a shard lays
+each minishard's chunks just before its index, as tensorstore and Neuroglancer's writers do
+(checked on one shard when the volume is opened); otherwise the levels are the finest and one
+voxel per chunk. A precomputed level whose voxel 0 is not on a whole voxel of its own (a
+finest scale whose `voxel_offset` is not a multiple of its chunk) is served to the viewer as
+OME-Zarr rather than precomputed.
+
+Compressed size follows content: empty resin and padding compress to almost nothing and
+busy tissue far less well, so the coarse levels draw a thumbnail of the data, for a volume
+stored without a pyramid or to see what its chunks cost. A viewer zoomed out reads those
+instead of the finest level: a slice through all of the hemibrain's 8 nm EM is 334,000 chunks
+at full resolution, and needs about 5,700 index reads at one voxel per chunk and 340 at one
+per minishard (about 12,000 in all as they are read, in cubes of 16³ voxels, two
+minishards deep, for slices any way and 3-D alike). Its JPEG chunks of tissue are 25 to 33% of their raw size, so `range=0.17,0.4`
+gives the thumbnail the EM's own greys, and both share one layer:
+
+```bash
+chunkmirage serve 'chunksizes://precomputed://gs://neuroglancer-janelia-flyem-hemibrain/emdata/clahe_yz/jpeg?range=0.17,0.4' \
+  --no-raw --python-viewer
+```
+
+The finest level and the per-chunk level are 64 times apart, so between them a viewer reads
+the finest level. The
+browser engine reads the same in TypeScript (`web/src/contrib/chunksizes.ts`), as the
+[gallery's hemibrain demo](../demos.md) does, a layer beside the stored pyramid and the finest
+level alone (a spec's [`levels`](../reference/api.md#pipelinespec), `[0]`), each passed to
+Neuroglancer [as precomputed](#precomputed-for-stored-levels-passed-through-browser-engine).
 
 ### Stitch sources (tiles stitched by interest points and RANSAC)
 

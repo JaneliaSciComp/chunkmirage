@@ -461,7 +461,9 @@ much of what was read came from the cache. Fed the same affine and
   a shard), since zarrita decodes all of a chunk to read any of it; a 65 MB sea-temperature
   tile in every worker, or decoded again for each part read, would not fit.
 * The page's engine (`engine.ts`) is shared by the Neuroglancer page and a map page, and
-  serves each view as OME-Zarr and as GeoZarr: the map page's OpenLayers reads the latter
+  serves each view as OME-Zarr and as GeoZarr (and a view read as stored from a precomputed
+  volume as precomputed, its stored levels passed to Neuroglancer untouched, decoded by it
+  rather than the page's one reader): the map page's OpenLayers reads the latter
   as it reads any GeoZarr store, the point being that chunkmirage's output is not tied to
   one viewer. A map client keeps no chunk cache of its own, so the engine keeps computed
   chunks (256 MB), and a slider that changes an op parameter serves the view under a new

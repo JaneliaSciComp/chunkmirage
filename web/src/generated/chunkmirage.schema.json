@@ -639,6 +639,21 @@
           "default": null,
           "description": "Pin non-spatial axes to one index each, e.g. {\"c\": 1, \"t\": 0}: the pipeline sees that channel of that time point, without those axes"
         },
+        "levels": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Keep only these levels of the source, finest first, e.g. [0] for its full resolution alone (a viewer zoomed out then reads that level, as it would a volume stored without a pyramid)"
+        },
         "mesh": {
           "anyOf": [
             {

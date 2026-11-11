@@ -18,6 +18,7 @@ import schema from "./generated/chunkmirage.schema.json";
 import { Kept } from "./kept";
 import { array2, array3, attrs2, dimensionNames, group3 } from "./layout";
 import { plan, region, writeChunks, type MaterializeOptions, type MaterializePlan, type Materialized, type Region, type WritableStore } from "./materialize";
+import { chunkIndex, cropChunk, precomputedInfo } from "./precomputed";
 import { route } from "./routes";
 import { bytes, fitted, inputBox, levelAt, padded, prod, type Block, type Padding, type Stage, type StageAt } from "./stages";
 import type { Answer, Ask, Later, MeshCall, PipelineView, Plan, Printed, Reply, SourceInfo, ToPyWorker, ToReader, ViewInfo } from "./types";
@@ -36,6 +37,9 @@ const OP_PACKAGES: Record<string, string[]> = Object.fromEntries(Object.values(s
   .flatMap((d) => (d.properties?.op?.const && d["x-packages"] ? [[d.properties.op.const, d["x-packages"]]] : [])));
 /** Pyodide workers to run: most of the cores, two left for the page and the reader. */
 const workers = () => Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 2));
+// Chunks of a view read as stored (no ops), at once: waiting on the network, not on Python,
+// so not held to the workers' count (a chunksizes:// level's chunk is several index reads)
+const READ_SLOTS = 64;
 
 type Request<R> = R extends unknown ? Omit<R, "reqId"> : never;
 type Answered = null | { status: number; body: string | ArrayBuffer; type: string; range?: string }
@@ -109,7 +113,8 @@ export class Engine {
   private poolSize = workers();           // Pyodide workers to start
   private warm: Promise<void> = Promise.resolve();  // Python loaded in every worker of the pool
   private turn = 0;
-  private chunks: Queue<ArrayBuffer> | null = null;
+  private chunks: Queue<ArrayBuffer> | null = null;  // chunks a worker computes
+  private reads: Queue<ArrayBuffer> | null = null;   // chunks as read, the reader's alone
   private inflight = new Map<string, Promise<ArrayBuffer>>();
   private kept = new Kept(KEPT_BYTES);
   /** The keys of chunks on their way that a client asked for (`chunk` without `background`):
@@ -145,6 +150,7 @@ export class Engine {
     this.listen();
     this.reader = new Rpc<ToReader>(new Worker(new URL("./reader.ts", import.meta.url), { type: "module" }));
     this.chunks = new Queue<ArrayBuffer>(workers());
+    this.reads = new Queue<ArrayBuffer>(READ_SLOTS);
     this.packages = [...packages];
     this.modules = { ...modules };
     this.poolSize = Math.max(1, Math.floor(poolSize) || 0);
@@ -211,6 +217,7 @@ export class Engine {
    * a worker (which waits for Python). */
   private async open(views: Record<string, PipelineView>): Promise<void> {
     const entries = Object.entries(views), read = entries.filter(([, s]) => !computedSource(s.source));
+    for (const [v, s] of entries) if (s.levels && computedSource(s.source)) throw new Error(`${v}: levels keeps levels of a read source, not ${s.source}`);
     const opened = read.length ? await this.reader!.call<Record<string, SourceInfo>>({ type: "open", views: Object.fromEntries(read) }) : {};
     for (const [v, s] of entries) if (computedSource(s.source)) opened[v] = await this.python()[0].call<SourceInfo>({ type: "describe", source: s.source });
     Object.assign(this.sources, opened);
@@ -336,7 +343,7 @@ export class Engine {
     this.producers.delete(view);
     this.octrees.delete(view);
     this.kept.forget(view);
-    for (const key of [...this.inflight.keys()]) if (key.startsWith(`${view}/`)) this.chunks?.drop(key, `${view} is no longer served`);
+    for (const key of [...this.inflight.keys()]) if (key.startsWith(`${view}/`)) for (const q of [this.chunks, this.reads]) q?.drop(key, `${view} is no longer served`);
   }
 
   /** Stop: the reader and the Pyodide workers are terminated (a call still waiting fails as
@@ -346,13 +353,14 @@ export class Engine {
    * by URL fetches afresh. */
   stop() {
     this.stopped = true;  // and stays so: a late call() or read() throws rather than starting workers again
-    for (const key of [...this.inflight.keys()]) this.chunks?.drop(key, "the engine was stopped");
+    for (const key of [...this.inflight.keys()]) for (const q of [this.chunks, this.reads]) q?.drop(key, "the engine was stopped");
     this.reader?.terminate();
     this.reader = null;
     for (const w of this.pool) w.terminate();
     this.pool = [];
     this.warm = Promise.resolve();
     this.chunks = null;
+    this.reads = null;
     this.producers.clear();
     this.octrees.clear();
     this.kept.clear();
@@ -392,6 +400,17 @@ export class Engine {
 
   /** OME-Zarr URL of a view (for Neuroglancer: `zarr3://` + it). */
   url(view: string): string { return new URL(`virtual/${this.page}/${view}/`, location.href).href; }
+  /** Precomputed URL of a view (for Neuroglancer: `precomputed://` + it): its stored levels
+   * passed through untouched, the rest computed (precomputed.ts's precomputedInfo). */
+  precomputedUrl(view: string): string { return new URL(`virtual/${this.page}/precomputed/${view}/`, location.href).href; }
+  /** Whether a view is read as stored (no ops) with levels stored as precomputed scales, so
+   * Neuroglancer is better given it as precomputed: those levels' files untouched, decoded
+   * by Neuroglancer as it would the volume itself, not by the page. */
+  passesThrough(view: string): boolean {
+    const v = this.infos[view];
+    if (!v || needsPython(this.views[view]) || this.producers.has(view) || !v.levels.some((l) => l.stored)) return false;
+    try { precomputedInfo(v, this.views[view].chunk); return true; } catch { return false; }  // a level off whole voxels: OME-Zarr
+  }
   /** Zarr v2 URL of a view (OME-Zarr 0.4): the same chunks. */
   zarr2Url(view: string): string { return new URL(`virtual/${this.page}/zarr2/${view}/`, location.href).href; }
   /** GeoZarr URL of a view: a group whose levels hold the view as their one band. */
@@ -401,8 +420,8 @@ export class Engine {
     return this.reader!.call<number[]>({ type: "sample", view, ps });
   }
 
-  get running(): number { return this.chunks?.running ?? 0; }
-  get waiting(): number { return this.chunks ? [...this.chunks.byLevel().waiting.values()].reduce((a, b) => a + b, 0) : 0; }
+  get running(): number { return (this.chunks?.running ?? 0) + (this.reads?.running ?? 0); }
+  get waiting(): number { return [this.chunks, this.reads].reduce((n, q) => n + (q ? [...q.byLevel().waiting.values()].reduce((a, b) => a + b, 0) : 0), 0); }
 
   /** A view's levels, each a dataset of its group at its own index. */
   private datasets(view: string) { return this.infos[view].levels.map((_, level) => ({ path: String(level), level })); }
@@ -485,7 +504,9 @@ export class Engine {
   private chunk(view: string, level: number, index: number[], mesh?: MeshCall, background = false): Answered {
     const key = `${view}/${mesh ? `mesh${level}` : level}/${index.join(".")}`, done = this.kept.get(key);
     if (done) return { status: 200, body: done.slice(0), type: "application/octet-stream" };
-    const chunks = this.chunks!, claim = new Claim();
+    // as compute() does it: read as stored, or computed by a worker (or the page's producer)
+    const asRead = !this.producers.has(view) && this.views[view] && !needsPython(this.views[view]);
+    const chunks = asRead ? this.reads! : this.chunks!, claim = new Claim();
     if (!background) this.clientWanted.add(key);
     let pending = this.inflight.get(key);
     if (pending) chunks.claim(key, background);  // another request waits for it too
@@ -573,10 +594,11 @@ export class Engine {
     const parts = path.split("/virtual/")[1]?.split("/");
     if (!parts || parts[0] !== this.page) return null;
     if (!this.chunks) return notFound;
-    const named = parts[1] === "geo" || parts[1] === "zarr2" ? parts[2] : parts[1];
+    const named = parts[1] === "geo" || parts[1] === "zarr2" || parts[1] === "precomputed" ? parts[2] : parts[1];
     if (named && !this.infos[named] && this.sources[named]) await this.ready;  // its ops are being planned
     let rest = parts.slice(1), view: string;
     if (rest[0] === "zarr2") return this.zarr2(rest[1], rest.slice(2));
+    if (rest[0] === "precomputed") return this.precomputed(rest[1], rest.slice(2));
     const map = rest[0] === "geo";
     if (map) {  // geo/<view>/zarr.json, geo/<view>/<level>/zarr.json, geo/<view>/<level>/<view>/...
       view = rest[1];
@@ -619,6 +641,27 @@ export class Engine {
     const key = rest.slice(1).map(Number);
     if (key.length !== added.length + l.shape.length || key.some((i) => !Number.isInteger(i)) || key.slice(0, added.length).some((i) => i !== 0)) return notFound;
     return this.chunk(view, level, key.slice(added.length));
+  }
+
+  /** A view as a precomputed volume: its info, and a computed level's chunks
+   * (computed/<level>/x0-x1_y0-y1_z0-z1) computed as the OME layouts' are, cut to the volume's
+   * edge. A stored level's files never reach the page: the service worker fetches them where
+   * they are (sw.ts). */
+  private async precomputed(view: string, rest: string[]): Promise<Answered> {
+    const v = this.infos[view];
+    if (!v || !this.passesThrough(view)) return notFound;
+    rest = rest.filter(Boolean);  // a client joining <url>/ and /info
+    const info = precomputedInfo(v, this.views[view].chunk);
+    if (rest.length === 1 && rest[0] === "info") return asJson(info);
+    const level = Number(rest[1]), l = v.levels[level];
+    if (!l || rest.length < 3) return notFound;
+    const index = rest[0] === "computed" && !l.stored && rest.length === 3 ? chunkIndex(rest[2], info.scales[level]) : null;
+    if (!index) return notFound;
+    const C = this.views[view].chunk, size = index.map((i, a) => Math.min(C[a], l.shape[a] - i * C[a]));
+    const cut = (b: ArrayBuffer) => cropChunk(b, (TYPED[v.out] ?? Float32Array).BYTES_PER_ELEMENT, v.channels, C, size);
+    const a = this.chunk(view, level, index);
+    if (!a) return notFound;
+    return "pending" in a ? { ...a, pending: a.pending.then(cut) } : { ...a, body: cut(a.body as ArrayBuffer) };
   }
 
   private octrees = new Map<string, Promise<Octree>>();
