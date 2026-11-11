@@ -34,10 +34,32 @@ def test_stack_serves_images_as_channels():
     np.testing.assert_array_equal(one[0], open_source(B).levels[1].read(small))
 
 
-def test_stack_rejects_mismatched_grids_and_single_images():
-    other = "synthetic://blobs+noise?shape=64,64,32&chunk=32,32,32&levels=2"
-    with pytest.raises(ValueError, match="different grid"):
-        open_source(f"stack://{A}|{other}")
+def test_stack_resamples_images_on_other_grids():
+    from scipy.ndimage import map_coordinates
+
+    # a smaller image on the same voxels: itself where it is, 0 beyond it
+    small = "synthetic://blobs+noise?shape=64,64,32&chunk=32,32,32&levels=2&seed=2"
+    got = open_source(f"stack://{A}|{small}").levels[0].read(Box((0, 0, 0, 0), (2, 128, 128, 128)))
+    np.testing.assert_array_equal(got[1, :64, :64, :32], read_all(small))
+    assert not got[1, 64:].any() and not got[1, :, :, 32:].any()
+    # one level of twice the voxel size: linear between its voxels, and the stack ends at it
+    coarse = "synthetic://blobs+noise?shape=128,128,128&chunk=32,32,32&levels=1&seed=3&voxel_size=16"
+    stack = open_source(f"stack://{A}|{coarse}")
+    assert len(stack.levels) == 2  # A's 8 and 16 nm levels, none coarser than coarse's 16 nm
+    box = Box((0, 0, 0), (16, 16, 16))
+    got = stack.levels[0].read(Box((1, *box.start), (2, *box.stop)))[0]
+    centres = (np.indices(box.shape, dtype=float) * 8 + 4 - 8) / 16  # A's voxels in coarse's
+    expected = map_coordinates(read_all(coarse).astype(float), centres, order=1, mode="nearest")
+    np.testing.assert_array_equal(got, np.rint(expected).astype(np.uint8))
+    # one level at A's finest: A's 16 nm level would read it whole for every chunk
+    single = "synthetic://blobs+noise?shape=128,128,128&chunk=32,32,32&levels=1&seed=3"
+    assert len(open_source(f"stack://{A}|{single}").levels) == 1
+
+
+def test_stack_refuses_other_units_and_single_images():
+    um = "synthetic://blobs+noise?shape=128,128,128&chunk=32,32,32&levels=2&voxel_size=0.008&unit=um"
+    with pytest.raises(ValueError, match="units"):
+        open_source(f"stack://{A}|{um}")
     with pytest.raises(ValueError, match="two or more"):
         open_source(f"stack://{A}")
 

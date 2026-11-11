@@ -657,18 +657,26 @@ with nothing installed:
 stack://<image>|<image>[|<image>...]
 ```
 
-serves images that share a grid as the channels of one `(c, z, y, x)` array (`(c, y, x)` for
-images in y and x, such as GeoTIFF bands): channel 0 is
-the first image's first channel, channel 1 the second's, and so on. The images must agree
-level by level on shape, voxel size, translation and units (the stack has as many levels as
-the image with the fewest), and each is anything `open_source` reads, so a stack can hold a
-stored volume next to a `synthetic://` or `register://` one. Nothing is copied: a stack chunk
-reads the same box of each image, through that image's own cache.
+serves images as the channels of one `(c, z, y, x)` array (`(c, y, x)` for images in y and
+x, such as GeoTIFF bands): channel 0 is the first image's first channel, channel 1 the
+second's, and so on. The first image sets the grid: the stack has its levels, with their
+shapes, voxel sizes and translations, down to the coarsest level that every other image has
+a level as coarse as. At each level, every other image's nearest level is read as it is
+where it is on that level's grid, and is otherwise resampled onto it as `scene://` resamples:
+by nearest voxel for labels and masks, linearly otherwise, and 0 outside the image. So a
+mask computed at one coarse resolution can stand next to an image's whole pyramid, and the
+stack ends at the mask's resolution rather than reading the mask at its own resolution for
+every chunk of a much coarser level. The images must have the same spatial axes, in the
+same order, and the same units. Each is anything `open_source` reads, so a stack can hold a
+stored volume next to a `synthetic://` or `register://` one. Nothing is copied: a stack
+chunk reads the same box of each image (or the box covering it, when resampled), through
+that image's own cache. The browser engine's `stack://` still needs every image on one grid.
 
-A stack exists for ops that need two images at once. Such an op takes the channel axis and
-returns an array without it; the pipeline reads every channel and pads only the spatial axes
-by the op's halo, and `--chunk` may then give just the three spatial values. The first such
-op is [`contacts`](../reference/ops.md): the voxels within a distance of both structures.
+A stack exists for ops that need two images at once; to view a mask over an image, open
+each as a layer of its own, which a viewer overlays whatever their resolutions. Such an op
+takes the channel axis and returns an array without it; the pipeline reads every channel
+and pads only the spatial axes by the op's halo, and `--chunk` may then give just the three
+spatial values. The first such op is [`contacts`](../reference/ops.md): the voxels within a distance of both structures.
 On OpenOrganelle's published organelle predictions, mirrored back into the EM's frame (see
 below), followed by `label` to colour and size-filter the sites:
 
