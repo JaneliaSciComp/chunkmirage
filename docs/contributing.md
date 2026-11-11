@@ -101,7 +101,7 @@ List it under `[project.entry-points."chunkmirage.sources"]` as `ramp = "mypacka
 (see [formats](concepts/formats.md#your-own-schemes-sources-from-other-packages)). The core's
 own schemes, the ones that compose other sources (`scene://`, `warp://`, `stack://`,
 `flip://`), are listed in `chunkmirage.sources.registry`; a computed source shipped with
-chunkmirage (`synthetic://`, `register://`) goes in `src/chunkmirage_contrib/sources/` and
+chunkmirage (`synthetic://`, `register://`, `chunksizes://`) goes in `src/chunkmirage_contrib/sources/` and
 under the entry point like any other package's. A format told apart by its path rather than
 a scheme (a GeoTIFF by its extension) lists a matcher, `path -> opener or None`, under
 `[project.entry-points."chunkmirage.source_matchers"]` (`register_matcher` in a running

@@ -7,10 +7,11 @@
 import { asReals, fetchStore, image, openImage, prod, RegionReader, TYPED, zarr, type Image, type Numbers, type Settable, type TypedCtor } from "./ome";
 import { multiscalesOf, placement, placeN5, placePrecomputed, placeZarr, type Attrs } from "./placement";
 import { chunkName, compressedMorton, compressedSegmentation, Shards, type Fetch, type PrecomputedInfo } from "./precomputed";
-import { fetchUrl } from "./urls";
-import type { ViewAxis } from "./types";
+import { chunkSizesSource } from "./contrib/chunksizes";
+import { fetchRetry, fetchUrl } from "./urls";
+import type { StoredScale, ViewAxis } from "./types";
 
-export interface SourceLevel { shape: number[]; voxel: number[]; origin: number[]; chunks: number[] }
+export interface SourceLevel { shape: number[]; voxel: number[]; origin: number[]; chunks: number[]; stored?: StoredScale }
 
 /** Where a source's grid sits in its map projection: the bounding box of its pixels'
  * corners, [x min, y min, x max, y max] (a GeoTIFF's; for a map viewer). */
@@ -32,7 +33,7 @@ const READ_BYTES = 384 * 2 ** 20;  // decoded pieces kept per image (the page's 
 
 /** Any source URL: stack://a|b, flip://image?axes=y, an OME-Zarr or N5 group, a zarr or N5
  * array, or a precomputed volume (precomputed://, as Neuroglancer writes it, or found by its
- * info); at gs:// or s3:// as well as https://, fetched as Neuroglancer fetches them
+ * info), or one's chunk sizes (chunksizes://, contrib/chunksizes.ts); at gs:// or s3:// as well as https://, fetched as Neuroglancer fetches them
  * (urls.ts). Each is placed as worldarray places it (placement.ts). `select` pins
  * non-spatial axes, as a spec's select does ({c: 1, t: 0}). */
 export async function openSource(url: string, select: Record<string, number> = {}): Promise<Source> {
@@ -47,14 +48,15 @@ export async function openSource(url: string, select: Record<string, number> = {
     if (q < 0 || !axes) throw new Error("flip:// needs the axes to mirror: flip://<image>?axes=y");
     return flip(await openSource(rest.slice(0, q), select), axes.split(",").map((a) => a.trim()), url);
   }
-  if (url.startsWith("precomputed://")) return precomputedSource(url.slice("precomputed://".length));
+  if (url.startsWith("chunksizes://")) return chunkSizesSource(url, (u) => openSource(u, select), bytesAt);
+  if (url.startsWith("precomputed://")) return precomputed(url.slice("precomputed://".length));
   if (/\.tiff?$/i.test(url.split("?")[0])) return geotiffSource(url);
   try {
     return imageSource(url, await openImage(url), select);
   } catch (zarrError) {
     try { return await arraySource(url, select); } catch { /* not one either */ }
     try { return await n5Source(url); } catch { /* nor this */ }
-    try { return await precomputedSource(url); } catch { throw zarrError; }
+    try { return await precomputed(url); } catch { throw zarrError; }
   }
 }
 
@@ -294,6 +296,20 @@ async function assemble(T: TypedCtor, block: number[], lo: number[], hi: number[
 }
 
 // ------------------------------------------------ Neuroglancer precomputed
+const volumes = new Map<string, Promise<Source>>();
+/** A precomputed volume opened once for the reader, so views of it (and a chunksizes://
+ * of it) share its decoded chunks: a JPEG chunk decoded once, not once per panel. */
+function precomputed(url: string): Promise<Source> {
+  const base = url.replace(/\/+$/, "");
+  let got = volumes.get(base);
+  if (!got) {
+    got = precomputedSource(base);
+    got.catch(() => volumes.delete(base));
+    volumes.set(base, got);
+  }
+  return got;
+}
+
 /** A precomputed volume (chunkmirage.sources.tensorstore_source): its scales the levels,
  * x-first lists reversed to C order, voxel 0's centre half a voxel past `voxel_offset`'s
  * corner, in nanometers; channels first. Chunks unsharded (<key>/x0-x1_y0-y1_z0-z1) or
@@ -315,9 +331,9 @@ async function precomputedSource(url: string): Promise<Source> {
     const dir = `${base}/${s.key.replace(/^\/+|\/+$/g, "")}`;
     return { s, encoding, chunk, off, dir, shards: s.sharding ? new Shards(dir, s.sharding, bytesAt) : null };
   });
-  const levels = scales.map(({ s, chunk }) => {
+  const levels = scales.map(({ s, chunk, dir }) => {
     const { voxel, origin } = placePrecomputed(s);
-    return { shape: [...s.size].reverse(), voxel: voxel!, origin: origin!, chunks: [...chunk].reverse() };
+    return { shape: [...s.size].reverse(), voxel: voxel!, origin: origin!, chunks: [...chunk].reverse(), stored: { dir, scale: s } };
   });
   /** Chunk `b` (z, y, x in the grid) of scale `li`, all its channels (c, z, y, x). */
   const chunkAt = async (li: number, b: number[]): Promise<{ data: Numbers; shape: number[] }> => {
@@ -350,7 +366,7 @@ async function precomputedSource(url: string): Promise<Source> {
 /** Bytes [start, end) of `url`, or all of it; null if it is not there. A server that
  * ignores the range sends all of it, and the range is cut from that. */
 const bytesAt: Fetch = async (url, range) => {
-  const r = await fetch(fetchUrl(url), range ? { headers: { range: `bytes=${range[0]}-${range[1] - 1}` } } : {});
+  const r = await fetchRetry(fetchUrl(url), range ? { headers: { range: `bytes=${range[0]}-${range[1] - 1}` } } : {});
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`${url}: ${r.status}`);
   const buf = await r.arrayBuffer();
@@ -370,12 +386,22 @@ async function jpeg(bytes: ArrayBuffer, width: number, height: number, channels:
 }
 
 // ------------------------------------------------ wrappers
+/** `inner` with only `levels`, finest first, as a spec's `levels` keeps them
+ * (chunkmirage.pipeline.keep_levels). */
+export function keepLevels(inner: Source, levels: number[]): Source {
+  const n = inner.levels.length;
+  if (!levels.length || levels.some((l, i) => !Number.isInteger(l) || l < 0 || l >= n || (i > 0 && l <= levels[i - 1]))) {
+    throw new Error(`levels ${levels}: distinct levels of the source's ${n}, finest first`);
+  }
+  return { ...inner, levels: levels.map((l) => inner.levels[l]), read: (li, c, lo, hi, at) => inner.read(levels[li], c, lo, hi, at) };
+}
+
 /** `inner` mirrored along `axes`, every level in place (chunkmirage.sources.flip). */
 function flip(inner: Source, axes: string[], url: string): Source {
   const names = inner.axes.map((a) => a.name), which = axes.map((a) => names.indexOf(a));
   if (which.some((k) => k < 0)) throw new Error(`flip:// axes=${axes}: ${inner.url} has axes ${names}`);
   return {
-    ...inner, url,
+    ...inner, url, levels: inner.levels.map(({ stored: _, ...l }) => l),  // not as stored any more
     read: async (li, c, lo, hi) => {
       const shape = inner.levels[li].shape;
       const mlo = lo.map((v, a) => (which.includes(a) ? shape[a] - hi[a] : v));
@@ -401,7 +427,7 @@ function stack(parts: Source[], url: string): Source {
   for (const p of parts.slice(1)) for (let i = 0; i < levels; i++)
     if (p.levels[i].shape.join() !== a.levels[i].shape.join()) throw new Error(`stack:// level ${i}: ${p.url} is on a different grid from ${a.url}`);
   return {
-    url, dtype: a.dtype, axes: a.axes, channels: parts.length, levels: a.levels.slice(0, levels), ...(a.geo ? { geo: a.geo } : {}),
+    url, dtype: a.dtype, axes: a.axes, channels: parts.length, levels: a.levels.slice(0, levels).map(({ stored: _, ...l }) => l), ...(a.geo ? { geo: a.geo } : {}),
     read: (li, c, lo, hi) => parts[c].read(li, 0, lo, hi),
   };
 }

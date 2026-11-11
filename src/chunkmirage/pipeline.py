@@ -49,6 +49,12 @@ class PipelineSpec(BaseModel):
         description='Pin non-spatial axes to one index each, e.g. {"c": 1, "t": 0}: the '
         "pipeline sees that channel of that time point, without those axes",
     )
+    levels: list[int] | None = Field(
+        None,
+        description="Keep only these levels of the source, finest first, e.g. [0] for its "
+        "full resolution alone (a viewer zoomed out then reads that level, as it would a "
+        "volume stored without a pyramid)",
+    )
     mesh: MeshSpec | None = Field(
         None, description="What the dataset's mesh frontend meshes (default: a surface at 128)"
     )
@@ -128,6 +134,15 @@ class SelectSource(Source):
     def read_into(self, box: Box, out: np.ndarray) -> np.ndarray:
         self.inner.read_into(self._inner_box(box), np.expand_dims(out, tuple(sorted(self.pinned))))
         return out
+
+
+def keep_levels(source: MultiscaleSource, levels: list[int]) -> MultiscaleSource:
+    """``source`` with only ``levels``, which must be its own, finest first."""
+    if not levels or levels != sorted(set(levels)) or not 0 <= levels[0] <= levels[-1] < len(source):
+        raise ValueError(f"levels {levels}: distinct levels of the source's {len(source)}, finest first")
+    return MultiscaleSource(
+        [source.levels[i] for i in levels], name=source.name, shader=source.shader, cached=source.cached
+    )
 
 
 def select_axes(source: MultiscaleSource, select: dict[str, int]) -> MultiscaleSource:
@@ -515,6 +530,8 @@ class Pipeline:
         )
         if spec.select:
             src = select_axes(src, spec.select)
+        if spec.levels is not None:
+            src = keep_levels(src, spec.levels)
         return cls(
             src,
             spec.ops,

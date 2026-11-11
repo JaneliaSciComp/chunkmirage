@@ -3,7 +3,7 @@
 // is 65 MB decoded; a copy in every worker would not fit). The page asks it for the region
 // a chunk needs, all channels, and hands that to a worker.
 import { asReals, percentiles, prod } from "./ome";
-import { openSource, type Source } from "./sources";
+import { keepLevels, openSource, type Source } from "./sources";
 import type { Answer, SourceInfo, ToReader } from "./types";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
@@ -15,9 +15,9 @@ async function open(views: Extract<ToReader, { type: "open" }>["views"]) {
   await Promise.all(Object.entries(views).map(async ([id, spec]) => {
     const key = JSON.stringify([spec.source, spec.select ?? {}]);
     if (!opened.has(key)) opened.set(key, openSource(spec.source, spec.select ?? {}));
-    const src = await opened.get(key)!;
+    const all = await opened.get(key)!, src = spec.levels ? keepLevels(all, spec.levels) : all;
     sources.set(id, src);
-    out[id] = { dtype: src.dtype, channels: src.channels, axes: src.axes, levels: src.levels.map(({ shape, voxel, origin }) => ({ shape, voxel, origin })), geo: src.geo };
+    out[id] = { dtype: src.dtype, channels: src.channels, axes: src.axes, levels: src.levels.map(({ shape, voxel, origin, stored }) => ({ shape, voxel, origin, ...(stored ? { stored } : {}) })), geo: src.geo };
   }));
   return out;
 }

@@ -21,6 +21,7 @@ export interface CardLayer {
   samples?: number;          // volume rendering: depth samples (finer levels need more)
   gain?: number;             // volume rendering: brightness (more samples are each fainter)
   detail?: number;           // multi-resolution meshes: Neuroglancer's mesh render scale (larger is coarser)
+  visible?: boolean;         // false: starts hidden (nothing fetched), shown by clicking its name in the layer bar
 }
 
 interface Card { id: string; title: string; blurb: string; image: string; data: string; command: string }
@@ -202,6 +203,11 @@ void main() {
 const HEIGHT = `#uicontrol invlerp height(range=[-2850, 1800])
 void main() { float v = getDataValue(); if (isnan(v)) { emitTransparent(); return; } emitRGB(colormapCubehelix(clamp(height(), 0.0, 1.0))); }`;
 const MUR = "https://mur-sst.s3.us-west-2.amazonaws.com/zarr-v1/analysed_sst";
+// The hemibrain's 8 nm EM: 9 levels, each JPEG chunks of 64³ in shards; s0's shard indexes
+// say each chunk's size. range: the fractions of a chunk's raw size shown as black and white,
+// so the sizes' greys match the EM's (tissue's JPEG chunks are 25 to 33% of raw)
+const HEMIBRAIN = "precomputed://gs://neuroglancer-janelia-flyem-hemibrain/emdata/clahe_yz/jpeg";
+const HEMIBRAIN_SIZES = `chunksizes://${HEMIBRAIN}?range=0.17,0.4`;
 const LAND = "if (isnan(v)) { emitRGB(vec3(0.18)); return; }";  // MUR has no value on land
 const CELSIUS = `#uicontrol invlerp temperature(range=[25, 32])
 void main() { float v = getDataValue(); ${LAND} emitRGB(colormapJet(clamp(temperature(), 0.0, 1.0))); }`;
@@ -323,6 +329,28 @@ export const CARDS: DemoCard[] = [
     controls: [{ label: "Contact distance", unit: " nm", min: 4, max: 60, step: 2, view: "contacts", op: 0, param: "distance" }],
     position: [2156, 596, 3028], zoom: 1,
     command: `P=${PRED}\nchunkmirage serve "stack://flip://$P/mito_pred?axes=y|flip://$P/er_pred?axes=y" \\\n  --op contacts:distance=12 --op label:min_size=50 --chunk 16,128,128 --python-viewer`,
+  },
+  {
+    kind: "pipeline", id: "chunk-sizes", image: "cards/chunk-sizes.jpg",
+    title: "A whole fly brain zoomed out without its pyramid, from the sizes of its chunks",
+    blurb: "The hemibrain's 8 nm EM, 56 trillion voxels, opened zoomed out on all of it, three ways in one view: click a layer's name to show it (one at a time, so only it downloads). s0 + chunk sizes, shown first: the finest level alone, with two coarser levels made from nothing but the compressed sizes its shard indexes record, one voxel per 64³ chunk (512 nm) and one per block of 8³ chunks (4 µm, which comes first). Busy tissue compresses less well than empty resin, so the sizes draw the brain, its neuropils and tracts, even the slabs it was imaged in, from about 12,000 small reads for a slice where the full resolution is 334,000 chunks; zoom in and the real data takes over. Stored pyramid: the volume as stored, with its eight coarser levels, read by the viewer itself. s0 alone: the finest level only, as a volume stored without a pyramid is; show it zoomed out and watch it try. s0 reaches the viewer untouched in every layer, fetched where it is stored and decoded by the viewer; only the sizes are computed, in this page.",
+    data: "Janelia FlyEM hemibrain (Scheffer et al. 2020): FIB-SEM, 34427 × 39725 × 41394 voxels of 8 nm, JPEG chunks in Neuroglancer precomputed shards",
+    views: {
+      // the sizes in cubes of two minishards (16³ voxels), for slices any way and 3-D alike;
+      // s0 keeps its own 64³ shards, fetched for the viewer where they are (64³ if Python is added)
+      sizes: { source: HEMIBRAIN_SIZES, chunk: [16, 16, 16] },
+      s0: { source: HEMIBRAIN, levels: [0], chunk: [64, 64, 64] },
+    },
+    layers: [
+      { name: "s0 + chunk sizes", view: "sizes", type: "image" },
+      { name: "stored pyramid", url: HEMIBRAIN, type: "image", visible: false },  // read by the viewer itself
+      { name: "s0 alone", view: "s0", type: "image", visible: false },
+    ],
+    panels: [["s0 + chunk sizes", "stored pyramid", "s0 alone"]],
+    // the middle of the brain, at 576 nm a pixel: the sizes' 512 nm level is what it draws,
+    // the pyramid's s6
+    position: [20700, 19862, 17213], zoom: 72,
+    command: `chunkmirage serve '${HEMIBRAIN_SIZES}' --no-raw --python-viewer`,
   },
   {
     kind: "pipeline", id: "spots", image: "cards/spots.jpg",

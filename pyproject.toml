@@ -89,6 +89,7 @@ hillshade = "chunkmirage_contrib.ops.terrain:Hillshade"
 synthetic = "chunkmirage_contrib.sources.synthetic:open_synthetic"
 register = "chunkmirage_contrib.sources.register:open_register"
 stitch = "chunkmirage_contrib.sources.stitch:open_stitch"
+chunksizes = "chunkmirage_contrib.sources.chunksizes:open_chunksizes"
 
 # files told apart by their path, not a scheme
 [project.entry-points."chunkmirage.source_matchers"]

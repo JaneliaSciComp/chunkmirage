@@ -14,8 +14,8 @@ Opener = Callable[..., MultiscaleSource]
 # URL schemes: ``scheme://...`` opened by ``module:function``. The core's are the ones that
 # compose other sources; packages add theirs through the ``chunkmirage.sources`` entry
 # point (name: the scheme; value: an opener taking the URL and, if it wants them,
-# ``cache_bytes`` and ``cache``), or ``register_source``. ``synthetic://``, ``register://``
-# and ``stitch://`` come that way from ``chunkmirage_contrib``.
+# ``cache_bytes`` and ``cache``), or ``register_source``. ``synthetic://``, ``register://``,
+# ``stitch://`` and ``chunksizes://`` come that way from ``chunkmirage_contrib``.
 _BUILTIN = {
     "scene": "chunkmirage.sources.scene:open_scene",
     "warp": "chunkmirage.sources.warp:open_warp",
@@ -119,7 +119,9 @@ def open_source(
     generates data procedurally; ``register://moving?fixed=...`` registers one image onto
     another, solving the deformation on a GPU when opened; ``stitch://project.xml``
     stitches a BigStitcher project's tiles by interest points and RANSAC when opened, and
-    fuses them as they are read; ``.tif``/``.tiff`` paths are (cloud-optimized) GeoTIFFs,
+    fuses them as they are read; ``chunksizes://volume`` serves a sharded precomputed
+    volume's finest level with coarser levels read from its shard indexes (each chunk's
+    compressed size); ``.tif``/``.tiff`` paths are (cloud-optimized) GeoTIFFs,
     read tile by tile with their overviews as levels. Other packages add schemes of their
     own (``register_source``, or the ``chunkmirage.sources`` entry point) and files told
     apart by their path (``register_matcher``, or ``chunkmirage.source_matchers``).

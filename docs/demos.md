@@ -18,6 +18,7 @@ scripts), for Neuroglancer, Fiji, napari or a dask script.
 | [Los Angeles fires, any reader](https://janeliascicomp.github.io/chunkmirage/browser/pipeline.html?card=fires) | burn severity (dNBR) by `normalized_difference` from two Sentinel-2 passes, before and after the Palisades and Eaton fires; read by your pick of Neuroglancer, OpenLayers (as GeoZarr) or GDAL itself in WebAssembly (as zarr v2), which writes a georeferenced GeoTIFF to download | Sentinel-2 L2A, 2 January and 1 February 2025 |
 | [Six tiles stitched by RANSAC](https://janeliascicomp.github.io/chunkmirage/browser/stitch.html) | interest points in every overlap, matches, RANSAC and the global fit (rerun as you move a setting, with inliers and rejected matches drawn), then each fused chunk: `chunkmirage_contrib.stitching`, as `stitch://` runs it | BigStitcher-Spark's stitching example, a larval fly CNS |
 | [Organelle contact sites](https://janeliascicomp.github.io/chunkmirage/browser/pipeline.html?card=contacts) | the mitochondria and ER predictions thresholded at 128 (mitochondria labelled), and `contacts` then `label` on the two, stacked and flipped into the EM's frame | OpenOrganelle jrc_hela-2 |
+| [A fly brain zoomed out from its chunks' sizes](https://janeliascicomp.github.io/chunkmirage/browser/pipeline.html?card=chunk-sizes) | nothing decoded for the coarse levels: each chunk's compressed size read from the shard indexes ([`chunksizes://`](concepts/formats.md#chunk-size-sources-a-sharded-volumes-coarse-levels-from-its-indexes)), one voxel per 64³ chunk (512 nm) and one per 8³ chunks (4 µm), as the levels under the finest; three layers of one view, shown one at a time: that, the stored pyramid, and the finest level alone (a spec's `levels`), the stored levels passed to Neuroglancer untouched | Janelia FlyEM hemibrain, 8 nm FIB-SEM in JPEG chunks in Neuroglancer precomputed shards |
 | [Single mRNA molecules](https://janeliascicomp.github.io/chunkmirage/browser/pipeline.html?card=spots) | `spots` on both FISH channels | Janelia EASI-FISH, fly central brain |
 | [Count the nuclei with your own Python](https://janeliascicomp.github.io/chunkmirage/browser/pipeline.html?card=nuclei) | a [`python` op](reference/ops.md#your-own-python-the-python-op) the page opens with, editable: the DAPI channel smoothed, thresholded, labelled and counted (the count printed under the code), the whole volume as one chunk so the labels are whole, with sliders for the smoothing, the threshold and the smallest nucleus; a watershed at the end of the code, commented out, splits touching nuclei (about 10 s in the page) | IDR idr0062A image 6001240, an OME-Zarr sample at EMBL-EBI: lamin B1 and DAPI |
 | [Follow nuclei through two days](https://janeliascicomp.github.io/chunkmirage/browser/track.html) | not chunks but lineages: each nucleus double-clicked is followed frame by frame by its overlap with the next frame's nuclei (`chunkmirage_contrib.tracking`, one call a frame), reading only a box around it from each; when one collapses into mitosis and is lost, the new nuclei that appear near where it was (labels nothing covered the frame before) are guessed to be its daughters and followed too, a guess the segmentation cannot confirm; volumes plotted as frames come in; the nuclei followed served as a segmentation of their own, made per chunk from the bucket's (each lineage one segment in every frame, where the bucket numbers nuclei afresh in each), served again as tracking fills in frames the viewer has | Allen Institute for Cell Science, Dixon et al. 2024: hiPS colony time-lapse, lamin B1 and nuclear segmentation |
@@ -37,7 +38,7 @@ ops and `chunkmirage.fused`, the code a server's pipeline stage runs, in a few w
 requests wait for Python; a package an op imports unannounced is loaded when it first does. One reader worker
 reads the images in TypeScript, as the Python sources do (OME-Zarr through zarrita, N5
 itself, xarray-written zarr with its coordinates and CF packing, cloud-optimized GeoTIFFs,
-`stack://` and `flip://`),
+`stack://`, `flip://` and `chunksizes://`),
 decoding each store chunk once for the page; the page hands a worker the block a chunk
 needs and gets the chunk back. `tests/test_fused.py` checks that a chunk computed this way equals the pipeline's.
 On an RTX 2080 Ti workstation the contact-sites view filled in about 40 s, a spot or
@@ -63,7 +64,10 @@ serves its fused volume as a view whose chunks it computes itself; the track pag
 (`track.html`) runs `chunkmirage_contrib.tracking`'s step a frame at a time on boxes its reader reads
 at each timepoint (a read can pick its own entry of a source's other axes, `{t: 12}`). The pages share the
 engine (`web/src/engine.ts`), which serves the views as OME-Zarr and as
-[GeoZarr](concepts/formats.md#geozarr-for-map-clients-browser-engine).
+[GeoZarr](concepts/formats.md#geozarr-for-map-clients-browser-engine), and a view read as
+stored from a precomputed volume
+[as precomputed](concepts/formats.md#precomputed-for-stored-levels-passed-through-browser-engine),
+its stored levels passed to Neuroglancer untouched.
 
 The hurricanes card shows the date at the viewer's position, and what the storms were doing
 that day, beside the viewer (which shows time only in seconds); its play button steps a
