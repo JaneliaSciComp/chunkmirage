@@ -489,7 +489,9 @@ as text). What such a page gets, in the order it uses it:
   source or a mesh: a view with no ops is planned on the page from its source alone and
   served from the reader, each chunk the region as read placed whole in the chunk
   (`web/src/asread.ts`), and a view whose chunks the page computes itself needs none
-  either. So a page that serves only such views never loads Python; one that will `call()`
+  either. Such a view's chunks queue coarsest level first, not finest: a coarse chunk read
+  costs no more than a fine one and covers eight times the space (a `chunksizes://` level
+  far less), so zoomed out the whole picture comes first and the finer level fills it in. So a page that serves only such views never loads Python; one that will `call()`
   Python passes `python: "always"`, so it loads while the data opens. `ready` resolves once
   every view given to `start` is planned, Python loaded if it was started.
   `Engine.call(fn, args, arrays)` runs one step of a page's work in the next worker (JSON
