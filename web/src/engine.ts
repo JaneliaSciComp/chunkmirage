@@ -150,7 +150,7 @@ export class Engine {
     this.listen();
     this.reader = new Rpc<ToReader>(new Worker(new URL("./reader.ts", import.meta.url), { type: "module" }));
     this.chunks = new Queue<ArrayBuffer>(workers());
-    this.reads = new Queue<ArrayBuffer>(READ_SLOTS);
+    this.reads = new Queue<ArrayBuffer>(READ_SLOTS, true);  // coarsest first: reads only
     this.packages = [...packages];
     this.modules = { ...modules };
     this.poolSize = Math.max(1, Math.floor(poolSize) || 0);

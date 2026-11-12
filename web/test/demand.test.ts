@@ -28,6 +28,20 @@ test("the finest level goes first, then the first asked for", async () => {
   assert.deepEqual(order, ["level 0", "level 1", "level 1, later", "level 2"]);
 });
 
+test("a queue of reads takes the coarsest level first", async () => {
+  const reads = new Queue(1, true);
+  const order: string[] = [];
+  let open!: () => void;
+  const gate = new Promise<void>((resolve) => (open = resolve));
+  const busy = reads.submit("busy", 0, async () => { await gate; return new Float32Array(); }, () => {});
+  const ask = (key: string, level: number) =>
+    reads.submit(key, level, () => { order.push(key); return done(); }, () => {});
+  const asked = [ask("level 0", 0), ask("level 2", 2), ask("level 1", 1), ask("level 2, later", 2)];
+  open();
+  await Promise.all([busy, ...asked]);
+  assert.deepEqual(order, ["level 2", "level 2, later", "level 1", "level 0"]);
+});
+
 test("work no request wants any more is dropped unrun", async () => {
   const slots = occupy("drop");
   const before = queue.dropped;

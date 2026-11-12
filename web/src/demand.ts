@@ -5,7 +5,9 @@
 // so the claim is cancelled, and waiting work no request claims any more is dropped without
 // running (one already running finishes, and its result is kept). Among the rest, the finest
 // level goes first: a client asking for one place at two levels (a viewer showing a coarse
-// placeholder while the fine chunk computes) wants the finer. Within a level the first asked
+// placeholder while the fine chunk computes) wants the finer. A queue of jobs that only read
+// (`coarseFirst`) takes the coarsest first instead: a coarse chunk read costs no more than a
+// fine one, covers eight times the space, and is on screen at once. Within a level the first asked
 // for goes first. A few run at once, so the GPU works on one while the next ones read, and the
 // rest cannot flood the network with reads.
 //
@@ -46,7 +48,11 @@ export class Queue<T = Float32Array> {
   /** Of them, jobs only background claims hold (`submit`'s `background`): all but one, so a
    * client's request finds a slot free; one, if there is only one. */
   readonly backgroundSlots: number;
-  constructor(slots = SLOTS) { this.slots = slots; this.backgroundSlots = Math.max(1, slots - 1); }
+  /** `coarseFirst`: the coarsest level first instead, for jobs that only read, where a coarse
+   * chunk costs no more than a fine one and covers more (the finest first is for computed
+   * chunks, a coarse one as dear as the finer data it is made from). */
+  readonly coarseFirst: boolean;
+  constructor(slots = SLOTS, coarseFirst = false) { this.slots = slots; this.backgroundSlots = Math.max(1, slots - 1); this.coarseFirst = coarseFirst; }
   private waiting = new Map<string, Job<T>>();
   private active = new Map<string, { level: number; background: boolean }>();  // running, by key
   dropped = 0;  // waiting fits no request wanted any more, never run
@@ -108,7 +114,7 @@ export class Queue<T = Float32Array> {
   private pump() {
     while (this.active.size < this.slots && this.waiting.size) {
       let best: [string, Job<T>] | null = null;
-      for (const e of this.waiting) if (!best || before(e[1], best[1])) best = e;
+      for (const e of this.waiting) if (!best || before(e[1], best[1], this.coarseFirst)) best = e;
       const [key, job] = best!, background = inBackground(job);
       // the best in the background: so is every job waiting, and they have slots of their own
       if (background && [...this.active.values()].filter((a) => a.background).length >= this.backgroundSlots) return;
@@ -125,11 +131,13 @@ const inBackground = <T>(job: Job<T>) => job.demand === job.background;
 /** Which of two waiting fits goes first: one a client waits for before one wanted in the
  * background alone; then the finer level (a client asking for one place at two levels, as a
  * viewer does to show a coarse placeholder while the fine chunk computes, wants the finer
- * one; coarser fits run when nothing finer waits), then the first asked for. */
-function before<T>(a: Job<T>, b: Job<T>): boolean {
+ * one; coarser fits run when nothing finer waits), or the coarser with `coarseFirst`, then
+ * the first asked for. */
+function before<T>(a: Job<T>, b: Job<T>, coarseFirst = false): boolean {
   const ba = inBackground(a), bb = inBackground(b);
   if (ba !== bb) return bb;
-  return a.level !== b.level ? a.level < b.level : a.seq < b.seq;
+  if (a.level !== b.level) return coarseFirst ? a.level > b.level : a.level < b.level;
+  return a.seq < b.seq;
 }
 
 export const queue = new Queue();
