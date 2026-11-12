@@ -338,7 +338,7 @@ export const CARDS: DemoCard[] = [
     views: {
       // the sizes in cubes of two minishards (16³ voxels), for slices any way and 3-D alike;
       // s0 keeps its own 64³ shards, fetched for the viewer where they are (64³ if Python is added)
-      sizes: { source: HEMIBRAIN_SIZES, chunk: [16, 16, 16] },
+      sizes: { source: HEMIBRAIN_SIZES, chunk: [8, 8, 8] },  // one minishard of 512 nm voxels: a slice reads no layer it does not show
       s0: { source: HEMIBRAIN, levels: [0], chunk: [64, 64, 64] },
     },
     layers: [
