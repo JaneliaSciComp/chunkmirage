@@ -396,7 +396,8 @@ warp://<image>?field=swirls&count=8&seed=0&angle=90&radius=200
 serves `<image>` (anything above or below, including `synthetic://` URLs) resampled
 through a displacement field and an affine. The field is **any source**: a `(c, z, y, x)`
 array whose three components are the z, y and x displacement, in the image's units, at
-each voxel of the field's own grid, in the output's space. Another dataset of this server
+each voxel of the field's own grid, in the output's space, or a `(z, y, x, c)` one with the
+components last, as bigstream writes its fields. Another dataset of this server
 ([`dataset://<name>`](#dataset-sources-another-dataset-of-the-server-in-process): a block
 matcher's lattice, a model's predicted deformation), a stored zarr, or a warp's own
 `show=field`. A point `x` of the output is read from the image at `A(x + d(x))`, `A` the
@@ -464,8 +465,11 @@ The parameters follow the last `?`, so the image URL may carry its own query. Wi
 `serve --device cuda` (or `auto`; `chunkmirage.gpu.set_device` in Python) the resampler runs
 on a GPU, here and for `scene://`: every output voxel through the affines and sampled fields
 and the image interpolated, the resampler's own code run with CuPy for numpy and
-`cupyx.scipy.ndimage` for `scipy.ndimage` (the `cupy` extra), in single precision, so values
-agree with the CPU's to within a grey level and the cache keys are the same. Measured on a 184 M-voxel volume
+`cupyx.scipy.ndimage` for `scipy.ndimage` (the `cupy` extra, CuPy with the CUDA headers and
+libraries it compiles its kernels against), in single precision, so values
+agree with the CPU's to within a grey level and the cache keys are the same. The GPU is
+tried when the device is set: `auto` resamples on the CPU, with a warning, where CuPy
+cannot run on it, and `cuda` stops there with the reason, rather than every chunk failing. Measured on a 184 M-voxel volume
 through three lattice fields, CuPy took 0.5 s on an A100 where one CPU thread took 154 s
 and 24 took 13.5 s, most of it sampling the fields. A chain with any other step (a swirl,
 an inverse estimated numerically) is resampled on the CPU. To show the field as RGB, its components must be a Neuroglancer shader channel dimension (`c^`, read

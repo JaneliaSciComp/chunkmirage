@@ -66,3 +66,8 @@ def test_built_in_schemes_cannot_be_replaced(clean, monkeypatch):
     ep = EntryPoint("stack", f"{__name__}:open_ramp", "chunkmirage.sources")
     monkeypatch.setattr(registry, "entry_points", lambda group: [ep] if group == "chunkmirage.sources" else [])
     assert registry._opener("stack").__module__ == "chunkmirage.sources.stack"
+
+
+def test_a_scheme_nothing_opens_says_so_rather_than_no_array_there():
+    with pytest.raises(ValueError, match=r"no source has the scheme vecfield://\. Sources: .*warp://"):
+        open_source("vecfield:///data/deform.zarr")

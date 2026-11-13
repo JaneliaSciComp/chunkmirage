@@ -14,6 +14,7 @@ The functions here let one piece of code take either kind of array: ``array_modu
 
 from __future__ import annotations
 
+import warnings
 from types import ModuleType
 from typing import Any
 
@@ -24,8 +25,10 @@ _device: int | None = None  # the CUDA device the resampler runs on; None: numpy
 
 def set_device(device: str) -> None:
     """Where the resampler runs: ``cpu`` (numpy and scipy, the default), ``cuda`` or
-    ``cuda:N`` (CuPy on that GPU), or ``auto`` (the first GPU if CuPy sees one, else the
-    CPU)."""
+    ``cuda:N`` (CuPy on that GPU), or ``auto`` (the first GPU if CuPy sees one and can run
+    on it, else the CPU, with a warning when there is a GPU it cannot use). A GPU is tried
+    here, with a kernel and a matrix product, so one CuPy cannot run on fails now, not as
+    an error on every chunk."""
     global _device
     if device == "cpu":
         _device = None
@@ -42,14 +45,36 @@ def set_device(device: str) -> None:
     except cupy.cuda.runtime.CUDARuntimeError:
         count = 0
     if device == "auto":
-        _device = 0 if count else None
+        why = _unusable(cupy, 0) if count else None
+        if why:
+            warnings.warn(f"device 'auto': resampling on the CPU, {why}", stacklevel=2)
+        _device = 0 if count and not why else None
         return
     n = 0 if device == "cuda" else int(device[5:]) if device.startswith("cuda:") and device[5:].isdigit() else None
     if n is None:
         raise ValueError(f"device {device!r}: expected cpu, auto, cuda or cuda:N")
     if n >= count:
         raise ValueError(f"device {device!r}: CuPy sees {count} GPU(s)")
+    if why := _unusable(cupy, n):
+        raise ValueError(f"device {device!r}: {why}")
     _device = n
+
+
+def _unusable(cupy: ModuleType, n: int) -> str | None:
+    """Why CuPy cannot resample on GPU ``n``, or None if it can: it compiles a kernel the
+    first time it runs one, which needs the CUDA headers, and multiplies matrices with
+    cuBLAS; the cupy extra (``cupy-cuda12x[ctk]``) installs both."""
+    try:
+        with cupy.cuda.Device(n):
+            x = cupy.arange(4, dtype=cupy.float32).reshape(2, 2)
+            float((x @ x).sum())
+    except Exception as e:  # any failure: the GPU cannot be used from here
+        return (
+            f"CuPy cannot run on GPU {n} ({type(e).__name__}: {e}); install chunkmirage[cupy] "
+            "(cupy-cuda12x[ctk], the CUDA headers and libraries with it) or set CUDA_PATH to a "
+            "CUDA toolkit"
+        )
+    return None
 
 
 def device() -> int | None:
