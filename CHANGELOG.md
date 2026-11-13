@@ -4,7 +4,11 @@ Notable changes per release. Versions follow the rules in
 [contributing](docs/contributing.md#plugin-api-and-versioning): the plugin API is stable,
 and a release that breaks it says so here.
 
-## Unreleased
+## 0.1.0a7 (2026-11-13)
+
+`axes_order` for arrays stored in another axis order, `stack://` across grids, coarse levels
+of a sharded volume from its chunk sizes (`chunksizes://`), and scipy in a plain install.
+The plugin API only grows: an op's `block_phase` and `blend`.
 
 ### Install
 
@@ -36,6 +40,14 @@ and a release that breaks it says so here.
   by nearest voxel for labels and masks, linearly otherwise, 0 outside the image, as
   `scene://` resamples. The stack's levels end at the coarsest every image reaches; images
   in other units or with their axes in another order are refused.
+- `chunksizes://<sharded precomputed volume>?range=lo,hi` serves the volume's finest level
+  as stored and, under it, coarse levels drawn from what the indexes say each chunk takes
+  compressed: one voxel per chunk, from its minishard's index, and one per minishard, from
+  the shard's index, where a minishard is one block of chunks. Nothing is decoded, so a
+  volume without a pyramid can be seen whole: a slice through the hemibrain's 8 nm EM is
+  about 12,000 index reads rather than 334,000 chunks. In `chunkmirage_contrib`, with the
+  same values in the browser engine.
+- A spec's `levels` keeps only some of a source's levels, e.g. `[0]`.
 
 ### Examples
 
@@ -48,6 +60,16 @@ and a release that breaks it says so here.
   the pages (`web/src/urls.ts`) from a chunk of its own, which a service worker registered
   as a classic script cannot do, so it never started and no page showed its viewer. It is
   now built on its own, as one file, and the build fails if it imports anything.
+- A view read as stored from a precomputed volume is served as precomputed, its stored
+  levels at their own scales and fetched by the service worker where they are, for
+  Neuroglancer to decode; only computed levels come from the page. The viewer's own reads
+  no longer queue behind the page's, whose queue is 64 wide (was 24).
+- A view that only reads queues its chunks coarsest level first, so zoomed out the whole
+  picture comes before the finer level fills it in; computed chunks keep the finest first.
+- The hemibrain card compares its finest level with chunk-size levels under it, the stored
+  pyramid, and the finest level alone.
+- The docs and demos count page views with GoatCounter, without cookies or the query
+  string; the [FAQ](docs/faq.md#does-the-site-count-visits) says what is sent.
 
 ## 0.1.0a6 (2026-10-27)
 
