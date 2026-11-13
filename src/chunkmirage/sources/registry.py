@@ -145,6 +145,11 @@ def open_source(
     return source
 
 
+# what tensorstore reads a stored array from (worldarray's schemes; precomputed:// is
+# Neuroglancer's prefix, which worldarray drops): any other scheme:// names no source
+_STORES = {"file", "http", "https", "s3", "gs", "memory", "precomputed"}
+
+
 def _stored_order(path: str, axes_order) -> None:
     if axes_order != "stored":
         raise ValueError(
@@ -163,6 +168,12 @@ def _open(
         if (opener := matcher(path)) is not None:
             _stored_order(path, axes_order)
             return _call(opener, path, cache_bytes=cache_bytes, cache=cache)
+    if sep and scheme not in _STORES:
+        raise ValueError(
+            f"{path}: no source has the scheme {scheme}://. Sources: "
+            f"{', '.join(s + '://' for s in schemes())}; stored arrays: a path, or a "
+            f"{', '.join(s + '://' for s in sorted(_STORES - {'memory'}))} URL"
+        )
     if "::" in path or path.split("::")[0].endswith((".h5", ".hdf5")):
         from chunkmirage.sources.hdf5_source import open_multiscale_hdf5
 

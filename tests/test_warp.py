@@ -321,6 +321,54 @@ def test_the_net_displacement_of_several_fields_is_served():
     assert np.abs(want - summed).max() > 0.5
 
 
+def test_a_field_with_its_components_last_warps_as_one_with_them_first(tmp_path):
+    # bigstream writes (z, y, x, c): read in place, the same field as (c, z, y, x)
+    field = open_source(PASS1).levels[0].read(Box((0, 0, 0, 0), (3, *BOX.shape)))
+    paths = {}
+    for name, data, dims in [("first", field, ["c", "z", "y", "x"]), ("last", np.moveaxis(field, 0, -1), ["z", "y", "x", "c"])]:
+        paths[name] = str(tmp_path / f"{name}.zarr")
+        ts.open(
+            {"driver": "zarr3", "kvstore": {"driver": "file", "path": paths[name]}, "metadata": {"dimension_names": dims}},
+            create=True, dtype=ts.float32, shape=data.shape,
+        ).result().write(data).result()
+    first, last = (open_source(f"warp://{IMG}?field={paths[k]}").levels[0] for k in ("first", "last"))
+    got = last.read(BOX)
+    np.testing.assert_array_equal(got, first.read(BOX))
+    assert (got != open_source(IMG).levels[0].read(BOX)).mean() > 0.3  # moved
+    shown = open_source(f"warp://{IMG}?field={paths['last']}&show=field").levels[0]
+    np.testing.assert_allclose(shown.read(Box((0, 0, 0, 0), (3, *BOX.shape))), field, atol=1e-5)
+
+
+def test_a_gpu_cupy_cannot_run_on_is_found_when_the_device_is_set(monkeypatch):
+    import sys
+    import types
+
+    def fake_cupy(arange):
+        class Device:
+            def __init__(self, n): ...
+            def __enter__(self): ...
+            def __exit__(self, *exc): ...
+
+        runtime = types.SimpleNamespace(getDeviceCount=lambda: 1, CUDARuntimeError=RuntimeError)
+        return types.SimpleNamespace(float32=np.float32, arange=arange, cuda=types.SimpleNamespace(Device=Device, runtime=runtime))
+
+    def no_headers(*a, **k):
+        raise RuntimeError("Failed to find CUDA headers")
+
+    try:
+        monkeypatch.setitem(sys.modules, "cupy", fake_cupy(no_headers))
+        with pytest.warns(UserWarning, match="resampling on the CPU, CuPy cannot run on GPU 0 .*CUDA headers"):
+            gpu.set_device("auto")
+        assert gpu.device() is None
+        with pytest.raises(ValueError, match="'cuda': CuPy cannot run on GPU 0 .*cupy-cuda12x"):
+            gpu.set_device("cuda")
+        monkeypatch.setitem(sys.modules, "cupy", fake_cupy(np.arange))  # one that runs
+        gpu.set_device("auto")
+        assert gpu.device() == 0
+    finally:
+        gpu.set_device("cpu")
+
+
 def test_the_gpu_takes_chains_of_affines_and_sampled_fields_only():
     # with CuPy (serve --device cuda) the resampler's own code runs on the GPU; a chain with
     # anything else stays on the CPU. No GPU here: what is checked is the choice.

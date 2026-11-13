@@ -4,6 +4,32 @@ Notable changes per release. Versions follow the rules in
 [contributing](docs/contributing.md#plugin-api-and-versioning): the plugin API is stable,
 and a release that breaks it says so here.
 
+## Unreleased
+
+### Install
+
+- The `cupy` extra is `cupy-cuda12x[ctk]>=14`: CuPy with the CUDA headers and libraries it
+  compiles its kernels against, from pip. Plain `cupy-cuda12x` found a GPU on a machine
+  without the CUDA toolkit and then failed every chunk with "Failed to find CUDA headers".
+- The lock moves to worldarray 0.10.2 (a `gs://` open with an expired Google login falls
+  back to the bucket's public https URL); the pin stays `>=0.10,<1`.
+
+### Serving
+
+- `serve --device` tries the GPU when it starts, with a kernel and a matrix product: `auto`
+  resamples on the CPU, with a warning, where CuPy cannot run on it, and `cuda` stops with
+  the reason, where both left every `warp://` and `scene://` chunk to fail.
+
+### Sources
+
+- A `warp://` field may have its components last, `(z, y, x, c)`, as bigstream writes its
+  displacement fields, as well as first; it is read in place, its levels matched by their
+  spatial axes (`MultiscaleSource.nearest_level` takes `axes`). Before, such a field needed
+  `axes_order` through a `dataset://`.
+- A source URL with a scheme nothing opens (`vecfield://...`) says so and lists the schemes
+  there are, where it was taken for a path and reported as no zarr, N5 or precomputed array
+  there.
+
 ## 0.1.0a7 (2026-11-13)
 
 `axes_order` for arrays stored in another axis order, `stack://` across grids, coarse levels
