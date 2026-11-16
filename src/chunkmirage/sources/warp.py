@@ -12,7 +12,8 @@ its own grid or another's.
 (the parameters follow the last ``?``, so ``<image>`` may have a query of its own). The
 first serves ``<image>`` (anything ``open_source`` reads) through a field read from any
 other source: a ``(c, z, y, x)`` array whose components are a displacement, in the image's
-units, at each voxel of the field's own grid, in the output's space. Another dataset of
+units, at each voxel of the field's own grid, in the output's space, or ``(z, y, x, c)``
+with the components last, as bigstream writes them. Another dataset of
 the server (``dataset://<name>``, a pipeline's output: a block matcher's lattice, a model's
 prediction), a stored zarr, a warp's own ``show=field``. A point ``x`` of the output is read
 from the image at ``A(x + d(x))``, ``A`` the ``affine`` (identity by default), as
@@ -183,18 +184,33 @@ class NetDisplacement:
         return self._through.apply(pts) - pts
 
 
-def sampled_field(level: Source, key: str) -> VectorField:
-    """The displacements stored in ``level``, a ``(c, z, y, x)`` array (components first, in
-    the output's units), as a field over its own grid: sampled between its voxels linearly,
-    held at its edges beyond them."""
+def sampled_field(level: Source, key: str, vector_axis: int = 0) -> VectorField:
+    """The displacements stored in ``level``, in the output's units, as a field over its own
+    grid: sampled between its voxels linearly, held at its edges beyond them. The components
+    are on ``vector_axis``: 0 for ``(c, z, y, x)``, the last for ``(z, y, x, c)``."""
     info = level.info
+    grid = [i for i in range(info.ndim) if i != vector_axis]
 
     def read(sl: tuple[slice, ...]) -> np.ndarray:
         start = tuple(s.start or 0 for s in sl)
         stop = tuple(n if s.stop is None else s.stop for s, n in zip(sl, info.shape))
         return level.read(Box(start, stop))
 
-    return VectorField(read, info.shape, 0, Affine.scale_translation(info.voxel_size[1:], info.translation[1:]), key)
+    to_space = Affine.scale_translation([info.voxel_size[i] for i in grid], [info.translation[i] for i in grid])
+    return VectorField(read, info.shape, vector_axis, to_space, key)
+
+
+def _vector_axis(info: ArrayInfo, spatial: list[str]) -> int | None:
+    """Where a field's components are: 0 for ``(c, z, y, x)``, the last axis for
+    ``(z, y, x, c)`` (as bigstream writes them); None if it is neither."""
+    n = len(spatial)
+    if info.ndim != n + 1:
+        return None
+    if info.shape[0] == n and list(info.axes[1:]) == spatial:
+        return 0
+    if info.shape[-1] == n and list(info.axes[:-1]) == spatial:
+        return n
+    return None
 
 
 def _affine(value: str | None, spatial: list[str]) -> Affine:
@@ -328,13 +344,16 @@ def open_warp(url: str, *, cache_bytes: int = 0, cache=None) -> MultiscaleSource
     else:
         # fields read from sources, applied in the order given (the first listed first)
         field_mss = [open_source(u, cache_bytes=cache_bytes, cache=cache) for u in kind.split("|")] if kind else []
+        vector_axes = []
         for u, field_ms in zip(kind.split("|") if kind else [], field_mss):
             finfo = field_ms.levels[0].info
-            if finfo.ndim != n + 1 or finfo.shape[0] != n or list(finfo.axes[1:]) != spatial:
+            if (axis := _vector_axis(finfo, spatial)) is None:
                 raise ValueError(
-                    f"field {u}: a displacement field is (c, {', '.join(spatial)}) with c = {n} "
-                    f"components (z, y, x displacements), got axes {finfo.axes} of shape {finfo.shape}"
+                    f"field {u}: a displacement field is (c, {', '.join(spatial)}) or "
+                    f"({', '.join(spatial)}, c) with c = {n} components "
+                    f"({', '.join(spatial)} displacements), got axes {finfo.axes} of shape {finfo.shape}"
                 )
+            vector_axes.append(axis)
 
     labels = info0.dtype.kind == "u" and info0.dtype.itemsize >= 4
     interpolation = q.get("interpolation", "nearest" if labels else "linear")
@@ -368,9 +387,10 @@ def open_warp(url: str, *, cache_bytes: int = 0, cache=None) -> MultiscaleSource
         if procedural:
             return [fields[k]]
         out = []
-        for field_ms in field_mss:
-            j = field_ms.nearest_level(grid.voxel_size, fitted=True)
-            out.append(sampled_field(field_ms.levels[j], f"field|{field_ms.levels[j].cache_key()}"))
+        for field_ms, axis in zip(field_mss, vector_axes):
+            grid_axes = [i for i in range(n + 1) if i != axis]
+            j = field_ms.nearest_level(grid.voxel_size, fitted=True, axes=grid_axes)
+            out.append(sampled_field(field_ms.levels[j], f"field|{field_ms.levels[j].cache_key()}", axis))
         return out
 
     def level(i: int, k: int) -> Source:

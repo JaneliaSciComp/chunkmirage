@@ -12,8 +12,8 @@ Requires Python 3.11+. Core dependencies are tensorstore, worldarray, numpy, sci
 numcodecs, starlette, uvicorn, hypercorn, pydantic and typer. Optional extras: `hdf5`
 (h5py), `tiff` (tifffile and imagecodecs, for GeoTIFFs), `mesh` (scikit-image and DracoPy,
 for `--mesh`), `viewer` (python-neuroglancer, for `--python-viewer`), `https`
-(cryptography, for `--https`), `mcp` (planned MCP server), `cupy` (CuPy for CUDA 12, to
-resample on a GPU with `serve --device`), and for `register://` either `gpu` (PyTorch with
+(cryptography, for `--https`), `mcp` (planned MCP server), `cupy` (CuPy for CUDA 12, with
+the CUDA headers and libraries it needs, to resample on a GPU with `serve --device`), and for `register://` either `gpu` (PyTorch with
 CUDA, about 3 GB) or `cpu` (its CPU-only build, for machines without an NVIDIA GPU). Neither is in `all`, and they cannot be installed together.
 
 ## Serve something
