@@ -388,12 +388,13 @@ class MultiscaleSource:
         """The level whose voxel size (its last axes, or ``axes``) is nearest ``voxel_size``,
         by ratio (the sum over axes of the size's log ratio); the finer of two as near.
         ``fitted``: a level computed on finer voxels than its own is matched by those
-        (``ArrayInfo.computed_from``), as a lattice's by the image level it was fitted on."""
+        (``ArrayInfo.computed_from``), as a lattice's by the image level it was fitted on:
+        that input's last axes, whatever ``axes`` says of the level's own."""
         want = np.log(np.asarray(voxel_size, dtype=float))
 
         def vox(info: ArrayInfo) -> np.ndarray:
-            if fitted and info.computed_from is not None:
-                info = info.computed_from
+            if fitted and info.computed_from is not None:  # its own rank and axes
+                return np.asarray(info.computed_from.voxel_size, dtype=float)[-len(want) :]
             sizes = np.asarray(info.voxel_size, dtype=float)
             return sizes[list(axes)] if axes is not None else sizes[-len(want) :]
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import re
 from collections.abc import Callable
 from importlib.metadata import entry_points
 
@@ -168,7 +169,7 @@ def _open(
         if (opener := matcher(path)) is not None:
             _stored_order(path, axes_order)
             return _call(opener, path, cache_bytes=cache_bytes, cache=cache)
-    if sep and scheme not in _STORES:
+    if sep and re.fullmatch(r"[A-Za-z][A-Za-z0-9+.-]*", scheme) and scheme not in _STORES:
         raise ValueError(
             f"{path}: no source has the scheme {scheme}://. Sources: "
             f"{', '.join(s + '://' for s in schemes())}; stored arrays: a path, or a "

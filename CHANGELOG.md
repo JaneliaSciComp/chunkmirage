@@ -16,16 +16,17 @@ and a release that breaks it says so here.
 
 ### Serving
 
-- `serve --device` tries the GPU when it starts, with a kernel and a matrix product: `auto`
+- `serve --device` tries the GPU when it starts, with a kernel compiled for that machine and
+  environment and a matrix product: `auto`
   resamples on the CPU, with a warning, where CuPy cannot run on it, and `cuda` stops with
   the reason, where both left every `warp://` and `scene://` chunk to fail.
 
 ### Sources
 
 - A `warp://` field may have its components last, `(z, y, x, c)`, as bigstream writes its
-  displacement fields, as well as first; it is read in place, its levels matched by their
-  spatial axes (`MultiscaleSource.nearest_level` takes `axes`). Before, such a field needed
-  `axes_order` through a `dataset://`.
+  displacement fields, as well as first, told apart by the axes' names; it is read in place,
+  its levels matched by their spatial axes (`MultiscaleSource.nearest_level` takes `axes`).
+  Before, such a field needed `axes_order` through a `dataset://`.
 - A source URL with a scheme nothing opens (`vecfield://...`) says so and lists the schemes
   there are, where it was taken for a path and reported as no zarr, N5 or precomputed array
   there.

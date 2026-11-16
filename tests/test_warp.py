@@ -321,6 +321,26 @@ def test_the_net_displacement_of_several_fields_is_served():
     assert np.abs(want - summed).max() > 0.5
 
 
+def test_a_fitted_lattice_is_matched_by_its_input_whatever_the_ranks(tmp_path):
+    # warp:// names the field's own spatial axes (axes=); a lattice fitted on a 3-D image is
+    # matched by that image's voxels, its last axes, not by those indices into it
+    import types
+
+    from chunkmirage.core import ArrayInfo
+    from chunkmirage.sources.base import MultiscaleSource
+
+    def lattice(v, last):
+        image = ArrayInfo((64,) * 3, np.float32, (32,) * 3, (v,) * 3, ("nm",) * 3, ("z", "y", "x"))
+        shape, vox, axes = ((8, 8, 8, 3), (8 * v,) * 3 + (1.0,), ("z", "y", "x", "c")) if last else (
+            (3, 8, 8, 8), (1.0,) + (8 * v,) * 3, ("c", "z", "y", "x"))
+        info = ArrayInfo(shape, np.float32, shape, vox, ("nm",) * 4, axes, computed_from=image)
+        return types.SimpleNamespace(info=info)
+
+    for last, axes in ((False, [1, 2, 3]), (True, [0, 1, 2])):
+        ms = MultiscaleSource([lattice(v, last) for v in (1.0, 2.0, 4.0)])
+        assert ms.nearest_level((4.0,) * 3, fitted=True, axes=axes) == 2
+
+
 def test_a_field_with_its_components_last_warps_as_one_with_them_first(tmp_path):
     # bigstream writes (z, y, x, c): read in place, the same field as (c, z, y, x)
     field = open_source(PASS1).levels[0].read(Box((0, 0, 0, 0), (3, *BOX.shape)))
@@ -343,26 +363,32 @@ def test_a_gpu_cupy_cannot_run_on_is_found_when_the_device_is_set(monkeypatch):
     import sys
     import types
 
-    def fake_cupy(arange):
+    def fake_cupy(headers: bool):
         class Device:
             def __init__(self, n): ...
             def __enter__(self): ...
             def __exit__(self, *exc): ...
 
-        runtime = types.SimpleNamespace(getDeviceCount=lambda: 1, CUDARuntimeError=RuntimeError)
-        return types.SimpleNamespace(float32=np.float32, arange=arange, cuda=types.SimpleNamespace(Device=Device, runtime=runtime))
+        def kernel(*source, **k):  # compiled when first run, as CuPy's are
+            def run(x):
+                if not headers:
+                    raise RuntimeError("Failed to find CUDA headers")
+                return x + 1
 
-    def no_headers(*a, **k):
-        raise RuntimeError("Failed to find CUDA headers")
+            return run
+
+        runtime = types.SimpleNamespace(getDeviceCount=lambda: 1, CUDARuntimeError=RuntimeError)
+        return types.SimpleNamespace(float32=np.float32, arange=np.arange, ElementwiseKernel=kernel,
+                                     cuda=types.SimpleNamespace(Device=Device, runtime=runtime))
 
     try:
-        monkeypatch.setitem(sys.modules, "cupy", fake_cupy(no_headers))
+        monkeypatch.setitem(sys.modules, "cupy", fake_cupy(headers=False))
         with pytest.warns(UserWarning, match="resampling on the CPU, CuPy cannot run on GPU 0 .*CUDA headers"):
             gpu.set_device("auto")
         assert gpu.device() is None
         with pytest.raises(ValueError, match="'cuda': CuPy cannot run on GPU 0 .*cupy-cuda12x"):
             gpu.set_device("cuda")
-        monkeypatch.setitem(sys.modules, "cupy", fake_cupy(np.arange))  # one that runs
+        monkeypatch.setitem(sys.modules, "cupy", fake_cupy(headers=True))  # one that runs
         gpu.set_device("auto")
         assert gpu.device() == 0
     finally:

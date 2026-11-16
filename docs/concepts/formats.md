@@ -397,7 +397,9 @@ serves `<image>` (anything above or below, including `synthetic://` URLs) resamp
 through a displacement field and an affine. The field is **any source**: a `(c, z, y, x)`
 array whose three components are the z, y and x displacement, in the image's units, at
 each voxel of the field's own grid, in the output's space, or a `(z, y, x, c)` one with the
-components last, as bigstream writes its fields. Another dataset of this server
+components last, as bigstream writes its fields. Which axis holds the components is told by
+the axes' names (OME-Zarr axes, zarr v3 dimension names), so a store without names (a plain
+zarr v2 array) reads as components first; give it names with a spec's `axes`. Another dataset of this server
 ([`dataset://<name>`](#dataset-sources-another-dataset-of-the-server-in-process): a block
 matcher's lattice, a model's predicted deformation), a stored zarr, or a warp's own
 `show=field`. A point `x` of the output is read from the image at `A(x + d(x))`, `A` the

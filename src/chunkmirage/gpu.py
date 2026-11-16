@@ -14,7 +14,10 @@ The functions here let one piece of code take either kind of array: ``array_modu
 
 from __future__ import annotations
 
+import socket
+import sys
 import warnings
+import zlib
 from types import ModuleType
 from typing import Any
 
@@ -63,10 +66,14 @@ def set_device(device: str) -> None:
 def _unusable(cupy: ModuleType, n: int) -> str | None:
     """Why CuPy cannot resample on GPU ``n``, or None if it can: it compiles a kernel the
     first time it runs one, which needs the CUDA headers, and multiplies matrices with
-    cuBLAS; the cupy extra (``cupy-cuda12x[ctk]``) installs both."""
+    cuBLAS; the cupy extra (``cupy-cuda12x[ctk]``) installs both. The probe kernel's source
+    names this machine and environment, so one compiled elsewhere (CuPy's kernel cache in a
+    home directory shared between machines) cannot stand in for compiling it here."""
+    here = zlib.crc32(f"{socket.gethostname()}|{sys.prefix}".encode())
     try:
         with cupy.cuda.Device(n):
-            x = cupy.arange(4, dtype=cupy.float32).reshape(2, 2)
+            probe = cupy.ElementwiseKernel("float32 x", "float32 y", f"y = x + {here}.0f", "chunkmirage_probe")
+            x = probe(cupy.arange(4, dtype=cupy.float32).reshape(2, 2))
             float((x @ x).sum())
     except Exception as e:  # any failure: the GPU cannot be used from here
         return (
