@@ -155,6 +155,25 @@ reads whatever source chunks cover the requested output chunk.
 
 ## Ops at one resolution
 
+What a zoomed-out view shows, and what it costs, depends on which of three ways an op's
+coarse levels are made:
+
+| the op | zoomed out, the viewer gets | what that computes |
+| --- | --- | --- |
+| runs on every level (any op without `input_voxel_size`: the default) | the op run on the source's coarse level: a preview, not the full-resolution result made smaller | the op on the coarse chunks in view: little |
+| at one resolution, `"coarse": "none"` (the default for such an op) | the op's one level, there being no coarser one: the full-resolution result | the op on every full-resolution chunk in view |
+| at one resolution, `"coarse": "compute"` | the full-resolution result downsampled | the op on every full-resolution chunk under the coarse chunks asked for, then the downsample |
+
+`"compute"` does not wait for results to exist and then downsample them: asking for a coarse
+chunk is what runs the op, at full resolution, on all that lies under it, and the answer
+comes once that is done. A viewer zoomed in also asks for coarse chunks, to show while the
+fine ones load, so with `"compute"` the op also runs well beyond what is in view.
+
+Use `"compute"` when the whole result is wanted anyway: to write it with its pyramid
+(`materialize` writes the levels the pipeline has), or when the op is cheap enough, or the
+volume small enough, that running it over everything is no cost. For looking at a slow op
+as it computes, keep `"none"`.
+
 Ops run on every level with the same parameters. That is right for thresholds and filters
 in voxels, and for ops that measure in physical units through `for_level` (a slope in
 degrees is a slope in degrees at every level). It is wrong for a model trained at one
@@ -172,15 +191,22 @@ such op in a pipeline:
   cheap preview: the op then sees voxels of another size than it asked for, and the output
   is on that level's grid. The ops before it run there too. `GET /api/datasets/{name}`
   says what was read (`reads`: the level, its voxel size, and whether it was resampled);
-* its output is cached, whatever its `cache` flag says, since the coarser levels are made
-  from it: each by `downsample` from the one above, by the source pyramid's own factors
-  (mean for images, the most common value for labels and masks), cached too. So the op runs
-  once per chunk of one level, whichever levels the viewer asks for;
-* the ops after it run on every level, as usual.
+* its output is cached, whatever its `cache` flag says;
+* that level is the output's only one (the spec's `"coarse": "none"`, the default): every
+  chunk a viewer asks for is one of the op's own, so it runs on what is in view and nothing
+  else. Zoomed out, a viewer reads that level too, as it would a volume stored without a
+  pyramid, so the op runs on every chunk in view;
+* with `"coarse": "compute"` the output also has the source's coarser levels, each made by
+  `downsample` from the one above, by the source pyramid's own factors (mean for images,
+  the most common value for labels and masks), cached too, and the ops after the op run on
+  every level. A coarse chunk is made from the finer ones under it, so it runs the op on
+  its whole region at the op's resolution, once, since that is cached. Neuroglancer asks for
+  coarser levels as placeholders even zoomed in, and the coarsest each cover the volume, so
+  with a slow op one tile in view can queue the whole volume ahead of it (which is why this
+  is not the default).
 
-The output has as many levels as the source has from the one read down. A coarse chunk is
-made from the finer ones under it, so a zoomed-out view costs the op its whole region at its
-own resolution, once, since that is cached; the work for a view the viewer has left is
+With `"coarse": "compute"` the output has as many levels as the source has from the one read
+down; the work for a view the viewer has left is
 dropped as usual ([caching](caching.md#order-of-work-and-requests-given-up-on)). A voxel's position
 is its centre, as in OME-Zarr: a level of voxels twice as big starts half an old voxel on,
 and the served translations say so. An op that changes the grid starts a stage of its own,

@@ -8,7 +8,7 @@ Each pipeline stage can memoize its output chunks. By default:
 | ------------------------------- | ------ | ------------------------------------------------------- |
 | stage 0: raw source             | yes    | refetching from disk or S3 is the expensive part        |
 | ops with `cache = True`         | yes    | expensive to recompute (inference)                      |
-| an op with an input voxel size, and the levels made from it | yes | it runs on one level, and every coarser level is made from its output ([ops at one resolution](pipelines.md#ops-at-one-resolution)) |
+| an op with an input voxel size, and the levels made from it | yes | it runs on one level, and with `"coarse": "compute"` every coarser level is made from its output ([ops at one resolution](pipelines.md#ops-at-one-resolution)) |
 | the blocks of an op with `overlap` | yes | each block, chunk plus overlap, is computed once and blended into every chunk it reaches ([overlapping blocks](pipelines.md#overlapping-blocks-blended-where-they-meet)); the op's own output as its `cache` says |
 | ops with `cache = False`        | no     | fused with their neighbours into one stage and recomputed from the cached upstream stage |
 | encoded bytes (gzip, blosc, ...)| no     | encoding is fast; caching arrays serves all formats     |
