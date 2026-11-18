@@ -155,6 +155,20 @@ reads whatever source chunks cover the requested output chunk.
 
 ## Ops at one resolution
 
+What a zoomed-out view shows, and what it costs, depends on which of three ways an op's
+coarse levels are made:
+
+| the op | zoomed out, the viewer gets | what that computes |
+| --- | --- | --- |
+| runs on every level (any op without `input_voxel_size`: the default) | the op run on the source's coarse level: a preview, not the full-resolution result made smaller | the op on the coarse chunks in view: little |
+| at one resolution, `"coarse": "none"` (the default for such an op) | the op's one level, there being no coarser one: the full-resolution result | the op on every full-resolution chunk in view |
+| at one resolution, `"coarse": "compute"` | the full-resolution result downsampled | the op on every full-resolution chunk under the coarse chunks asked for, then the downsample |
+
+`"compute"` does not wait for results to exist and then downsample them: asking for a coarse
+chunk is what runs the op, at full resolution, on all that lies under it, and the answer
+comes once that is done. A viewer zoomed in also asks for coarse chunks, to show while the
+fine ones load, so with `"compute"` the op also runs well beyond what is in view.
+
 Ops run on every level with the same parameters. That is right for thresholds and filters
 in voxels, and for ops that measure in physical units through `for_level` (a slope in
 degrees is a slope in degrees at every level). It is wrong for a model trained at one
