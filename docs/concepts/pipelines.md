@@ -169,6 +169,11 @@ chunk is what runs the op, at full resolution, on all that lies under it, and th
 comes once that is done. A viewer zoomed in also asks for coarse chunks, to show while the
 fine ones load, so with `"compute"` the op also runs well beyond what is in view.
 
+Use `"compute"` when the whole result is wanted anyway: to write it with its pyramid
+(`materialize` writes the levels the pipeline has), or when the op is cheap enough, or the
+volume small enough, that running it over everything is no cost. For looking at a slow op
+as it computes, keep `"none"`.
+
 Ops run on every level with the same parameters. That is right for thresholds and filters
 in voxels, and for ops that measure in physical units through `for_level` (a slope in
 degrees is a slope in degrees at every level). It is wrong for a model trained at one
