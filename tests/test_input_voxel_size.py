@@ -52,7 +52,9 @@ class FakeModel(Op):
 
 def test_the_model_runs_once_and_the_pyramid_is_made_from_it(zarr2_path, volume):
     FakeModel.calls.clear()
-    p = Pipeline(open_source(zarr2_path), [FakeModel()], chunk_shape=(8, 16, 16))
+    # by default, the level the op runs on alone: no chunk asked for runs it on more than itself
+    assert Pipeline(open_source(zarr2_path), [FakeModel()], chunk_shape=(8, 16, 16)).num_levels == 1
+    p = Pipeline(open_source(zarr2_path), [FakeModel()], chunk_shape=(8, 16, 16), coarse="compute")
     assert p.num_levels == 2  # from the 8 nm level down: 16 nm, then 32 nm
     i0, i1 = p.info(0), p.info(1)
     assert i0.axes == ("c", "z", "y", "x") and i0.shape == (3, 20, 25, 35) and i0.voxel_size == (1.0, 16.0, 16.0, 16.0)
@@ -72,7 +74,7 @@ def test_the_model_runs_once_and_the_pyramid_is_made_from_it(zarr2_path, volume)
 
 
 def test_every_format_serves_it(zarr2_path):
-    p = Pipeline(open_source(zarr2_path), [FakeModel()], chunk_shape=(8, 16, 16))
+    p = Pipeline(open_source(zarr2_path), [FakeModel()], chunk_shape=(8, 16, 16), coarse="compute")
     c = TestClient(create_app({"m": p}))
     ms = c.get("/m/zarr3/zarr.json").json()["attributes"]["ome"]["multiscales"][0]
     assert [a["name"] for a in ms["axes"]] == ["c", "z", "y", "x"]
@@ -159,7 +161,7 @@ def test_nearest_level_reads_a_level_as_it_is_and_says_which():
     assert resampled.info(0).voxel_size == (10.0, 10.0, 10.0)
     assert resampled.input_read == {"op": "_at_ten", "index": 0, "wanted": [10.0] * 3, "level": 1,
                                     "voxel_size": [10.0] * 3, "resampled": True}
-    nearest = Pipeline(open_source(PYRAMID), [AtTen()], input_level="nearest")
+    nearest = Pipeline(open_source(PYRAMID), [AtTen()], input_level="nearest", coarse="compute")
     assert nearest.info(0).voxel_size == (8.0, 8.0, 8.0) and nearest.num_levels == 2
     assert nearest.input_read["level"] == 1 and nearest.input_read["voxel_size"] == [8.0] * 3
     assert nearest.input_read["resampled"] is False and nearest.digest() != resampled.digest()

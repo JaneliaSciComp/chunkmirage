@@ -76,6 +76,10 @@ export interface PipelineSpec {
    */
   level_rtol?: number;
   /**
+   * For an op that reads one voxel size: 'none' serves the level it runs on alone, so every chunk asked for is one of its own (a viewer zoomed out reads that level, as it would a volume stored without a pyramid); 'compute' adds the source's coarser levels, each downsampled from its output, so a coarse chunk runs the op on all of that level under it
+   */
+  coarse?: "none" | "compute";
+  /**
    * What ops with a halo see past the volume's edge: 'edge' repeats the outermost voxels (no step at the border), 'zero' pads with zeros (as a model trained on zero-padded blocks expects)
    */
   padding?: "edge" | "zero";

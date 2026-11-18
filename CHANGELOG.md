@@ -14,6 +14,15 @@ and a release that breaks it says so here.
 - The lock moves to worldarray 0.10.2 (a `gs://` open with an expired Google login falls
   back to the bucket's public https URL); the pin stays `>=0.10,<1`.
 
+### Ops and pipelines
+
+- **Changed:** an op at one resolution (`input_voxel_size`) serves the level it runs on
+  alone by default (the spec's `coarse`, `"none"`), so it runs on the chunks in view and
+  nothing else. The coarser levels downsampled from it, the default until now, are
+  `"coarse": "compute"`: a coarse chunk runs the op on everything under it, and
+  Neuroglancer asks for coarse levels as placeholders even zoomed in, which queued a slow
+  op on the whole volume ahead of the tile in view.
+
 ### Serving
 
 - `serve --device` tries the GPU when it starts, with a kernel compiled for that machine and

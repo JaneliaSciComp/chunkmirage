@@ -11,7 +11,7 @@ a viewer that a lazily computed array does not. It serves a pyramid of the compu
 each level is the ops run on that level's data, a preview of the fine result rather than
 its exact downsample (a threshold at a coarse level is not the downsampled fine threshold,
 and labels do not agree across levels), except that an op bound to one resolution runs
-there and is downsampled from its cached output. It computes the chunks on screen first, at
+there alone (and, if asked, is downsampled from its cached output). It computes the chunks on screen first, at
 the level shown, and drops the work nobody waits for any more, so an expensive op under a
 panning viewer does the work the viewer still wants. And it speaks every format, so the
 viewer is whoever's viewer. Editing the computation while looking follows from the
@@ -110,9 +110,17 @@ stay trivially writable.
 
 Levels are computed independently, the same ops on each, except from an op that declares
 the voxel size it reads (a model trained at one resolution). That one runs on a single
-level and the coarser levels are downsampled from its cached output, rather than running
-it on data it was not trained for, or once per level. The browser engine keeps the simpler
-rule: every op on every level, on its level's grid.
+level, rather than on data it was not trained for, or once per level, and that level is
+all the output has, unless `coarse: "compute"` asks for the coarser ones, downsampled from
+its cached output. They were the default once. But a coarse chunk runs the op on everything
+under it, Neuroglancer asks for coarser levels as placeholders even zoomed in, and the
+coarsest each cover the volume: with a slow op, one full-resolution tile in view queued
+the whole volume ahead of the one chunk it needed. Making the
+coarse levels from only the chunks already computed, zero elsewhere, was built and dropped:
+a blank zoomed-out region did not say whether it was empty or not computed, viewers kept
+the zero tiles they had fetched, and `coverage://` already says what is computed. One level
+is always right: what is on screen is the op's result or is on its way. The browser engine
+keeps the simpler rule: every op on every level, on its level's grid.
 
 ### Viewer cache busting
 

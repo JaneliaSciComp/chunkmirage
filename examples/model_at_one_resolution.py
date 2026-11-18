@@ -11,8 +11,11 @@ x 4 nm, with no level at 8 nm isotropic, so the pipeline reads its finest level 
 8 nm, runs the op there, caches what it makes, and serves the coarser levels downsampled from
 that: zoomed out, the viewer gets a pyramid the op never ran on. A coarse chunk is made
 from the finer ones under it, so a zoomed-out view costs the op its whole region at 16 nm,
-once (it is cached). ``--check`` computes one chunk of the next level, made from eight of
-the op's, and says how often the op ran, without serving.
+once (it is cached). That pyramid is asked for here with ``coarse="compute"``: by default
+the op's level is served alone, so the op runs only on the chunks in view (right for a slow
+op: a viewer asks for coarse levels as placeholders even zoomed in). ``--check`` computes
+one chunk of the next level, made from eight of the op's, and says how often the op ran,
+without serving.
 
 A real consumer ships its op in a package of its own, registered through the
 ``chunkmirage.ops`` entry point, and its forward pass goes where ``apply`` is here.
@@ -72,7 +75,7 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8000)
     args = ap.parse_args()
 
-    pipe = Pipeline(open_source(EM, cache_bytes=1 << 30), [Membranes()], chunk_shape=(32, 64, 64))
+    pipe = Pipeline(open_source(EM, cache_bytes=1 << 30), [Membranes()], chunk_shape=(32, 64, 64), coarse="compute")
     for k in range(pipe.num_levels):
         i = pipe.info(k)
         print(f"s{k}: {i.shape[1:]} voxels of {i.voxel_size[1:]} nm, from {i.translation[1:]}", flush=True)

@@ -78,6 +78,14 @@ class PipelineSpec(BaseModel):
         description="How far, relatively, a level's voxel size may be from the one an op "
         "asks for and still be read as it is",
     )
+    coarse: Literal["none", "compute"] = Field(
+        "none",
+        description="For an op that reads one voxel size: 'none' serves the level it runs "
+        "on alone, so every chunk asked for is one of its own (a viewer zoomed out reads "
+        "that level, as it would a volume stored without a pyramid); 'compute' adds the "
+        "source's coarser levels, each downsampled from its output, so a coarse chunk "
+        "runs the op on all of that level under it",
+    )
     padding: Literal["edge", "zero"] = Field(
         "edge",
         description="What ops with a halo see past the volume's edge: 'edge' repeats the "
@@ -364,8 +372,9 @@ class Pipeline:
     """A source's levels through ``ops``. Ops run on every level, except from the first op
     with an input voxel size (``Op.input_voxel_size``, a model trained at one resolution):
     that one runs on one level (the source's at that size, else one resampled to it), its
-    output is cached, and the coarser levels are made from it by ``downsample``, by the
-    source pyramid's own factors; the ops after it run on every level."""
+    output is cached, and that level is the output's only one; with ``coarse="compute"``
+    the coarser levels are made from it by ``downsample``, by the source pyramid's own
+    factors, and the ops after it run on every level."""
 
     def __init__(
         self,
@@ -379,11 +388,14 @@ class Pipeline:
         padding: str = "edge",
         input_level: str = "resample",
         level_rtol: float = 0.01,
+        coarse: str = "none",
     ):
         if padding not in ("edge", "zero"):
             raise ValueError(f"padding must be 'edge' or 'zero', got {padding!r}")
         if input_level not in ("resample", "nearest"):
             raise ValueError(f"input_level must be 'resample' or 'nearest', got {input_level!r}")
+        if coarse not in ("none", "compute"):
+            raise ValueError(f"coarse must be 'none' or 'compute', got {coarse!r}")
         self.source = source
         self.ops: list[Op] = ops_from_specs(ops)
         self.cache = cache if cache is not None else LRUCache()
@@ -397,6 +409,7 @@ class Pipeline:
             "padding": padding,
             "input_level": input_level,
             "level_rtol": level_rtol,
+            "coarse": coarse,
         }
         self.levels: list[ChunkedSource] = []
         #: per level, its stages in order on that level's grid: the raw stage (or the
@@ -439,7 +452,8 @@ class Pipeline:
         stages.append(finer)
         self.levels.append(self._chain(finer, post, h, 0, stages)[0])
         self.stages.append(stages)
-        for k in range(at + 1, len(source.levels)):
+        # coarse="none": that level alone, so nothing asked for runs the op on more than itself
+        for k in range(at + 1, len(source.levels) if coarse == "compute" else 0):
             a, b = (source.levels[i].info.voxel_size[-len(want) :] for i in (k - 1, k))
             factor = [max(1, round(float(y) / float(x))) for x, y in zip(a, b)]
             if all(f == 1 for f in factor):
@@ -542,6 +556,7 @@ class Pipeline:
             padding=spec.padding,
             input_level=spec.input_level,
             level_rtol=spec.level_rtol,
+            coarse=spec.coarse,
         )
 
     def rebuilt(self) -> Pipeline:

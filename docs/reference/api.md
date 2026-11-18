@@ -56,7 +56,8 @@ are refused with 403 unless the app was made with `create_app(..., allow_code=Tr
   "kind": "image",                   // optional: image, label or mask, over what the source guesses
   "padding": "edge",                 // what ops see past the volume's edge: edge (repeated) or zero
   "input_level": "resample",         // an op at one voxel size no level has: resample a finer level, or read the nearest
-  "level_rtol": 0.01                 // how near a level's voxel size must be to count as the one asked for
+  "level_rtol": 0.01,                // how near a level's voxel size must be to count as the one asked for
+  "coarse": "none"                   // an op at one voxel size: serve its level alone, or "compute" coarser ones downsampled from it
 }
 ```
 

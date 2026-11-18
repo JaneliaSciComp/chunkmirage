@@ -172,15 +172,22 @@ such op in a pipeline:
   cheap preview: the op then sees voxels of another size than it asked for, and the output
   is on that level's grid. The ops before it run there too. `GET /api/datasets/{name}`
   says what was read (`reads`: the level, its voxel size, and whether it was resampled);
-* its output is cached, whatever its `cache` flag says, since the coarser levels are made
-  from it: each by `downsample` from the one above, by the source pyramid's own factors
-  (mean for images, the most common value for labels and masks), cached too. So the op runs
-  once per chunk of one level, whichever levels the viewer asks for;
-* the ops after it run on every level, as usual.
+* its output is cached, whatever its `cache` flag says;
+* that level is the output's only one (the spec's `"coarse": "none"`, the default): every
+  chunk a viewer asks for is one of the op's own, so it runs on what is in view and nothing
+  else. Zoomed out, a viewer reads that level too, as it would a volume stored without a
+  pyramid, so the op runs on every chunk in view;
+* with `"coarse": "compute"` the output also has the source's coarser levels, each made by
+  `downsample` from the one above, by the source pyramid's own factors (mean for images,
+  the most common value for labels and masks), cached too, and the ops after the op run on
+  every level. A coarse chunk is made from the finer ones under it, so it runs the op on
+  its whole region at the op's resolution, once, since that is cached. Neuroglancer asks for
+  coarser levels as placeholders even zoomed in, and the coarsest each cover the volume, so
+  with a slow op one tile in view can queue the whole volume ahead of it (which is why this
+  is not the default).
 
-The output has as many levels as the source has from the one read down. A coarse chunk is
-made from the finer ones under it, so a zoomed-out view costs the op its whole region at its
-own resolution, once, since that is cached; the work for a view the viewer has left is
+With `"coarse": "compute"` the output has as many levels as the source has from the one read
+down; the work for a view the viewer has left is
 dropped as usual ([caching](caching.md#order-of-work-and-requests-given-up-on)). A voxel's position
 is its centre, as in OME-Zarr: a level of voxels twice as big starts half an old voxel on,
 and the served translations say so. An op that changes the grid starts a stage of its own,
